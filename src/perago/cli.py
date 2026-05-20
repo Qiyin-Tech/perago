@@ -29,6 +29,8 @@ def check(module_target: str) -> None:
     typer.echo(f"workspace_root: {config.workspace_root}")
     typer.echo(f"log_root: {config.log_root}")
     typer.echo(f"worker_id_prefix: {config.worker_id_prefix}")
+    typer.echo(f"conductor: {_configured(config.conductor is not None)}")
+    typer.echo(f"lakefs: {_configured(config.lakefs is not None)}")
 
 
 @app.command()
@@ -67,6 +69,10 @@ def start(module_target: str, j: int = typer.Option(1, "-j", min=1)) -> None:
 def _fail(message: str) -> None:
     typer.echo(f"error: {message}", err=True)
     raise typer.Exit(code=1)
+
+
+def _configured(value: bool) -> str:
+    return "configured" if value else "not configured"
 
 
 if __name__ == "__main__":
