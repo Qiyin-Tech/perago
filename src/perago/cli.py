@@ -19,8 +19,8 @@ app = typer.Typer(no_args_is_help=True)
 def check(module_target: str) -> None:
     """Validate one Perago task module and local runtime config."""
     try:
-        task = load_module_task(module_target)
         config = load_runtime_config(module_target)
+        task = load_module_task(module_target)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError) as exc:
         _fail(str(exc))
     typer.echo(f"ok: {task.name}")
@@ -33,8 +33,8 @@ def check(module_target: str) -> None:
 def extract(module_target: str, out: Path = typer.Option(..., "--out")) -> None:
     """Write generated Conductor TaskDef JSON for one task module."""
     try:
-        task = load_module_task(module_target)
         load_runtime_config(module_target)
+        task = load_module_task(module_target)
         path = write_taskdef(task, out)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError) as exc:
         _fail(str(exc))
@@ -45,8 +45,8 @@ def extract(module_target: str, out: Path = typer.Option(..., "--out")) -> None:
 def start(module_target: str, j: int = typer.Option(1, "-j", min=1)) -> None:
     """Validate startup inputs; worker polling is implemented with service integration."""
     try:
-        load_module_task(module_target)
         config = load_runtime_config(module_target)
+        load_module_task(module_target)
         workers = worker_child_specs(
             base_env={"PERAGO_WORKER_ID_PREFIX": config.worker_id_prefix},
             module_target=module_target,

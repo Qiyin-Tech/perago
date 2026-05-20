@@ -37,6 +37,18 @@ def test_check_cli_reports_pydantic_task_definition_errors(monkeypatch, tmp_path
     assert "WorkspaceSpec.prefix must stay inside the repository" in result.output
 
 
+def test_check_cli_reads_runtime_config_before_importing_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PERAGO_WORKER_ID_PREFIX", "bad-prefix")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.bad_workspace_prefix"])
+
+    assert result.exit_code == 1
+    assert "PERAGO_WORKER_ID_PREFIX" in result.output
+    assert "WorkspaceSpec.prefix" not in result.output
+
+
 def test_check_cli_reports_absolute_guardrail_paths(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
