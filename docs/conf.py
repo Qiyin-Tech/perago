@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 import tomllib
 
@@ -12,7 +12,7 @@ def _resolve_release() -> str:
     """Resolve the documentation version from installed metadata or pyproject."""
 
     try:
-        return version("perago")
+        return package_version("perago")
     except PackageNotFoundError:
         pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
         with pyproject.open("rb") as fh:

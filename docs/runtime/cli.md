@@ -105,7 +105,7 @@ PERAGO_WORKER_ID=appworkersfeaturesbuild0002
 error: Conductor TaskDef 'features.build' is not registered; run perago extract and register it before start
 ```
 
-运行时，每个 worker child 会准备自己的日志文件、清理遗留 attempt workspace，然后进入 Conductor poll loop。child process 退出时，supervisor 会按递增 backoff 重启；收到 `SIGINT` 或 `SIGTERM` 时，supervisor 会请求停止、等待 worker 退出，并在超时后依次 terminate / kill。
+运行时，supervisor 会先清理遗留 attempt workspace 并启动后台 workspace GC loop；每个 worker child 只准备自己的日志文件，然后进入 broker poll loop 或 executor assignment loop。child process 退出时，supervisor 会按递增 backoff 重启；收到 `SIGINT` 或 `SIGTERM` 时，supervisor 会请求停止并等待 worker drain。只有配置了 `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` 时，超过 deadline 仍未退出的 child 才会被 `kill()`。
 
 ## 推荐发布前流程
 

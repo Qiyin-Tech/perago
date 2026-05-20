@@ -66,11 +66,12 @@ YYYYMMDDTHHMMSS+0800
 `prepare_worker_runtime()` 的本机准备顺序是：
 
 1. 解析当前进程的 worker id。
-2. 清理带 Perago attempt marker 的遗留 attempt workspace。
-3. 创建 worker 日志目录并配置 JSONL sink。
-4. 返回 `WorkerRuntime(worker_id, log_file, swept_workspaces)`。
+2. 创建 worker 日志目录并配置 JSONL sink。
+3. 返回 `WorkerRuntime(worker_id, log_file, swept_workspaces=[])`。
 
 因此 `WorkerRuntime.log_file` 是当前 child process 的活跃日志文件路径。worker 启动后会记录一条 `worker started` 日志，并把 `worker_id`、`module_target` 和 `log_file` 作为结构化字段写入。
+
+attempt workspace 清理不在 `prepare_worker_runtime()` 内执行。`perago start` 的 supervisor 负责启动前 sweep、后台 GC loop、dead executor targeted GC 和 shutdown 后最终 sweep。
 
 ## 排查入口
 

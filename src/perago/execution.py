@@ -142,6 +142,12 @@ def run_workspace_task_attempt(
     cleanup_staging : callable
         Callback that removes or abandons the staging branch after the attempt
         completes or fails after staging.
+    owner_worker_id : str or None, default=None
+        Worker id written into the local workspace owner marker for active
+        owner tracking and supervisor GC.
+    execution_id : str or None, default=None
+        Execution-scoped id used to isolate local attempt workspace and LakeFS
+        staging branch names. A new id is generated when omitted.
 
     Returns
     -------

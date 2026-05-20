@@ -52,6 +52,8 @@ MVP 接受两种状态：
 
 runtime 不只检查 current head。若 current head metadata 匹配但 range 中较早的 commit metadata 缺失或属于其他 logical task，publish fence 仍会拒绝发布。这样可以避免把无法完整归因的 branch advancement 误分类为同一 logical task retry。
 
+commit range 扫描是有界的：runtime 最多读取 1024 个 first-parent commits。如果超过上限，或 current branch history 已经不包含 input `workspace.ref`，publish fence 会 fail closed。这避免 worker 在异常长历史或重写过的 branch 上无界扫描，同时保留“无法分类就不发布”的语义。
+
 `perago.logical_task_key` 不包含 Conductor `task_id`，因此同一个 workflow step 的 retry attempts 会共享它。`perago.task_id` 和 `perago.staging_commit` 仍会写入 confirm metadata，用于排查单次 attempt 或识别已经发生的 publish。
 
 ## Soft Fence 边界

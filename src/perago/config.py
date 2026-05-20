@@ -144,6 +144,16 @@ class RuntimeConfig(BaseModel):
     execution_mode : "process" or "thread"
         Worker execution model. Defaults to ``"process"`` and may be
         overridden by ``PERAGO_EXECUTION_MODE`` or the ``perago start`` CLI.
+    workspace_gc_ttl : datetime.timedelta, default=24h
+        Minimum age before supervisor periodic GC removes an abandoned
+        attempt-local workspace. Parsed from ``PERAGO_WORKSPACE_GC_TTL``.
+    workspace_gc_interval : datetime.timedelta, default=1h
+        Interval for the supervisor workspace GC loop. Parsed from
+        ``PERAGO_WORKSPACE_GC_INTERVAL``.
+    shutdown_force_kill_after : datetime.timedelta or None, default=None
+        Optional shutdown drain deadline. When configured through
+        ``PERAGO_SHUTDOWN_FORCE_KILL_AFTER``, child processes still alive after
+        the deadline are force-killed.
     conductor : ConductorConfig or None, default=None
         Optional Conductor connection config. ``perago start`` requires it.
     lakefs : LakeFSConfig or None, default=None

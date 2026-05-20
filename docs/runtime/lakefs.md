@@ -125,6 +125,8 @@ publish 前的 client-side fence 由 `build_workspace_publication_plan()` 执行
 
 其他 branch advancement 会抛出 `PublishFenceError`，attempt 结果映射为 `FAILED`。这类失败不发布 workspace output，并会触发 staging cleanup 和 attempt-local workspace cleanup。
 
+为了避免对长历史做无界扫描，runtime 从 current head 沿 first-parent 回溯到 input `workspace.ref` 时最多读取 1024 个 commits。超过上限，或在 first-parent history 中找不到 input ref，都会 fail closed 为 `PublishFenceError`。
+
 这个 fence 是 worker 进程里的 soft fence。它能在 merge 前发现意外 branch advancement，但不是 LakeFS server-side compare-and-swap，也不是 exactly-once publication 证明。
 
 ## Cleanup

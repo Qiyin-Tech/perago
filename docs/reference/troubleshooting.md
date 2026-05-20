@@ -95,6 +95,8 @@ Perago 的 worker 单元是 exactly one task per Python module。一个 worker p
 | `PERAGO_LOG_FILE_MAX_SIZE must be a positive size ...` | 日志大小格式错误。 | 使用 `512KB`、`100MB` 或 `1.5GB`。 |
 | `PERAGO_LOG_RETENTION must be a positive day count ...` | 日志保留期格式错误。 | 使用 `7d` 或 `30d`。 |
 | `PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits` | worker id prefix 含连字符、下划线、点号或非 ASCII 字符。 | 使用只含字母数字的前缀，例如 `prodAFeaturesBuild`。 |
+| `PERAGO_WORKSPACE_GC_TTL must be a positive duration ...` | workspace GC TTL 格式错误。 | 使用 `30m`、`1h`、`24h` 这类正数 duration。 |
+| `PERAGO_WORKSPACE_GC_INTERVAL must be a positive duration ...` | workspace GC interval 格式错误。 | 使用 `30s`、`5m`、`1h` 这类正数 duration。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER must be a positive duration ...` | shutdown force-kill deadline 格式错误。 | 使用 `30s`、`5m`、`1h` 这类正数 duration，或不配置该变量。 |
 
 `perago check` 和 `perago extract` 不要求 Conductor/LakeFS 连接变量完整，但会拒绝半套 LakeFS 配置和不可写本机目录。
@@ -127,6 +129,8 @@ Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`ref_type`
 | --- | --- | --- |
 | `workspace publication does not support symlinks: ...` | attempt-local workspace 中包含 symlink。 | 输出真实文件；不要把 symlink 发布到 LakeFS。 |
 | `<branch> advanced from <input-ref> to <current-head>` | publish fence 发现 target branch 被无关提交推进。 | 不要手动重试同一 attempt；从当前 protected branch head 发起新的 workflow。 |
+| `<branch> advanced beyond supported publish range (1024 commits)` | target branch 从 current head 回溯到 input ref 的 first-parent range 超过上限。 | 从当前 protected branch head 发起新的 workflow，或人工确认历史后处理。 |
+| `<branch> no longer contains workspace input ref <ref>` | target branch first-parent history 中找不到本次 input ref，通常表示 branch 被重写或 input ref 不再属于当前线性历史。 | 不要继续当前 attempt；从当前 branch head 重新发起 workflow。 |
 | LakeFS download/stage/merge SDK 异常 | repository/ref 不存在、凭证错误、网络失败或 LakeFS 服务异常。 | 检查 LakeFS 连接变量、repository、input commit 和 worker JSONL。 |
 | staging branch create 失败且 branch 已存在 | 同一个 execution id 的 staging branch 已存在，或远端残留与当前 execution id 冲突。 | 当前 attempt 会 fail closed。正常情况下每次 execution 都有唯一 branch；排查 worker 日志中的 `execution_id`，必要时清理残留 `perago-staging-...-exec-...` branch。 |
 | `failed to clean staging workspace` | staging branch 删除失败。 | 原始 task result 不会被覆盖；事后检查并清理 `perago-staging-...` branch。 |
