@@ -12,4 +12,5 @@ logging
 conductor
 lakefs
 workspace-publication
+publish-budget
 ```
