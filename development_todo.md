@@ -134,7 +134,8 @@ Acceptance criteria:
   - [x] Process dispatch worker foundation: `PeragoProcessDispatchWorker` adapts SDK `Task` polling to broker assignment/completion queues, preserves SDK worker flags, and maps executor `RuntimeTaskResult` completions back to SDK `TaskResult`.
   - [x] Process executor loop foundation: `run_process_executor_loop()` consumes broker assignments, executes Perago task runtime locally, and returns `ProcessTaskCompletion` without polling or updating Conductor from the executor.
   - [x] Process broker runner adapter: `run_conductor_process_broker()` wraps `PeragoProcessDispatchWorker` in SDK `TaskRunner(thread_count=N, lease_extend_enabled=True)` and preserves SDK-managed polling, lease extension, and result update.
-  - [ ] Process supervisor wiring: `run_worker_supervisor(..., execution_mode="process")` still needs to launch 1 broker + N executor processes, connect IPC queues, and route workspace attempt-fence reloads through broker-owned Conductor `get_task`.
+  - [x] Process supervisor process tree and IPC queues: `run_worker_supervisor(..., execution_mode="process")` launches 1 broker + N executor processes, shares assignment/completion queues, and stops the runtime set when the broker exits.
+  - [ ] Process attempt-fence RPC: workspace attempt-fence reloads still need to move from executor-side `get_task` to broker-owned Conductor `get_task` over IPC.
 
   ## Assumptions
 

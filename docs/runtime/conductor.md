@@ -1,6 +1,6 @@
 # Conductor Runtime
 
-Perago worker child process 通过 Conductor 拉取单个 task name 的 attempt，执行本地 task body，再把 `COMPLETED`、`FAILED` 或 `FAILED_WITH_TERMINAL_ERROR` 写回 Conductor。Conductor 负责调度和重试；Perago 负责把 Conductor task snapshot 映射成强类型 attempt，并在 workspace 发布前确认 attempt 仍然是当前可写入的 attempt。
+Perago 默认 `process` runtime 由一个 Conductor broker process 拉取单个 task name 的 attempt，再派发给本地 executor process 执行 task body，并由 broker 把 `COMPLETED`、`FAILED` 或 `FAILED_WITH_TERMINAL_ERROR` 写回 Conductor。Conductor 负责调度和重试；Perago 负责把 Conductor task snapshot 映射成强类型 attempt，并在 workspace 发布前确认 attempt 仍然是当前可写入的 attempt。
 
 ## 启动前检查
 
@@ -28,7 +28,7 @@ perago start app.workers.features_build -j 2 --execution-mode process
 
 ## Poll loop
 
-当前默认 `process` runtime 中，每个 worker child process 只 poll 当前 module 中定义的单个 task name，并用 supervisor 注入的 `PERAGO_WORKER_ID` 作为 Conductor worker id。`perago start --execution-mode ...` 与 `PERAGO_EXECUTION_MODE` 的解析已经可用，优先级是 CLI 参数高于环境变量，默认值为 `process`；真正的单 broker + N executor process 调度模型会在后续重构步骤替换这一段 poll loop。
+当前默认 `process` runtime 中，supervisor 启动一个 `perago-conductor-broker` 和 N 个 `perago-executor-000N`。broker 内嵌 SDK `TaskRunner(thread_count=N)`，只 poll 当前 module 中定义的单个 task name，并用 `PERAGO_WORKER_ID_PREFIX + "Broker"` 作为 Conductor 可见 worker id。`perago start --execution-mode ...` 与 `PERAGO_EXECUTION_MODE` 的解析优先级是 CLI 参数高于环境变量，默认值为 `process`。
 
 一次循环的顺序是：
 
@@ -40,13 +40,13 @@ perago start app.workers.features_build -j 2 --execution-mode process
 6. 调用 Conductor `update_task(...)` 写回结果。
 7. 如果 update 抛出异常，记录 `failed to update Conductor task result`，等待 5 秒后继续 poll。
 
-poll loop 不在内存里排队任务，也不会在一个 Python module 内路由多个 task。并发来自 `perago start -j N` 启动的多个独立 child process。
+process mode 不会在一个 Python module 内路由多个 task。并发来自 broker SDK runner 的 `thread_count=N` 和 N 个独立 executor process；broker thread 只负责把 SDK `Task` 派发到 assignment queue 并等待 completion。
 
 显式 `thread` runtime 使用 SDK `TaskRunner` 和 `PeragoThreadWorker`。`-j N` 会传给 SDK worker 的 `thread_count`，`lease_extend_enabled=True`，并且 `register_task_def=False`、`register_schema=False`。在这个模式下，SDK thread pool 负责 poll、LeaseManager 追踪和 result update；Perago adapter 只把 SDK `Task` 转成 `ConductorTaskAttempt`，执行现有 task body/workspace 流程，再把 `RuntimeTaskResult` 转回 SDK `TaskResult`。thread mode 的 Conductor 可见 worker id 当前由 `PERAGO_WORKER_ID_PREFIX + "Broker"` 派生。
 
-process broker 重构的 adapter 和 runner wrapper 已经存在于 `PeragoProcessDispatchWorker` 与 `run_conductor_process_broker(...)`。它同样满足 SDK worker contract：`thread_count=N`、`lease_extend_enabled=True`、`register_task_def=False`、`register_schema=False`，并用 broker worker id 作为 Conductor 可见 identity。和 thread worker 不同，它不会在 SDK worker thread 内执行 task body；`execute(...)` 会把 SDK `Task` 转成 `ConductorTaskAttempt`，放入 broker-to-executor assignment queue，等待 executor 返回 `RuntimeTaskResult` completion，再映射成 SDK `TaskResult`。SDK `TaskRunner` 仍负责 broker 侧 poll、LeaseManager tracking 和 result update。
+process broker 由 `PeragoProcessDispatchWorker` 与 `run_conductor_process_broker(...)` 组成。它同样满足 SDK worker contract：`thread_count=N`、`lease_extend_enabled=True`、`register_task_def=False`、`register_schema=False`，并用 broker worker id 作为 Conductor 可见 identity。和 thread worker 不同，它不会在 SDK worker thread 内执行 task body；`execute(...)` 会把 SDK `Task` 转成 `ConductorTaskAttempt`，放入 broker-to-executor assignment queue，等待 executor 返回 `RuntimeTaskResult` completion，再映射成 SDK `TaskResult`。SDK `TaskRunner` 仍负责 broker 侧 poll、LeaseManager tracking 和 result update。
 
-process executor 的本地执行循环已经拆出为 `run_process_executor_loop(...)`。executor 只消费 `ProcessTaskAssignment`，复用现有 `execute_polled_task()` 跑 workspace 或 workspace-free task，再把同一 `task_id` 的 `ProcessTaskCompletion` 写回 completion queue；它不 poll Conductor，也不 update Conductor result。完整的 supervisor 进程树接线、IPC queue 生命周期和 attempt-fence RPC 仍是后续实现范围。
+process executor 的本地执行循环是 `run_process_executor_loop(...)`。executor 只消费 `ProcessTaskAssignment`，复用现有 `execute_polled_task()` 跑 workspace 或 workspace-free task，再把同一 `task_id` 的 `ProcessTaskCompletion` 写回 completion queue；它不 poll Conductor，也不 update Conductor result。supervisor 已经负责创建 broker/executor 进程树和共享 IPC queues；workspace attempt-fence reload 仍待改成 broker-owned `get_task` RPC。
 
 ## Attempt snapshot
 
@@ -87,9 +87,9 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 
 `COMPLETED` 必须带 output，且不能带 failure reason。失败状态必须带 `reasonForIncompletion`，且不能带 output。worker id 会写入 Conductor result，便于从 Conductor 结果反查 worker 日志目录。
 
-workspace task 如果配置了 `PublishBudget`，worker child 会把 `conductor_completion_timeout_seconds` 传给 Conductor update 请求。没有 publish budget 时使用 SDK 默认 update 行为。
+workspace task 如果配置了 `PublishBudget`，TaskDef 会使用派生出的 `responseTimeoutSeconds`，让 SDK runner 的 LeaseManager 按 publication 预算续租。LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束。没有 publish budget 时使用普通 task timeout。
 
-`ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。默认 process poll-loop 仍只保留该字段；显式 thread runtime 已交给 SDK `TaskRunner` 处理 LeaseManager 续租。后续 process broker 模式也会复用 SDK runner 管理租约。
+`ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。显式 thread runtime 和默认 process broker runtime 都交给 SDK `TaskRunner` 处理 LeaseManager 续租。
 
 ## 输入输出边界
 

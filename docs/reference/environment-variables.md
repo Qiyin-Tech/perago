@@ -30,9 +30,9 @@ Perago 目前不会把 Conductor auth key、Conductor auth secret 或 LakeFS 配
 | `PERAGO_LOG_ROOT` | optional | 平台临时目录下的 `perago/logs` | `RuntimeConfig.log_root` | worker JSONL 日志根目录。默认会探测目录是否可创建、可写。 |
 | `PERAGO_LOG_FILE_MAX_SIZE` | optional | `100MB` | `RuntimeConfig.log_file_max_size` | 接受正数加 `KB`、`MB` 或 `GB`，大小写不敏感，例如 `512KB`、`100MB`、`1.5GB`。裸数字、`0MB` 和无效单位会被拒绝。 |
 | `PERAGO_LOG_RETENTION` | optional | `30d` | `RuntimeConfig.log_retention` | 接受正整数加 `d`，大小写不敏感，例如 `7d` 或 `30D`。`0d` 和其他单位会被拒绝。 |
-| `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | `RuntimeConfig.worker_id_prefix` | 只能包含 ASCII 字母和数字。supervisor 使用它为 child process 生成 `PERAGO_WORKER_ID`。 |
-| `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 调试进程退回到 `<module-target-prefix>-pid-<pid>` | worker runtime identity | `perago start -j` 为每个 child process 写入该值。常规部署不应在 `.env` 中配置。 |
-| `PERAGO_EXECUTION_MODE` | optional | `process` | `RuntimeConfig.execution_mode` | 接受 `process` 或 `thread`，大小写不敏感。CLI `perago start --execution-mode ...` 会覆盖该环境变量。`thread` 使用 SDK `TaskRunner` 在单进程内执行；默认 `process` 的单 broker + N executor IPC 模型仍在重构计划后续步骤中落地。 |
+| `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | `RuntimeConfig.worker_id_prefix` | 只能包含 ASCII 字母和数字。supervisor 使用它派生 broker worker id 和 executor `PERAGO_WORKER_ID`。 |
+| `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 调试进程退回到 `<module-target-prefix>-pid-<pid>` | worker runtime identity | `perago start -j` 为 broker 和每个 executor child process 写入该值。常规部署不应在 `.env` 中配置。 |
+| `PERAGO_EXECUTION_MODE` | optional | `process` | `RuntimeConfig.execution_mode` | 接受 `process` 或 `thread`，大小写不敏感。CLI `perago start --execution-mode ...` 会覆盖该环境变量。`thread` 使用 SDK `TaskRunner` 在单进程内执行；默认 `process` 使用单 broker + N executor IPC 模型。 |
 
 ## `.env` 解析规则
 

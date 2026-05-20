@@ -3,7 +3,13 @@ from datetime import timedelta
 import pytest
 
 from perago import ConductorConfig, LakeFSConfig, RuntimeConfig, RuntimeConfigError, restart_backoff_seconds, worker_child_specs
-from perago.supervisor import _broker_environment, _stop_worker_processes, run_worker_supervisor
+from perago.supervisor import (
+    _broker_environment,
+    _start_broker_process,
+    _start_process_executor,
+    _stop_worker_processes,
+    run_worker_supervisor,
+)
 
 
 class FakeProcess:
@@ -89,7 +95,7 @@ def test_run_worker_supervisor_uses_thread_runner_without_child_processes(monkey
 
     monkeypatch.setattr("perago.supervisor._thread_runner_main", fake_thread_runner_main)
     monkeypatch.setattr(
-        "perago.supervisor._start_worker_process",
+        "perago.supervisor._start_process_executor",
         lambda **kwargs: pytest.fail("thread mode must not start executor child processes"),
     )
 
@@ -112,6 +118,126 @@ def test_broker_environment_derives_visible_worker_id() -> None:
         "PERAGO_WORKER_ID_PREFIX": "featuresBuild",
         "PERAGO_WORKER_ID": "featuresBuildBroker",
     }
+
+
+def test_run_worker_supervisor_process_mode_starts_broker_and_executors(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key="lakefs-secret",
+        ),
+    )
+    started = {"executors": []}
+    stopped = []
+
+    class FakeBroker:
+        exitcode = 7
+
+        def is_alive(self) -> bool:
+            return False
+
+    class FakeExecutor:
+        def __init__(self, worker_id: str) -> None:
+            self.worker_id = worker_id
+
+        def is_alive(self) -> bool:
+            return True
+
+    def fake_start_broker_process(**kwargs):
+        started["broker"] = kwargs
+        return FakeBroker()
+
+    def fake_start_process_executor(**kwargs):
+        started["executors"].append(kwargs)
+        return FakeExecutor(kwargs["spec"].worker_id)
+
+    monkeypatch.setattr("perago.supervisor._start_broker_process", fake_start_broker_process)
+    monkeypatch.setattr("perago.supervisor._start_process_executor", fake_start_process_executor)
+    monkeypatch.setattr("perago.supervisor._stop_worker_processes", lambda processes: stopped.extend(processes))
+
+    run_worker_supervisor(
+        config=config,
+        module_target="app.workers.features_build",
+        process_count=2,
+        execution_mode="process",
+    )
+
+    assert started["broker"]["config"] is config
+    assert started["broker"]["module_target"] == "app.workers.features_build"
+    assert started["broker"]["process_count"] == 2
+    assert len(started["executors"]) == 2
+    assert [item["spec"].worker_id for item in started["executors"]] == ["worker0001", "worker0002"]
+    assert all(item["assignment_queue"] is started["broker"]["assignment_queue"] for item in started["executors"])
+    assert all(item["completion_queue"] is started["broker"]["completion_queue"] for item in started["executors"])
+    assert len(stopped) == 3
+
+
+def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path) -> None:
+    created = []
+
+    class FakeProcess:
+        def __init__(self, *, target, kwargs, name) -> None:
+            self.target = target
+            self.kwargs = kwargs
+            self.name = name
+            self.started = False
+            created.append(self)
+
+        def start(self) -> None:
+            self.started = True
+
+    monkeypatch.setattr("perago.supervisor.multiprocessing.Process", FakeProcess)
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key="lakefs-secret",
+        ),
+    )
+    assignment_queue = object()
+    completion_queue = object()
+    spec = worker_child_specs(
+        base_env={"PERAGO_WORKER_ID_PREFIX": "worker"},
+        module_target="app.workers.features_build",
+        process_count=1,
+    )[0]
+
+    broker = _start_broker_process(
+        config=config,
+        module_target="app.workers.features_build",
+        process_count=3,
+        assignment_queue=assignment_queue,
+        completion_queue=completion_queue,
+    )
+    executor = _start_process_executor(
+        config=config,
+        module_target="app.workers.features_build",
+        spec=spec,
+        assignment_queue=assignment_queue,
+        completion_queue=completion_queue,
+    )
+
+    assert broker.started is True
+    assert executor.started is True
+    assert created[0].name == "perago-conductor-broker"
+    assert created[0].kwargs["process_count"] == 3
+    assert created[1].name == "perago-executor-0001"
+    assert created[1].kwargs["child_env"]["PERAGO_WORKER_ID"] == "worker0001"
+    assert created[1].kwargs["assignment_queue"] is assignment_queue
+    assert created[1].kwargs["completion_queue"] is completion_queue
 
 
 def test_stop_worker_processes_escalates_after_grace_periods() -> None:
