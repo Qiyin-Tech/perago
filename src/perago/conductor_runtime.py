@@ -280,6 +280,7 @@ def run_conductor_thread_runner(
     stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
+    completion_update_timeout_seconds: int | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoThreadWorker(
@@ -293,10 +294,10 @@ def run_conductor_thread_runner(
         publish_workspace=publish_workspace,
         cleanup_staging=cleanup_staging,
     )
-    runner = runner_cls(
-        worker,
-        configuration=Configuration(server_api_url=conductor_config.server_url),
-    )
+    runner_config = Configuration(server_api_url=conductor_config.server_url)
+    if completion_update_timeout_seconds is not None:
+        setattr(runner_config, "request_timeout", completion_update_timeout_seconds)
+    runner = runner_cls(worker, configuration=runner_config)
 
     def request_stop(signum: int, frame: FrameType | None) -> None:
         del signum, frame
@@ -324,6 +325,7 @@ def run_conductor_process_broker(
     attempt_fence_response_queues: Mapping[str, Any] | None = None,
     client: ConductorRuntimeClient | None = None,
     completion_timeout_seconds: float | None = None,
+    completion_update_timeout_seconds: int | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoProcessDispatchWorker(
@@ -337,10 +339,10 @@ def run_conductor_process_broker(
         client=client,
         completion_timeout_seconds=completion_timeout_seconds,
     )
-    runner = runner_cls(
-        worker,
-        configuration=Configuration(server_api_url=conductor_config.server_url),
-    )
+    runner_config = Configuration(server_api_url=conductor_config.server_url)
+    if completion_update_timeout_seconds is not None:
+        setattr(runner_config, "request_timeout", completion_update_timeout_seconds)
+    runner = runner_cls(worker, configuration=runner_config)
 
     def request_stop(signum: int, frame: FrameType | None) -> None:
         del signum, frame

@@ -917,6 +917,38 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
     assert created["worker"].thread_count == 3
     assert created["worker"].lease_extend_enabled is True
     assert created["worker"].get_identity() == "metadataBroker"
+    assert created["configuration"].request_timeout is None
+
+
+def test_run_conductor_thread_runner_sets_completion_update_timeout() -> None:
+    created = {}
+
+    class FakeRunner:
+        def __init__(self, worker, *, configuration) -> None:
+            created["configuration"] = configuration
+
+        def run(self) -> None:
+            return
+
+        def stop(self) -> None:
+            return
+
+    run_conductor_thread_runner(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
+        client=object(),
+        workspace_root="unused",
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+        completion_update_timeout_seconds=17,
+        runner_cls=FakeRunner,
+    )
+
+    assert created["configuration"].request_timeout == 17
 
 
 def test_run_conductor_process_broker_builds_sdk_runner() -> None:
@@ -952,3 +984,31 @@ def test_run_conductor_process_broker_builds_sdk_runner() -> None:
     assert created["worker"].get_identity() == "metadataBroker"
     assert created["worker"]._assignment_queue is assignment_queue
     assert created["worker"]._completion_queue is completion_queue
+    assert created["configuration"].request_timeout is None
+
+
+def test_run_conductor_process_broker_sets_completion_update_timeout() -> None:
+    created = {}
+
+    class FakeRunner:
+        def __init__(self, worker, *, configuration) -> None:
+            created["configuration"] = configuration
+
+        def run(self) -> None:
+            return
+
+        def stop(self) -> None:
+            return
+
+    run_conductor_process_broker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        process_count=1,
+        conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
+        assignment_queue=object(),
+        completion_queue=object(),
+        completion_update_timeout_seconds=19,
+        runner_cls=FakeRunner,
+    )
+
+    assert created["configuration"].request_timeout == 19

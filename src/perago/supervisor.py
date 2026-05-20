@@ -609,6 +609,7 @@ def _broker_process_main(
     if conductor_config is None:
         raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    publish_budget = task.controls.publish_budget
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process broker started"
@@ -623,6 +624,11 @@ def _broker_process_main(
         attempt_fence_request_queue=attempt_fence_request_queue,
         attempt_fence_response_queues=attempt_fence_response_queues,
         client=conductor,
+        completion_update_timeout_seconds=(
+            None
+            if publish_budget is None
+            else publish_budget.conductor_completion_timeout_seconds
+        ),
     )
 
 
@@ -706,6 +712,11 @@ def _thread_runner_main(
         stage_workspace=lakefs.stage_workspace,
         publish_workspace=lakefs.publish_workspace,
         cleanup_staging=lakefs.cleanup_staging,
+        completion_update_timeout_seconds=(
+            None
+            if publish_budget is None
+            else publish_budget.conductor_completion_timeout_seconds
+        ),
     )
 
 
