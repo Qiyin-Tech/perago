@@ -11,4 +11,5 @@ worker-processes
 logging
 conductor
 lakefs
+workspace-publication
 ```
