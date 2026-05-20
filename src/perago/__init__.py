@@ -27,6 +27,8 @@ from perago.guards import (
     require_glob,
 )
 from perago.metadata import (
+    WorkspacePublicationPlan,
+    build_workspace_publication_plan,
     choose_publish_base,
     confirm_metadata_extra,
     logical_task_key,
@@ -72,10 +74,12 @@ __all__ = [
     "TimeoutPolicy",
     "WorkerChildSpec",
     "WorkspaceInput",
+    "WorkspacePublicationPlan",
     "WorkspaceSpec",
     "assert_current_attempt_snapshot",
     "build_taskdef",
     "build_workspace_free_task_output",
+    "build_workspace_publication_plan",
     "build_workspace_task_output",
     "check_guardrails",
     "choose_publish_base",

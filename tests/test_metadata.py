@@ -4,7 +4,9 @@ import pytest
 
 from perago import (
     PublishFenceError,
+    WorkspacePublicationPlan,
     WorkspaceSpec,
+    build_workspace_publication_plan,
     choose_publish_base,
     confirm_metadata_extra,
     logical_task_key,
@@ -143,3 +145,29 @@ def test_confirm_metadata_extra_matches_publish_metadata_fields() -> None:
         "perago.expected_head": WORKSPACE_INPUT["ref"],
         "perago.supersedes": None,
     }
+
+
+def test_workspace_publication_plan_combines_publish_fence_and_metadata() -> None:
+    plan = build_workspace_publication_plan(
+        task=Attempt(retried_task_id="task-old"),
+        workspace=WORKSPACE_INPUT,
+        workspace_spec=WorkspaceSpec(prefix="/audio/render"),
+        current_head="head-2",
+        commits=[
+            {"id": "head-1", "metadata": {"perago.logical_task_key": "wf-7f3d:build:2:0:features.build"}},
+            {"id": "head-2", "metadata": {"perago.logical_task_key": "wf-7f3d:build:2:0:features.build"}},
+        ],
+        staging_commit="staging-commit",
+    )
+
+    assert isinstance(plan, WorkspacePublicationPlan)
+    assert plan.logical_task_key == "wf-7f3d:build:2:0:features.build"
+    assert plan.staging_branch == "perago/staging/wf-7f3d/build/seq=2/iteration=0/task_id=task-9b4c/retry=1"
+    assert plan.publish_base_head == "head-2"
+    assert plan.superseded_commit == "head-2"
+    assert plan.try_metadata["perago.phase"] == "try"
+    assert plan.confirm_metadata["perago.phase"] == "confirm"
+    assert plan.confirm_metadata["perago.staging_branch"] == plan.staging_branch
+    assert plan.confirm_metadata["perago.staging_commit"] == "staging-commit"
+    assert plan.confirm_metadata["perago.expected_head"] == "head-2"
+    assert plan.confirm_metadata["perago.supersedes"] == "head-2"

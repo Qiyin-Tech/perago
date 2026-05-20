@@ -2,11 +2,22 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from perago._segments import safe_segment
 from perago.errors import PublishFenceError
 from perago.models import WorkspaceInput, WorkspaceSpec
+
+
+@dataclass(frozen=True)
+class WorkspacePublicationPlan:
+    logical_task_key: str
+    staging_branch: str
+    publish_base_head: str
+    superseded_commit: str | None
+    try_metadata: dict[str, str]
+    confirm_metadata: dict[str, str]
 
 
 def logical_task_key(task: object) -> str:
@@ -111,6 +122,51 @@ def confirm_metadata_extra(
         "perago.expected_head": expected_head,
         "perago.supersedes": superseded_commit,
     }
+
+
+def build_workspace_publication_plan(
+    *,
+    task: object,
+    workspace: WorkspaceInput | dict[str, Any],
+    workspace_spec: WorkspaceSpec,
+    current_head: str,
+    commits: Sequence[object],
+    staging_commit: str,
+) -> WorkspacePublicationPlan:
+    key = logical_task_key(task)
+    publish_base_head, superseded_commit = choose_publish_base(
+        workspace=workspace,
+        current_head=current_head,
+        commits=commits,
+        logical_task_key=key,
+    )
+    staging_branch = staging_branch_name(task)
+    return WorkspacePublicationPlan(
+        logical_task_key=key,
+        staging_branch=staging_branch,
+        publish_base_head=publish_base_head,
+        superseded_commit=superseded_commit,
+        try_metadata=perago_metadata(
+            task=task,
+            workspace=workspace,
+            workspace_spec=workspace_spec,
+            logical_task_key=key,
+            phase="try",
+        ),
+        confirm_metadata=perago_metadata(
+            task=task,
+            workspace=workspace,
+            workspace_spec=workspace_spec,
+            logical_task_key=key,
+            phase="confirm",
+            extra=confirm_metadata_extra(
+                staging_branch=staging_branch,
+                staging_commit=staging_commit,
+                expected_head=publish_base_head,
+                superseded_commit=superseded_commit,
+            ),
+        ),
+    )
 
 
 def _commit_id(commit: object) -> str:
