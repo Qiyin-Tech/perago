@@ -63,6 +63,13 @@ def test_rejects_task_parameter_defaults() -> None:
         load_module_task("app.workers.bad_default_param")
 
 
+def test_rejects_missing_task_contract_annotations() -> None:
+    with pytest.raises(TaskDefinitionError, match="params must be annotated"):
+        load_module_task("app.workers.bad_missing_params_annotation")
+    with pytest.raises(TaskDefinitionError, match="return value must be annotated"):
+        load_module_task("app.workers.bad_missing_return_annotation")
+
+
 def test_rejects_multi_task_module() -> None:
     with pytest.raises(TaskDefinitionError, match="more than one"):
         load_module_task("app.workers.multi_task")
