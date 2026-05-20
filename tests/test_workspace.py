@@ -6,6 +6,7 @@ import pytest
 from perago.workspace import (
     ATTEMPT_WORKSPACE_MARKER,
     cleanup_attempt_workspace,
+    cleanup_attempt_workspace_safely,
     prepare_attempt_workspace,
     sweep_abandoned_attempt_workspaces,
 )
@@ -50,6 +51,22 @@ def test_cleanup_requires_attempt_marker(tmp_path) -> None:
     with pytest.raises(FileNotFoundError, match="not a Perago attempt workspace"):
         cleanup_attempt_workspace(workspace_dir)
 
+    assert workspace_dir.exists()
+
+
+def test_safe_cleanup_logs_and_preserves_cleanup_failure(tmp_path) -> None:
+    task = Attempt(
+        workflow_instance_id="wf-7f3d",
+        task_def_name="features.build",
+        task_id="9b4c",
+        retry_count=2,
+    )
+    workspace_dir = tmp_path / "not-owned"
+    workspace_dir.mkdir()
+
+    cleaned = cleanup_attempt_workspace_safely(workspace_dir, task)
+
+    assert cleaned is False
     assert workspace_dir.exists()
 
 

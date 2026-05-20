@@ -5,6 +5,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from perago._segments import safe_segment
 
 
@@ -40,6 +42,20 @@ def prepare_attempt_workspace(workspace_root: Path, task: object) -> Path:
 def cleanup_attempt_workspace(workspace_dir: Path) -> None:
     _require_attempt_marker(workspace_dir)
     shutil.rmtree(workspace_dir)
+
+
+def cleanup_attempt_workspace_safely(workspace_dir: Path, task: object) -> bool:
+    try:
+        cleanup_attempt_workspace(workspace_dir)
+    except OSError as exc:
+        logger.bind(
+            workspace_dir=str(workspace_dir),
+            workflow_instance_id=_task_attr(task, "workflow_instance_id"),
+            task_id=_task_attr(task, "task_id"),
+            retry_count=_task_attr(task, "retry_count"),
+        ).opt(exception=exc).error("failed to clean attempt-local workspace")
+        return False
+    return True
 
 
 def sweep_abandoned_attempt_workspaces(workspace_root: Path) -> list[Path]:
