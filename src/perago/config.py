@@ -134,6 +134,21 @@ def worker_id_for_child(prefix: str, index: int) -> str:
     return f"{prefix}{index:04d}"
 
 
+def child_environment(base_env: dict[str, str], module_target: str, index: int) -> dict[str, str]:
+    env = dict(base_env)
+    prefix = resolve_worker_id_prefix(module_target, env)
+    env["PERAGO_WORKER_ID_PREFIX"] = prefix
+    env["PERAGO_WORKER_ID"] = worker_id_for_child(prefix, index)
+    return env
+
+
+def resolve_worker_id(module_target: str, env: dict[str, str]) -> str:
+    configured = env.get("PERAGO_WORKER_ID")
+    if configured:
+        return configured
+    return f"{default_worker_id_prefix(module_target)}-pid-{os.getpid()}"
+
+
 def _strip_env_value(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
