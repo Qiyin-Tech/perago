@@ -55,6 +55,37 @@ class TaskControls(BaseModel):
     limits: ExecutionLimits = Field(default_factory=ExecutionLimits)
 
 
+class PublishBudget(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_changed_objects: int = Field(ge=1)
+    max_changed_bytes: int = Field(ge=1)
+    observed_merge_p99_seconds: int = Field(ge=0)
+    safety_margin_seconds: int = Field(ge=0)
+    lakefs_merge_timeout_seconds: int = Field(ge=1)
+    conductor_completion_timeout_seconds: int = Field(ge=1)
+    worker_shutdown_grace_seconds: int = Field(ge=1)
+    heartbeat_interval_seconds: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def validate_merge_timeout_budget(self) -> PublishBudget:
+        required_merge_timeout = self.observed_merge_p99_seconds + self.safety_margin_seconds
+        if self.lakefs_merge_timeout_seconds < required_merge_timeout:
+            raise TaskDefinitionError(
+                "lakefs_merge_timeout_seconds must cover observed_merge_p99_seconds plus safety_margin_seconds"
+            )
+        return self
+
+    @property
+    def response_timeout_seconds(self) -> int:
+        return (
+            self.lakefs_merge_timeout_seconds
+            + self.conductor_completion_timeout_seconds
+            + self.worker_shutdown_grace_seconds
+            + self.heartbeat_interval_seconds
+        )
+
+
 class WorkspaceSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 

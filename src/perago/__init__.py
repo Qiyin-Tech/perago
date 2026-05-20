@@ -39,6 +39,7 @@ from perago.metadata import (
 )
 from perago.models import (
     ExecutionLimits,
+    PublishBudget,
     RetryPolicy,
     TaskControls,
     TimeoutPolicy,
@@ -73,6 +74,7 @@ __all__ = [
     "PostGuardrailViolation",
     "PublishFenceError",
     "PreGuardrailViolation",
+    "PublishBudget",
     "RetryPolicy",
     "RuntimeConfig",
     "RuntimeConfigError",
