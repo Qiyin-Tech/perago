@@ -1,3 +1,5 @@
+import pathlib
+
 from typer.testing import CliRunner
 
 from perago.cli import app
@@ -94,6 +96,8 @@ def test_extract_cli_writes_taskdef(monkeypatch, tmp_path) -> None:
 
     assert result.exit_code == 0
     assert (tmp_path / "generated" / "taskdefs" / "metadata.validate.json").exists()
+    generated_files = sorted(path.relative_to(tmp_path / "generated") for path in (tmp_path / "generated").rglob("*") if path.is_file())
+    assert generated_files == [pathlib.Path("taskdefs/metadata.validate.json")]
 
 
 def test_start_cli_reports_planned_worker_ids_without_starting_services(monkeypatch, tmp_path) -> None:
