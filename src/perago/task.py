@@ -104,6 +104,8 @@ def _build_task_definition(
     parameters = list(signature.parameters.values())
     if any(parameter.kind is not inspect.Parameter.POSITIONAL_OR_KEYWORD for parameter in parameters):
         raise TaskDefinitionError("task function must not use *args, **kwargs, or keyword-only fields")
+    if any(parameter.default is not inspect.Parameter.empty for parameter in parameters):
+        raise TaskDefinitionError("task function parameters must not declare defaults")
 
     try:
         hints = get_type_hints(fn)

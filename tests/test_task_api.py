@@ -56,6 +56,11 @@ def test_rejects_async_task_functions() -> None:
         load_module_task("app.workers.bad_async_task")
 
 
+def test_rejects_task_parameter_defaults() -> None:
+    with pytest.raises(TaskDefinitionError, match="must not declare defaults"):
+        load_module_task("app.workers.bad_default_param")
+
+
 def test_rejects_multi_task_module() -> None:
     with pytest.raises(TaskDefinitionError, match="more than one"):
         load_module_task("app.workers.multi_task")
