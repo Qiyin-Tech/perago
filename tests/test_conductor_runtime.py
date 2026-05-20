@@ -3,7 +3,10 @@ from conductor.client.http.models.task import Task
 from perago.conductor_runtime import (
     ConductorTaskAttempt,
     OrkesConductorRuntimeClient,
+    PeragoProcessDispatchWorker,
     PeragoThreadWorker,
+    ProcessTaskAssignment,
+    ProcessTaskCompletion,
     conductor_task_to_attempt,
     run_conductor_thread_runner,
     runtime_result_to_sdk_task_result,
@@ -162,6 +165,109 @@ def test_thread_worker_executes_polled_task_and_maps_result() -> None:
     assert result.worker_id == "metadataBroker"
     assert result.status == "COMPLETED"
     assert result.output_data == {"result": {"valid": True, "reason": None}}
+
+
+def test_process_dispatch_worker_configures_sdk_worker_contract() -> None:
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=4,
+        assignment_queue=object(),
+        completion_queue=object(),
+    )
+
+    assert worker.get_identity() == "metadataBroker"
+    assert worker.thread_count == 4
+    assert worker.lease_extend_enabled is True
+    assert worker.register_task_def is False
+    assert worker.register_schema is False
+    assert worker.get_task_definition_name() == "metadata.validate"
+
+
+def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> None:
+    class FakeAssignmentQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    class FakeCompletionQueue:
+        def get(self):
+            return ProcessTaskCompletion(
+                task_id="task-9b4c",
+                result=completed_result({"result": {"valid": True, "reason": None}}),
+            )
+
+    assignment_queue = FakeAssignmentQueue()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=assignment_queue,
+        completion_queue=FakeCompletionQueue(),
+    )
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        iteration=1,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+        response_timeout_seconds=75,
+    )
+
+    result = worker.execute(task)
+
+    assert len(assignment_queue.items) == 1
+    assignment = assignment_queue.items[0]
+    assert isinstance(assignment, ProcessTaskAssignment)
+    assert assignment.attempt.task_id == "task-9b4c"
+    assert assignment.attempt.response_timeout_seconds == 75
+    assert result.workflow_instance_id == "wf-7f3d"
+    assert result.task_id == "task-9b4c"
+    assert result.worker_id == "metadataBroker"
+    assert result.status == "COMPLETED"
+    assert result.output_data == {"result": {"valid": True, "reason": None}}
+
+
+def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None:
+    class FakeAssignmentQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeCompletionQueue:
+        def get(self):
+            return ProcessTaskCompletion(
+                task_id="other-task",
+                result=completed_result({"result": {"valid": True, "reason": None}}),
+            )
+
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=FakeCompletionQueue(),
+    )
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+    )
+
+    result = worker.execute(task)
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "executor returned completion for task other-task; expected task-9b4c"
 
 
 def test_run_conductor_thread_runner_builds_sdk_runner() -> None:

@@ -24,6 +24,8 @@ Perago 当前已支持解析 execution mode 公共接口：`perago start --execu
 
 当前已实现的并发单位仍是独立进程，不是同一进程内的线程池或 asyncio worker pool。每个 child process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor。
 
+process broker 的 adapter 基础已经落地，但 supervisor 还没有切换到新进程树。`PeragoProcessDispatchWorker` 会让 SDK `TaskRunner(thread_count=N)` 在 broker 内 poll、续租和 update result，同时把 task body 执行派发到 executor assignment queue。executor completion 必须带回同一个 `task_id` 的 `RuntimeTaskResult`；broker adapter 会 fail closed 处理无法匹配的 completion。后续还需要接上 broker 进程、executor loop、attempt fence reload RPC 和 shutdown 协调，才能替换当前每个 child 自己 poll 的中间实现。
+
 显式 `thread` 模式不会创建 executor child process：
 
 ```text

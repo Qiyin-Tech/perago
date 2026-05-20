@@ -4,6 +4,7 @@ import signal
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from queue import Empty
 from types import FrameType
 from typing import Any, Protocol
 
@@ -27,7 +28,7 @@ from perago.execution import (
     run_workspace_free_task_attempt,
     run_workspace_task_attempt,
 )
-from perago.result import RuntimeTaskResult
+from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
 
 
@@ -48,6 +49,17 @@ class ConductorTaskAttempt:
     input_data: Mapping[str, Any]
     retried_task_id: str | None = None
     response_timeout_seconds: int | None = None
+
+
+@dataclass(frozen=True)
+class ProcessTaskAssignment:
+    attempt: ConductorTaskAttempt
+
+
+@dataclass(frozen=True)
+class ProcessTaskCompletion:
+    task_id: str
+    result: RuntimeTaskResult
 
 
 class ConductorRuntimeClient(Protocol):
@@ -159,6 +171,55 @@ class PeragoThreadWorker(WorkerInterface):
             cleanup_staging=self._cleanup_staging,
         )
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
+
+
+class PeragoProcessDispatchWorker(WorkerInterface):
+    def __init__(
+        self,
+        *,
+        task: TaskDefinition,
+        worker_id: str,
+        thread_count: int,
+        assignment_queue: Any,
+        completion_queue: Any,
+        completion_timeout_seconds: float | None = None,
+    ) -> None:
+        super().__init__(task.name)
+        self.task = task
+        self.worker_id = worker_id
+        self.thread_count = thread_count
+        self.register_task_def = False
+        self.register_schema = False
+        self.lease_extend_enabled = True
+        self._assignment_queue = assignment_queue
+        self._completion_queue = completion_queue
+        self._completion_timeout_seconds = completion_timeout_seconds
+
+    def get_identity(self) -> str:
+        return self.worker_id
+
+    def execute(self, task: Task) -> TaskResult:
+        attempt = conductor_task_to_attempt(task)
+        self._assignment_queue.put(ProcessTaskAssignment(attempt=attempt))
+        result = self._wait_for_completion(attempt)
+        return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
+
+    def _wait_for_completion(self, attempt: ConductorTaskAttempt) -> RuntimeTaskResult:
+        try:
+            if self._completion_timeout_seconds is None:
+                completion = self._completion_queue.get()
+            else:
+                completion = self._completion_queue.get(timeout=self._completion_timeout_seconds)
+        except Empty:
+            return failed_result(f"executor did not return result for task {attempt.task_id}")
+
+        if not isinstance(completion, ProcessTaskCompletion):
+            return failed_result(f"executor returned invalid completion for task {attempt.task_id}")
+        if completion.task_id != attempt.task_id:
+            return failed_result(
+                f"executor returned completion for task {completion.task_id}; expected {attempt.task_id}"
+            )
+        return completion.result
 
 
 def run_conductor_thread_runner(
