@@ -488,10 +488,3 @@ class WorkspaceOutput(WorkspaceRef):
         Published commit ref.
     """
 
-
-def validate_worker_id_prefix(value: str) -> str:
-    if not value:
-        raise TaskDefinitionError("PERAGO_WORKER_ID_PREFIX must not be empty")
-    if not re.fullmatch(r"[A-Za-z0-9]+", value):
-        raise TaskDefinitionError("PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits")
-    return value
