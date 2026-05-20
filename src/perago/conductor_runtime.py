@@ -271,6 +271,44 @@ def run_conductor_thread_runner(
         signal.signal(signal.SIGTERM, previous_term)
 
 
+def run_conductor_process_broker(
+    *,
+    task: TaskDefinition,
+    worker_id: str,
+    process_count: int,
+    conductor_config: ConductorConfig,
+    assignment_queue: Any,
+    completion_queue: Any,
+    completion_timeout_seconds: float | None = None,
+    runner_cls: type[TaskRunner] = TaskRunner,
+) -> None:
+    worker = PeragoProcessDispatchWorker(
+        task=task,
+        worker_id=worker_id,
+        thread_count=process_count,
+        assignment_queue=assignment_queue,
+        completion_queue=completion_queue,
+        completion_timeout_seconds=completion_timeout_seconds,
+    )
+    runner = runner_cls(
+        worker,
+        configuration=Configuration(server_api_url=conductor_config.server_url),
+    )
+
+    def request_stop(signum: int, frame: FrameType | None) -> None:
+        del signum, frame
+        runner.stop()
+
+    previous_int = signal.signal(signal.SIGINT, request_stop)
+    previous_term = signal.signal(signal.SIGTERM, request_stop)
+    try:
+        runner.run()
+    finally:
+        runner.stop()
+        signal.signal(signal.SIGINT, previous_int)
+        signal.signal(signal.SIGTERM, previous_term)
+
+
 def run_process_executor_loop(
     *,
     task: TaskDefinition,

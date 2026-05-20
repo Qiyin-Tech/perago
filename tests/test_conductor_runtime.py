@@ -9,6 +9,7 @@ from perago.conductor_runtime import (
     ProcessTaskCompletion,
     StopProcessExecutor,
     conductor_task_to_attempt,
+    run_conductor_process_broker,
     run_process_executor_loop,
     run_conductor_thread_runner,
     runtime_result_to_sdk_task_result,
@@ -348,6 +349,41 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
     assert created["worker"].thread_count == 3
     assert created["worker"].lease_extend_enabled is True
     assert created["worker"].get_identity() == "metadataBroker"
+
+
+def test_run_conductor_process_broker_builds_sdk_runner() -> None:
+    created = {}
+    assignment_queue = object()
+    completion_queue = object()
+
+    class FakeRunner:
+        def __init__(self, worker, *, configuration) -> None:
+            created["worker"] = worker
+            created["configuration"] = configuration
+
+        def run(self) -> None:
+            created["ran"] = True
+
+        def stop(self) -> None:
+            created["stopped"] = True
+
+    run_conductor_process_broker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        process_count=3,
+        conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
+        assignment_queue=assignment_queue,
+        completion_queue=completion_queue,
+        runner_cls=FakeRunner,
+    )
+
+    assert created["ran"] is True
+    assert created["stopped"] is True
+    assert created["worker"].thread_count == 3
+    assert created["worker"].lease_extend_enabled is True
+    assert created["worker"].get_identity() == "metadataBroker"
+    assert created["worker"]._assignment_queue is assignment_queue
+    assert created["worker"]._completion_queue is completion_queue
 
 
 def test_orkes_conductor_update_task_uses_configured_request_timeout() -> None:
