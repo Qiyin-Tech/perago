@@ -765,6 +765,8 @@ LakeFS endpoint and credentials are worker-local configuration, for example from
 
 The workspace prefix is task metadata, not workflow data. Each task declares the prefix it exposes to the business function through `WorkspaceSpec(prefix=...)`. Prefix mapping is required MVP runtime behavior.
 
+Perago validates the workflow-carried workspace input with the `WorkspaceInput` model.
+
 `WorkspaceSpec(prefix=...)` tells Perago which LakeFS path prefix should become the local workspace root for this task. For example, if a task declares `WorkspaceSpec(prefix="audio/render")`, then `workspace / "raw"` in business code maps to the `audio/render/raw` path under the LakeFS repository/ref from Conductor input.
 
 Different workers may expose different prefixes from the same repository/ref. That is why `prefix` belongs to task code, not to the workflow-carried `workspace` value.
@@ -1051,6 +1053,8 @@ Workspace task output:
 ```
 
 For workspace task workers, Perago must commit changes to the target LakeFS branch and attempt local cleanup before reporting the Conductor task as completed. Downstream workers receive the same target branch plus the new immutable commit ref.
+
+Perago validates the committed workspace reference with the `WorkspaceOutput` model before reporting task completion.
 
 The workflow carries both a writable branch name, such as `main`, and an immutable commit ref. The commit ref gives each worker a deterministic input version for retries; the branch is the write target advanced by successful workers.
 
