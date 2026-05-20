@@ -60,6 +60,17 @@ def test_check_cli_reports_absolute_guardrail_paths(monkeypatch, tmp_path) -> No
     assert "guardrail paths must be relative to WorkspaceSpec" in result.output
 
 
+def test_check_cli_reports_task_controls_validation_errors(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.bad_controls"])
+
+    assert result.exit_code == 1
+    assert "rate_limit_frequency_in_seconds and rate_limit_per_frequency" in result.output
+
+
 def test_extract_cli_writes_taskdef(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
