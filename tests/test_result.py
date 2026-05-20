@@ -64,3 +64,8 @@ def test_runtime_task_result_rejects_inconsistent_payload_shapes() -> None:
         RuntimeTaskResult(status="FAILED")
     with pytest.raises(ValidationError, match="must not include output"):
         RuntimeTaskResult(status="FAILED", output={}, reason_for_incompletion="failed")
+
+
+def test_runtime_task_result_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuntimeTaskResult(status="COMPLETED", output={}, worker_id="worker-1")

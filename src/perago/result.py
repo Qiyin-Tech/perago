@@ -11,7 +11,7 @@ TaskResultStatus = Literal["COMPLETED", "FAILED", "FAILED_WITH_TERMINAL_ERROR"]
 
 
 class RuntimeTaskResult(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     status: TaskResultStatus
     output: dict[str, Any] | None = None
