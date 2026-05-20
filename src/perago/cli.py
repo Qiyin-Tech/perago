@@ -6,9 +6,10 @@ import typer
 from pydantic import ValidationError
 from pydantic.errors import PydanticInvalidForJsonSchema
 
+from perago.conductor_runtime import OrkesConductorRuntimeClient
 from perago.config import load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
-from perago.supervisor import worker_child_specs
+from perago.supervisor import run_worker_supervisor
 from perago.task import load_module_task
 from perago.taskdef import build_taskdef, write_taskdef
 
@@ -47,23 +48,25 @@ def extract(module_target: str, out: Path = typer.Option(..., "--out")) -> None:
 
 @app.command()
 def start(module_target: str, j: int = typer.Option(1, "-j", min=1)) -> None:
-    """Validate startup inputs; worker polling is implemented with service integration."""
+    """Start Conductor worker processes for one Perago task module."""
     try:
         config = load_runtime_config(module_target)
+        if config.conductor is None:
+            raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
+        if config.lakefs is None:
+            raise RuntimeConfigError("LakeFS config is required for perago start")
         task = load_module_task(module_target)
         build_taskdef(task)
-        workers = worker_child_specs(
-            base_env={"PERAGO_WORKER_ID_PREFIX": config.worker_id_prefix},
-            module_target=module_target,
-            process_count=j,
-        )
+        conductor = OrkesConductorRuntimeClient.from_config(config.conductor)
+        if not conductor.taskdef_exists(task.name):
+            raise RuntimeConfigError(
+                f"Conductor TaskDef {task.name!r} is not registered; run perago extract and register it before start"
+            )
     except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
         _fail(str(exc))
-    _fail(
-        "perago start is reserved for the Conductor/LakeFS worker integration phase; "
-        f"validated module={module_target} worker_processes={j} "
-        f"worker_ids={','.join(worker.worker_id for worker in workers)}"
-    )
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"failed to validate Conductor TaskDef: {exc}")
+    run_worker_supervisor(config=config, module_target=module_target, process_count=j)
 
 
 def _fail(message: str) -> None:

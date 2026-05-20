@@ -8,8 +8,6 @@ def test_env_example_contains_runtime_connection_keys() -> None:
 
     assert values == {
         "CONDUCTOR_SERVER_URL": "http://localhost:8080/api",
-        "CONDUCTOR_AUTH_KEY": "replace-me",
-        "CONDUCTOR_AUTH_SECRET": "replace-me",
         "LAKECTL_SERVER_ENDPOINT_URL": "http://localhost:8000",
         "LAKECTL_CREDENTIALS_ACCESS_KEY_ID": "replace-me",
         "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY": "replace-me",

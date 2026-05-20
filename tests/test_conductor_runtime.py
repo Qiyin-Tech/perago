@@ -1,0 +1,129 @@
+from conductor.client.http.models.task import Task
+
+from perago.conductor_runtime import (
+    ConductorTaskAttempt,
+    conductor_task_to_attempt,
+    runtime_result_to_sdk_task_result,
+    run_worker_poll_loop,
+)
+from perago.result import completed_result, failed_result, terminal_failed_result
+from perago.task import load_module_task
+
+
+def _attempt(input_data=None) -> ConductorTaskAttempt:
+    return ConductorTaskAttempt(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        iteration=1,
+        status="IN_PROGRESS",
+        input_data=input_data
+        or {
+            "params": {
+                "song_id": "song-000123",
+                "min_duration_seconds": 30,
+            }
+        },
+    )
+
+
+def test_conductor_task_to_attempt_maps_runtime_fields() -> None:
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="features.build",
+        reference_task_name="build_features",
+        seq=3,
+        iteration=1,
+        status="IN_PROGRESS",
+        input_data={"params": {"value": 1}},
+    )
+
+    attempt = conductor_task_to_attempt(task)
+
+    assert attempt.workflow_instance_id == "wf-7f3d"
+    assert attempt.task_id == "task-9b4c"
+    assert attempt.retry_count == 2
+    assert attempt.task_def_name == "features.build"
+    assert attempt.reference_task_name == "build_features"
+    assert attempt.seq == 3
+    assert attempt.iteration == 1
+    assert attempt.input_data == {"params": {"value": 1}}
+
+
+def test_runtime_result_to_sdk_task_result_maps_completed_and_failures() -> None:
+    attempt = _attempt()
+
+    completed = runtime_result_to_sdk_task_result(
+        attempt,
+        completed_result({"result": {"valid": True}}),
+        worker_id="worker-1",
+    )
+    failed = runtime_result_to_sdk_task_result(attempt, failed_result("bad input"), worker_id="worker-1")
+    terminal = runtime_result_to_sdk_task_result(
+        attempt,
+        terminal_failed_result("pre guardrail"),
+        worker_id="worker-1",
+    )
+
+    assert completed.workflow_instance_id == "wf-7f3d"
+    assert completed.task_id == "task-9b4c"
+    assert completed.worker_id == "worker-1"
+    assert completed.status == "COMPLETED"
+    assert completed.output_data == {"result": {"valid": True}}
+    assert failed.status == "FAILED"
+    assert failed.reason_for_incompletion == "bad input"
+    assert terminal.status == "FAILED_WITH_TERMINAL_ERROR"
+    assert terminal.reason_for_incompletion == "pre guardrail"
+
+
+def test_workspace_free_poll_execute_update_flow() -> None:
+    task = load_module_task("app.workers.metadata_validate")
+    attempt = _attempt()
+
+    class FakeConductor:
+        def __init__(self) -> None:
+            self.updated = None
+
+        def taskdef_exists(self, task_name: str) -> bool:
+            del task_name
+            return True
+
+        def poll_task(self, task_name: str, *, worker_id: str):
+            assert task_name == "metadata.validate"
+            assert worker_id == "worker-1"
+            return attempt if self.updated is None else None
+
+        def get_task(self, task_id: str):
+            assert task_id == "task-9b4c"
+            return attempt
+
+        def update_task(self, attempt_arg, result, *, worker_id: str) -> None:
+            assert attempt_arg == attempt
+            assert worker_id == "worker-1"
+            self.updated = result
+
+    conductor = FakeConductor()
+
+    run_worker_poll_loop(
+        task=task,
+        client=conductor,
+        worker_id="worker-1",
+        workspace_root="unused",
+        should_stop=lambda: conductor.updated is not None,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+        poll_empty_sleep_seconds=0,
+        poll_error_backoff_seconds=0,
+    )
+
+    assert conductor.updated.conductor_payload() == {
+        "status": "COMPLETED",
+        "output": {"result": {"valid": True, "reason": None}},
+    }

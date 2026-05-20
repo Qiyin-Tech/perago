@@ -23,8 +23,6 @@ class ConductorConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     server_url: str
-    auth_key: str | None = None
-    auth_secret: str | None = None
 
 
 class LakeFSConfig(BaseModel):
@@ -137,15 +135,9 @@ def parse_log_retention(value: str | None) -> timedelta:
 
 def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:
     server_url = _env_optional(env, "CONDUCTOR_SERVER_URL")
-    auth_key = _env_optional(env, "CONDUCTOR_AUTH_KEY")
-    auth_secret = _env_optional(env, "CONDUCTOR_AUTH_SECRET")
-    if server_url is None and auth_key is None and auth_secret is None:
-        return None
     if server_url is None:
-        raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required when Conductor auth is configured")
-    if (auth_key is None) != (auth_secret is None):
-        raise RuntimeConfigError("CONDUCTOR_AUTH_KEY and CONDUCTOR_AUTH_SECRET must be configured together")
-    return ConductorConfig(server_url=server_url, auth_key=auth_key, auth_secret=auth_secret)
+        return None
+    return ConductorConfig(server_url=server_url)
 
 
 def parse_lakefs_config(env: dict[str, str]) -> LakeFSConfig | None:
@@ -221,4 +213,7 @@ def _env_optional(env: dict[str, str], name: str) -> str | None:
     value = env.get(name)
     if value is None or value.strip() == "":
         return None
-    return value.strip()
+    stripped = value.strip()
+    if stripped == "replace-me":
+        raise RuntimeConfigError(f"{name} must be replaced with a real value")
+    return stripped

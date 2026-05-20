@@ -228,20 +228,70 @@ def test_extract_cli_writes_taskdef(monkeypatch, tmp_path) -> None:
     assert generated_files == [pathlib.Path("taskdefs/metadata.validate.json")]
 
 
-def test_start_cli_reports_planned_worker_ids_without_starting_services(monkeypatch, tmp_path) -> None:
+def test_start_cli_starts_supervisor_after_taskdef_check(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PERAGO_WORKER_ID_PREFIX", "prodAFeaturesBuild")
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
+                "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
+                "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    started: dict[str, object] = {}
+
+    class FakeConductor:
+        def taskdef_exists(self, task_name: str) -> bool:
+            return task_name == "features.build"
+
+    monkeypatch.setattr("perago.cli.OrkesConductorRuntimeClient.from_config", lambda config: FakeConductor())
+    monkeypatch.setattr(
+        "perago.cli.run_worker_supervisor",
+        lambda **kwargs: started.update(kwargs),
+    )
     runner = CliRunner()
 
     result = runner.invoke(app, ["start", "app.workers.features_build", "-j", "2"])
 
+    assert result.exit_code == 0
+    assert started["module_target"] == "app.workers.features_build"
+    assert started["process_count"] == 2
+
+
+def test_start_cli_fails_when_taskdef_is_missing(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
+                "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
+                "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeConductor:
+        def taskdef_exists(self, task_name: str) -> bool:
+            del task_name
+            return False
+
+    monkeypatch.setattr("perago.cli.OrkesConductorRuntimeClient.from_config", lambda config: FakeConductor())
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.features_build"])
+
     assert result.exit_code == 1
-    assert "reserved for the Conductor/LakeFS worker integration phase" in result.output
-    assert "worker_processes=2" in result.output
-    assert "worker_ids=prodAFeaturesBuild0001,prodAFeaturesBuild0002" in result.output
+    assert "is not registered" in result.output
+    assert "perago extract" in result.output
 
 
-def test_start_cli_reports_schema_generation_errors(monkeypatch, tmp_path) -> None:
+def test_start_cli_requires_runtime_service_config_before_importing_task(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
     runner = CliRunner()
@@ -249,4 +299,5 @@ def test_start_cli_reports_schema_generation_errors(monkeypatch, tmp_path) -> No
     result = runner.invoke(app, ["start", "app.workers.bad_schema"])
 
     assert result.exit_code == 1
-    assert "Cannot generate a JsonSchema" in result.output
+    assert "CONDUCTOR_SERVER_URL is required" in result.output
+    assert "Cannot generate a JsonSchema" not in result.output

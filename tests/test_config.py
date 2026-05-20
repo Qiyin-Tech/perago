@@ -81,8 +81,6 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.worker_id_prefix == "dotenvPrefix"
     assert config.conductor == ConductorConfig(
         server_url="http://conductor.local/api",
-        auth_key="conductor-key",
-        auth_secret="conductor-secret",
     )
     assert config.lakefs == LakeFSConfig(
         endpoint_url="http://lakefs.local",
@@ -150,20 +148,19 @@ def test_parse_log_retention() -> None:
         parse_log_retention("0d")
 
 
-def test_parse_connection_configs_are_optional_and_validate_partial_env() -> None:
+def test_parse_connection_configs_are_optional_and_ignore_conductor_auth() -> None:
     assert parse_conductor_config({}) is None
     assert parse_lakefs_config({}) is None
 
     assert parse_conductor_config({"CONDUCTOR_SERVER_URL": " http://localhost:8080/api "}) == ConductorConfig(
         server_url="http://localhost:8080/api"
     )
-    with pytest.raises(RuntimeConfigError, match="CONDUCTOR_AUTH_KEY"):
-        parse_conductor_config(
-            {
-                "CONDUCTOR_SERVER_URL": "http://localhost:8080/api",
-                "CONDUCTOR_AUTH_KEY": "key",
-            }
-        )
+    assert parse_conductor_config(
+        {
+            "CONDUCTOR_SERVER_URL": "http://localhost:8080/api",
+            "CONDUCTOR_AUTH_KEY": "ignored",
+        }
+    ) == ConductorConfig(server_url="http://localhost:8080/api")
 
     with pytest.raises(RuntimeConfigError, match="LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY"):
         parse_lakefs_config(
