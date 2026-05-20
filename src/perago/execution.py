@@ -34,16 +34,15 @@ def run_workspace_task_attempt(
 ) -> RuntimeTaskResult:
     if not task.has_workspace:
         raise TaskInputError("run_workspace_task_attempt only supports workspace tasks")
-    if set(input_data) != {"workspace", "params"}:
-        raise TaskInputError("workspace task input must contain only workspace and params")
-
     workspace = task.workspace
     if workspace is None:
         raise TaskInputError("workspace task definition is missing WorkspaceSpec")
 
-    workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
     workspace_dir: Path | None = None
     try:
+        if set(input_data) != {"workspace", "params"}:
+            raise TaskInputError("workspace task input must contain only workspace and params")
+        workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
         workspace_dir = prepare_attempt_workspace(workspace_root, attempt)
         download_workspace(workspace_input, workspace, workspace_dir)
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
@@ -66,6 +65,19 @@ def run_workspace_task_attempt(
     finally:
         if workspace_dir is not None:
             cleanup_attempt_workspace_safely(workspace_dir, attempt)
+
+
+def run_workspace_free_task_attempt(
+    task: TaskDefinition,
+    input_data: Mapping[str, Any],
+) -> RuntimeTaskResult:
+    if task.has_workspace:
+        raise TaskInputError("run_workspace_free_task_attempt only supports workspace-free tasks")
+
+    try:
+        return completed_result(invoke_workspace_free_task(task, input_data))
+    except Exception as exc:
+        return result_for_exception(exc)
 
 
 def invoke_workspace_task_body(

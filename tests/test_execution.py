@@ -15,6 +15,7 @@ from perago import (
     invoke_workspace_task_body,
     load_module_task,
     require_dir,
+    run_workspace_free_task_attempt,
     run_workspace_task_attempt,
     task,
 )
@@ -178,6 +179,58 @@ def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(
 
     assert result.status == "FAILED_WITH_TERMINAL_ERROR"
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_returns_failed_result_for_bad_input(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt()
+
+    result = run_workspace_task_attempt(
+        task,
+        {"params": {"feature_set": "default", "min_rows": 100}},
+        attempt,
+        tmp_path,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        publish_workspace=lambda workspace_dir, workspace_input, workspace_spec: "unused",
+    )
+
+    assert result.status == "FAILED"
+    assert "workspace task input" in result.reason_for_incompletion
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_free_task_attempt_returns_completed_result() -> None:
+    task = load_module_task("app.workers.metadata_validate")
+
+    result = run_workspace_free_task_attempt(
+        task,
+        {
+            "params": {
+                "song_id": "song-000123",
+                "min_duration_seconds": 30,
+            },
+        },
+    )
+
+    assert result.conductor_payload() == {
+        "status": "COMPLETED",
+        "output": {"result": {"valid": True, "reason": None}},
+    }
+
+
+def test_run_workspace_free_task_attempt_returns_failed_result_for_bad_input() -> None:
+    task = load_module_task("app.workers.metadata_validate")
+
+    result = run_workspace_free_task_attempt(
+        task,
+        {
+            "song_id": "song-000123",
+            "min_duration_seconds": 30,
+        },
+    )
+
+    assert result.status == "FAILED"
+    assert "workspace-free task input" in result.reason_for_incompletion
 
 
 def test_invokes_workspace_free_task_from_wrapped_params() -> None:
