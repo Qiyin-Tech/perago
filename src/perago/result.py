@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from perago.errors import PreGuardrailViolation
 
@@ -16,6 +16,21 @@ class RuntimeTaskResult(BaseModel):
     status: TaskResultStatus
     output: dict[str, Any] | None = None
     reason_for_incompletion: str | None = None
+
+    @model_validator(mode="after")
+    def validate_payload_shape(self) -> RuntimeTaskResult:
+        if self.status == "COMPLETED":
+            if self.output is None:
+                raise ValueError("COMPLETED task results require output")
+            if self.reason_for_incompletion is not None:
+                raise ValueError("COMPLETED task results must not include reason_for_incompletion")
+            return self
+
+        if self.reason_for_incompletion is None:
+            raise ValueError(f"{self.status} task results require reason_for_incompletion")
+        if self.output is not None:
+            raise ValueError(f"{self.status} task results must not include output")
+        return self
 
     def conductor_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {"status": self.status}

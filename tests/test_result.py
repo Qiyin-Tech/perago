@@ -2,11 +2,14 @@ from perago import (
     PostGuardrailViolation,
     PreGuardrailViolation,
     PublishFenceError,
+    RuntimeTaskResult,
     completed_result,
     failed_result,
     result_for_exception,
     terminal_failed_result,
 )
+import pytest
+from pydantic import ValidationError
 
 
 def test_completed_result_payload_contains_output() -> None:
@@ -50,3 +53,14 @@ def test_result_for_exception_fails_closed_on_publish_fence_errors() -> None:
         "status": "FAILED",
         "reasonForIncompletion": "main advanced from old to new",
     }
+
+
+def test_runtime_task_result_rejects_inconsistent_payload_shapes() -> None:
+    with pytest.raises(ValidationError, match="require output"):
+        RuntimeTaskResult(status="COMPLETED")
+    with pytest.raises(ValidationError, match="must not include reason"):
+        RuntimeTaskResult(status="COMPLETED", output={}, reason_for_incompletion="done")
+    with pytest.raises(ValidationError, match="require reason"):
+        RuntimeTaskResult(status="FAILED")
+    with pytest.raises(ValidationError, match="must not include output"):
+        RuntimeTaskResult(status="FAILED", output={}, reason_for_incompletion="failed")
