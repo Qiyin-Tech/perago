@@ -42,6 +42,7 @@ def test_conductor_task_to_attempt_maps_runtime_fields() -> None:
         iteration=1,
         status="IN_PROGRESS",
         input_data={"params": {"value": 1}},
+        response_timeout_seconds=75,
     )
 
     attempt = conductor_task_to_attempt(task)
@@ -54,6 +55,24 @@ def test_conductor_task_to_attempt_maps_runtime_fields() -> None:
     assert attempt.seq == 3
     assert attempt.iteration == 1
     assert attempt.input_data == {"params": {"value": 1}}
+    assert attempt.response_timeout_seconds == 75
+
+
+def test_conductor_task_to_attempt_keeps_missing_response_timeout_optional() -> None:
+    task = {
+        "workflow_instance_id": "wf-7f3d",
+        "task_id": "task-9b4c",
+        "retry_count": 2,
+        "task_def_name": "features.build",
+        "reference_task_name": "build_features",
+        "seq": 3,
+        "status": "IN_PROGRESS",
+        "input_data": {"params": {"value": 1}},
+    }
+
+    attempt = conductor_task_to_attempt(task)
+
+    assert attempt.response_timeout_seconds is None
 
 
 def test_runtime_result_to_sdk_task_result_maps_completed_and_failures() -> None:

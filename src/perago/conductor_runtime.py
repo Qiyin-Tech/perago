@@ -42,6 +42,7 @@ class ConductorTaskAttempt:
     status: str
     input_data: Mapping[str, Any]
     retried_task_id: str | None = None
+    response_timeout_seconds: int | None = None
 
 
 class ConductorRuntimeClient(Protocol):
@@ -121,6 +122,7 @@ def conductor_task_to_attempt(task: object) -> ConductorTaskAttempt:
         status=str(_required_task_attr(task, "status")),
         input_data=_mapping_attr(task, "input_data"),
         retried_task_id=_optional_str(_task_attr(task, "retried_task_id", None)),
+        response_timeout_seconds=_optional_int(_task_attr(task, "response_timeout_seconds", None)),
     )
 
 
@@ -244,6 +246,12 @@ def _optional_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _looks_like_not_found(exc: Exception) -> bool:

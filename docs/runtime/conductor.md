@@ -58,6 +58,7 @@ Conductor task 会被映射成 Perago attempt snapshot：
 | `status` | required | 当前 Conductor task 状态。 |
 | `input_data` | required | Perago task input payload；必须是 mapping。 |
 | `retried_task_id` | optional | 用于 metadata 和 publish-state 追踪。 |
+| `response_timeout_seconds` | optional | SDK task 的 lease timeout snapshot；后续 SDK broker/runner adapter 用它接入 LeaseManager 追踪和日志排查。 |
 
 workspace task 在发布前会重新读取当前 `task_id` 的 Conductor task，并调用 attempt fence。只有 fresh snapshot 同时满足以下条件时，才允许继续进入 stage 或 publish：
 
@@ -81,6 +82,8 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 `COMPLETED` 必须带 output，且不能带 failure reason。失败状态必须带 `reasonForIncompletion`，且不能带 output。worker id 会写入 Conductor result，便于从 Conductor 结果反查 worker 日志目录。
 
 workspace task 如果配置了 `PublishBudget`，worker child 会把 `conductor_completion_timeout_seconds` 传给 Conductor update 请求。没有 publish budget 时使用 SDK 默认 update 行为。
+
+`ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。当前 poll-loop 实现只保留该字段；LeaseManager 续租会在后续 SDK broker/runner adapter 中由 SDK `TaskRunner` 负责。
 
 ## 输入输出边界
 
