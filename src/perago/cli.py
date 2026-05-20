@@ -4,12 +4,13 @@ from pathlib import Path
 
 import typer
 from pydantic import ValidationError
+from pydantic.errors import PydanticInvalidForJsonSchema
 
 from perago.config import load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
 from perago.supervisor import worker_child_specs
 from perago.task import load_module_task
-from perago.taskdef import write_taskdef
+from perago.taskdef import build_taskdef, write_taskdef
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -21,7 +22,8 @@ def check(module_target: str) -> None:
     try:
         config = load_runtime_config(module_target)
         task = load_module_task(module_target)
-    except (TaskDefinitionError, RuntimeConfigError, ValidationError) as exc:
+        build_taskdef(task)
+    except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
         _fail(str(exc))
     typer.echo(f"ok: {task.name}")
     typer.echo(f"workspace_root: {config.workspace_root}")
@@ -36,7 +38,7 @@ def extract(module_target: str, out: Path = typer.Option(..., "--out")) -> None:
         load_runtime_config(module_target)
         task = load_module_task(module_target)
         path = write_taskdef(task, out)
-    except (TaskDefinitionError, RuntimeConfigError, ValidationError) as exc:
+    except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
         _fail(str(exc))
     typer.echo(str(path))
 
