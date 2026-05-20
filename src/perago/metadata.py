@@ -4,6 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from perago._segments import safe_segment
 from perago.errors import PublishFenceError
 from perago.models import WorkspaceInput, WorkspaceSpec
 
@@ -77,6 +78,35 @@ def choose_publish_base(
     raise PublishFenceError(
         f"{workspace_input.branch} advanced from {workspace_input.ref} to {current_head}"
     )
+
+
+def staging_branch_name(task: object) -> str:
+    parts = [
+        "perago",
+        "staging",
+        safe_segment(_task_attr(task, "workflow_instance_id")),
+        safe_segment(_task_attr(task, "reference_task_name")),
+        f"seq={safe_segment(_task_attr(task, 'seq'))}",
+        f"iteration={safe_segment(_task_attr(task, 'iteration'))}",
+        f"task_id={safe_segment(_task_attr(task, 'task_id'))}",
+        f"retry={safe_segment(_task_attr(task, 'retry_count'))}",
+    ]
+    return "/".join(parts)
+
+
+def confirm_metadata_extra(
+    *,
+    staging_branch: str,
+    staging_commit: str,
+    expected_head: str,
+    superseded_commit: str | None,
+) -> dict[str, object]:
+    return {
+        "perago.staging_branch": staging_branch,
+        "perago.staging_commit": staging_commit,
+        "perago.expected_head": expected_head,
+        "perago.supersedes": superseded_commit,
+    }
 
 
 def _commit_id(commit: object) -> str:

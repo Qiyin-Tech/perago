@@ -6,9 +6,11 @@ from perago import (
     PublishFenceError,
     WorkspaceSpec,
     choose_publish_base,
+    confirm_metadata_extra,
     logical_task_key,
     metadata_value,
     perago_metadata,
+    staging_branch_name,
 )
 
 
@@ -109,3 +111,23 @@ def test_choose_publish_base_rejects_unrelated_branch_advancement() -> None:
             ],
             logical_task_key="same-key",
         )
+
+
+def test_staging_branch_name_is_internal_and_attempt_scoped() -> None:
+    assert staging_branch_name(Attempt(task_id="task/9b4c", retry_count=3)) == (
+        "perago/staging/wf-7f3d/build/seq=2/iteration=0/task_id=task_9b4c/retry=3"
+    )
+
+
+def test_confirm_metadata_extra_matches_publish_metadata_fields() -> None:
+    assert confirm_metadata_extra(
+        staging_branch="perago/staging/wf/build",
+        staging_commit="staging-commit",
+        expected_head=WORKSPACE_INPUT["ref"],
+        superseded_commit=None,
+    ) == {
+        "perago.staging_branch": "perago/staging/wf/build",
+        "perago.staging_commit": "staging-commit",
+        "perago.expected_head": WORKSPACE_INPUT["ref"],
+        "perago.supersedes": None,
+    }
