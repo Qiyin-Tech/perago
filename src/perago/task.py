@@ -97,6 +97,8 @@ def _build_task_definition(
     controls: TaskControls,
 ) -> TaskDefinition:
     _validate_required_metadata(name=name, owner_email=owner_email)
+    if inspect.iscoroutinefunction(fn):
+        raise TaskDefinitionError("task function must be a synchronous function")
 
     signature = inspect.signature(fn)
     parameters = list(signature.parameters.values())

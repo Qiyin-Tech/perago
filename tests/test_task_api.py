@@ -51,6 +51,11 @@ def test_rejects_bad_signature() -> None:
         load_module_task("app.workers.bad_signature")
 
 
+def test_rejects_async_task_functions() -> None:
+    with pytest.raises(TaskDefinitionError, match="synchronous function"):
+        load_module_task("app.workers.bad_async_task")
+
+
 def test_rejects_multi_task_module() -> None:
     with pytest.raises(TaskDefinitionError, match="more than one"):
         load_module_task("app.workers.multi_task")
