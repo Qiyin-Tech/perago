@@ -5,10 +5,13 @@ from perago.conductor_runtime import (
     OrkesConductorRuntimeClient,
     PeragoProcessDispatchWorker,
     PeragoThreadWorker,
+    ProcessAttemptFenceRequest,
+    ProcessAttemptFenceResponse,
     ProcessTaskAssignment,
     ProcessTaskCompletion,
     StopProcessExecutor,
     conductor_task_to_attempt,
+    load_current_attempt_via_broker,
     run_conductor_process_broker,
     run_process_executor_loop,
     run_conductor_thread_runner,
@@ -196,7 +199,8 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
             self.items.append(item)
 
     class FakeCompletionQueue:
-        def get(self):
+        def get(self, timeout=None):
+            del timeout
             return ProcessTaskCompletion(
                 task_id="task-9b4c",
                 result=completed_result({"result": {"valid": True, "reason": None}}),
@@ -243,7 +247,8 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None
             self.item = item
 
     class FakeCompletionQueue:
-        def get(self):
+        def get(self, timeout=None):
+            del timeout
             return ProcessTaskCompletion(
                 task_id="other-task",
                 result=completed_result({"result": {"valid": True, "reason": None}}),
@@ -271,6 +276,110 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "executor returned completion for task other-task; expected task-9b4c"
+
+
+def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting() -> None:
+    fresh_attempt = _attempt()
+
+    class FakeAssignmentQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeCompletionQueue:
+        def get(self, timeout=None):
+            del timeout
+            return ProcessTaskCompletion(
+                task_id="task-9b4c",
+                result=completed_result({"result": {"valid": True, "reason": None}}),
+            )
+
+    class FakeRequestQueue:
+        def __init__(self) -> None:
+            self.items = [ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c")]
+
+        def get_nowait(self):
+            from queue import Empty
+
+            if not self.items:
+                raise Empty
+            return self.items.pop(0)
+
+    class FakeResponseQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    class FakeClient:
+        def get_task(self, task_id: str):
+            assert task_id == "task-9b4c"
+            return fresh_attempt
+
+    response_queue = FakeResponseQueue()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=FakeCompletionQueue(),
+        attempt_fence_request_queue=FakeRequestQueue(),
+        attempt_fence_response_queues={"metadata0001": response_queue},
+        client=FakeClient(),
+    )
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+    )
+
+    result = worker.execute(task)
+
+    assert result.status == "COMPLETED"
+    assert response_queue.items == [ProcessAttemptFenceResponse(task_id="task-9b4c", attempt=fresh_attempt)]
+
+
+def test_load_current_attempt_via_broker_round_trips_request_and_response() -> None:
+    current_attempt = _attempt()
+    fresh_attempt = ConductorTaskAttempt(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        iteration=1,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+        response_timeout_seconds=75,
+    )
+
+    class FakeRequestQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    class FakeResponseQueue:
+        def get(self):
+            return ProcessAttemptFenceResponse(task_id="task-9b4c", attempt=fresh_attempt)
+
+    request_queue = FakeRequestQueue()
+    loaded = load_current_attempt_via_broker(
+        current_attempt,
+        worker_id="metadata0001",
+        request_queue=request_queue,
+        response_queue=FakeResponseQueue(),
+    )
+
+    assert loaded is fresh_attempt
+    assert request_queue.items == [ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c")]
 
 
 def test_process_executor_loop_executes_assignment_and_returns_completion() -> None:

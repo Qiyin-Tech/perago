@@ -63,6 +63,19 @@ class ProcessTaskCompletion:
 
 
 @dataclass(frozen=True)
+class ProcessAttemptFenceRequest:
+    worker_id: str
+    task_id: str
+
+
+@dataclass(frozen=True)
+class ProcessAttemptFenceResponse:
+    task_id: str
+    attempt: ConductorTaskAttempt | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class StopProcessExecutor:
     pass
 
@@ -187,6 +200,9 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         thread_count: int,
         assignment_queue: Any,
         completion_queue: Any,
+        attempt_fence_request_queue: Any | None = None,
+        attempt_fence_response_queues: Mapping[str, Any] | None = None,
+        client: ConductorRuntimeClient | None = None,
         completion_timeout_seconds: float | None = None,
     ) -> None:
         super().__init__(task.name)
@@ -198,6 +214,9 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         self.lease_extend_enabled = True
         self._assignment_queue = assignment_queue
         self._completion_queue = completion_queue
+        self._attempt_fence_request_queue = attempt_fence_request_queue
+        self._attempt_fence_response_queues = attempt_fence_response_queues or {}
+        self._client = client
         self._completion_timeout_seconds = completion_timeout_seconds
 
     def get_identity(self) -> str:
@@ -210,13 +229,24 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 
     def _wait_for_completion(self, attempt: ConductorTaskAttempt) -> RuntimeTaskResult:
-        try:
-            if self._completion_timeout_seconds is None:
-                completion = self._completion_queue.get()
-            else:
-                completion = self._completion_queue.get(timeout=self._completion_timeout_seconds)
-        except Empty:
-            return failed_result(f"executor did not return result for task {attempt.task_id}")
+        deadline = (
+            None
+            if self._completion_timeout_seconds is None
+            else time.monotonic() + self._completion_timeout_seconds
+        )
+        while True:
+            self._drain_attempt_fence_requests()
+            try:
+                if deadline is None:
+                    completion = self._completion_queue.get(timeout=0.1)
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return failed_result(f"executor did not return result for task {attempt.task_id}")
+                    completion = self._completion_queue.get(timeout=min(0.1, remaining))
+            except Empty:
+                continue
+            break
 
         if not isinstance(completion, ProcessTaskCompletion):
             return failed_result(f"executor returned invalid completion for task {attempt.task_id}")
@@ -225,6 +255,38 @@ class PeragoProcessDispatchWorker(WorkerInterface):
                 f"executor returned completion for task {completion.task_id}; expected {attempt.task_id}"
             )
         return completion.result
+
+    def _drain_attempt_fence_requests(self) -> None:
+        if self._attempt_fence_request_queue is None:
+            return
+        while True:
+            try:
+                request = self._attempt_fence_request_queue.get_nowait()
+            except Empty:
+                return
+            self._handle_attempt_fence_request(request)
+
+    def _handle_attempt_fence_request(self, request: object) -> None:
+        if not isinstance(request, ProcessAttemptFenceRequest):
+            logger.bind(request_type=type(request).__name__).error("broker received invalid attempt-fence request")
+            return
+        response_queue = self._attempt_fence_response_queues.get(request.worker_id)
+        if response_queue is None:
+            logger.bind(worker_id=request.worker_id, task_id=request.task_id).error(
+                "broker has no attempt-fence response queue for worker"
+            )
+            return
+        if self._client is None:
+            response_queue.put(
+                ProcessAttemptFenceResponse(task_id=request.task_id, error="broker has no conductor client")
+            )
+            return
+        try:
+            attempt = self._client.get_task(request.task_id)
+        except Exception as exc:  # noqa: BLE001
+            response_queue.put(ProcessAttemptFenceResponse(task_id=request.task_id, error=str(exc)))
+            return
+        response_queue.put(ProcessAttemptFenceResponse(task_id=request.task_id, attempt=attempt))
 
 
 def run_conductor_thread_runner(
@@ -279,6 +341,9 @@ def run_conductor_process_broker(
     conductor_config: ConductorConfig,
     assignment_queue: Any,
     completion_queue: Any,
+    attempt_fence_request_queue: Any | None = None,
+    attempt_fence_response_queues: Mapping[str, Any] | None = None,
+    client: ConductorRuntimeClient | None = None,
     completion_timeout_seconds: float | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
@@ -288,6 +353,9 @@ def run_conductor_process_broker(
         thread_count=process_count,
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
+        attempt_fence_request_queue=attempt_fence_request_queue,
+        attempt_fence_response_queues=attempt_fence_response_queues,
+        client=client,
         completion_timeout_seconds=completion_timeout_seconds,
     )
     runner = runner_cls(
@@ -346,6 +414,28 @@ def run_process_executor_loop(
             cleanup_staging=cleanup_staging,
         )
         completion_queue.put(ProcessTaskCompletion(task_id=attempt.task_id, result=result))
+
+
+def load_current_attempt_via_broker(
+    current_attempt: ConductorTaskAttempt,
+    *,
+    worker_id: str,
+    request_queue: Any,
+    response_queue: Any,
+) -> ConductorTaskAttempt:
+    request_queue.put(ProcessAttemptFenceRequest(worker_id=worker_id, task_id=current_attempt.task_id))
+    response = response_queue.get()
+    if not isinstance(response, ProcessAttemptFenceResponse):
+        raise RuntimeError("broker returned invalid attempt-fence response")
+    if response.task_id != current_attempt.task_id:
+        raise RuntimeError(
+            f"broker returned attempt-fence response for {response.task_id}; expected {current_attempt.task_id}"
+        )
+    if response.error is not None:
+        raise RuntimeError(f"broker failed to reload attempt {current_attempt.task_id}: {response.error}")
+    if response.attempt is None:
+        raise RuntimeError(f"broker returned empty attempt-fence response for {current_attempt.task_id}")
+    return response.attempt
 
 
 def conductor_task_to_attempt(task: object) -> ConductorTaskAttempt:

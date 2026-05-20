@@ -27,7 +27,7 @@ Perago 当前已支持解析 execution mode 公共接口：`perago start --execu
 
 process broker 的 adapter、SDK runner 启动函数和 supervisor 进程树已经落地。`run_conductor_process_broker(...)` 会把 `PeragoProcessDispatchWorker` 包进 SDK `TaskRunner(thread_count=N)`，让 broker 负责 poll、续租和 update result，同时把 task body 执行派发到 executor assignment queue。executor completion 必须带回同一个 `task_id` 的 `RuntimeTaskResult`；broker adapter 会 fail closed 处理无法匹配的 completion。
 
-executor 侧的本地执行循环是 `run_process_executor_loop(...)`。它只消费 broker 派发的 `ProcessTaskAssignment`，执行 Perago task runtime，然后把 `ProcessTaskCompletion` 写回 broker completion queue；它不直接 poll Conductor，也不直接 update result。workspace attempt fence reload RPC 仍待接到 broker-owned `get_task`；当前 executor 侧 reload 接线只是迁移前的剩余缺口。
+executor 侧的本地执行循环是 `run_process_executor_loop(...)`。它只消费 broker 派发的 `ProcessTaskAssignment`，执行 Perago task runtime，然后把 `ProcessTaskCompletion` 写回 broker completion queue；它不直接 poll Conductor，也不直接 update result。workspace attempt fence reload 会通过 `ProcessAttemptFenceRequest` 发给 broker，broker 调 Conductor `get_task` 并把 `ProcessAttemptFenceResponse` 返回到该 executor 的 response queue。
 
 显式 `thread` 模式不会创建 executor child process：
 
@@ -89,7 +89,7 @@ supervisor 会把每个 executor 的 `PERAGO_WORKER_ID` 写入 child environment
 | task module 可导入并能生成 TaskDef | 失败时按 task definition 或 schema 错误退出。 |
 | Conductor 已注册同名 TaskDef | 缺失时报 `Conductor TaskDef '<name>' is not registered; run perago extract and register it before start`。 |
 
-child process 内也会再次检查 Conductor 和 LakeFS config。这个重复检查是进程边界内的防护，不能替代启动前的发布流程。
+broker child process 内也会再次检查 Conductor config；executor child process 只检查 LakeFS config，因为默认 process 模式下只有 broker 持有 Conductor client。这个重复检查是进程边界内的防护，不能替代启动前的发布流程。
 
 ## 重启和停止
 

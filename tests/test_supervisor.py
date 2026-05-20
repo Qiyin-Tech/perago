@@ -176,6 +176,14 @@ def test_run_worker_supervisor_process_mode_starts_broker_and_executors(monkeypa
     assert [item["spec"].worker_id for item in started["executors"]] == ["worker0001", "worker0002"]
     assert all(item["assignment_queue"] is started["broker"]["assignment_queue"] for item in started["executors"])
     assert all(item["completion_queue"] is started["broker"]["completion_queue"] for item in started["executors"])
+    assert all(
+        item["attempt_fence_request_queue"] is started["broker"]["attempt_fence_request_queue"]
+        for item in started["executors"]
+    )
+    assert [item["attempt_fence_response_queue"] for item in started["executors"]] == [
+        started["broker"]["attempt_fence_response_queues"]["worker0001"],
+        started["broker"]["attempt_fence_response_queues"]["worker0002"],
+    ]
     assert len(stopped) == 3
 
 
@@ -209,6 +217,9 @@ def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path
     )
     assignment_queue = object()
     completion_queue = object()
+    attempt_fence_request_queue = object()
+    attempt_fence_response_queue = object()
+    attempt_fence_response_queues = {"worker0001": attempt_fence_response_queue}
     spec = worker_child_specs(
         base_env={"PERAGO_WORKER_ID_PREFIX": "worker"},
         module_target="app.workers.features_build",
@@ -221,6 +232,8 @@ def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path
         process_count=3,
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
+        attempt_fence_request_queue=attempt_fence_request_queue,
+        attempt_fence_response_queues=attempt_fence_response_queues,
     )
     executor = _start_process_executor(
         config=config,
@@ -228,16 +241,22 @@ def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path
         spec=spec,
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
+        attempt_fence_request_queue=attempt_fence_request_queue,
+        attempt_fence_response_queue=attempt_fence_response_queue,
     )
 
     assert broker.started is True
     assert executor.started is True
     assert created[0].name == "perago-conductor-broker"
     assert created[0].kwargs["process_count"] == 3
+    assert created[0].kwargs["attempt_fence_request_queue"] is attempt_fence_request_queue
+    assert created[0].kwargs["attempt_fence_response_queues"] is attempt_fence_response_queues
     assert created[1].name == "perago-executor-0001"
     assert created[1].kwargs["child_env"]["PERAGO_WORKER_ID"] == "worker0001"
     assert created[1].kwargs["assignment_queue"] is assignment_queue
     assert created[1].kwargs["completion_queue"] is completion_queue
+    assert created[1].kwargs["attempt_fence_request_queue"] is attempt_fence_request_queue
+    assert created[1].kwargs["attempt_fence_response_queue"] is attempt_fence_response_queue
 
 
 def test_stop_worker_processes_escalates_after_grace_periods() -> None:

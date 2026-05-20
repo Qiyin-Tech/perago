@@ -11,6 +11,7 @@ from loguru import logger
 from perago.conductor_runtime import (
     OrkesConductorRuntimeClient,
     StopProcessExecutor,
+    load_current_attempt_via_broker,
     run_conductor_process_broker,
     run_conductor_thread_runner,
     run_process_executor_loop,
@@ -199,6 +200,10 @@ def run_worker_supervisor(
     )
     assignment_queue: multiprocessing.Queue = multiprocessing.Queue()
     completion_queue: multiprocessing.Queue = multiprocessing.Queue()
+    attempt_fence_request_queue: multiprocessing.Queue = multiprocessing.Queue()
+    attempt_fence_response_queues: dict[str, multiprocessing.Queue] = {
+        spec.worker_id: multiprocessing.Queue() for spec in specs
+    }
     stop = multiprocessing.Event()
     broker = _start_broker_process(
         config=config,
@@ -206,6 +211,8 @@ def run_worker_supervisor(
         process_count=process_count,
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
+        attempt_fence_request_queue=attempt_fence_request_queue,
+        attempt_fence_response_queues=attempt_fence_response_queues,
     )
     executors: dict[int, tuple[WorkerChildSpec, multiprocessing.Process, int]] = {}
 
@@ -223,6 +230,8 @@ def run_worker_supervisor(
                 spec=spec,
                 assignment_queue=assignment_queue,
                 completion_queue=completion_queue,
+                attempt_fence_request_queue=attempt_fence_request_queue,
+                attempt_fence_response_queue=attempt_fence_response_queues[spec.worker_id],
             )
             executors[spec.slot] = (spec, process, 0)
 
@@ -251,6 +260,8 @@ def run_worker_supervisor(
                     spec=spec,
                     assignment_queue=assignment_queue,
                     completion_queue=completion_queue,
+                    attempt_fence_request_queue=attempt_fence_request_queue,
+                    attempt_fence_response_queue=attempt_fence_response_queues[spec.worker_id],
                 )
                 executors[slot] = (spec, replacement, restart_count + 1)
             stop.wait(0.5)
@@ -285,6 +296,8 @@ def _start_broker_process(
     process_count: int,
     assignment_queue: multiprocessing.Queue,
     completion_queue: multiprocessing.Queue,
+    attempt_fence_request_queue: multiprocessing.Queue,
+    attempt_fence_response_queues: dict[str, multiprocessing.Queue],
 ) -> multiprocessing.Process:
     process = multiprocessing.Process(
         target=_broker_process_main,
@@ -294,6 +307,8 @@ def _start_broker_process(
             "process_count": process_count,
             "assignment_queue": assignment_queue,
             "completion_queue": completion_queue,
+            "attempt_fence_request_queue": attempt_fence_request_queue,
+            "attempt_fence_response_queues": attempt_fence_response_queues,
         },
         name="perago-conductor-broker",
     )
@@ -308,6 +323,8 @@ def _start_process_executor(
     spec: WorkerChildSpec,
     assignment_queue: multiprocessing.Queue,
     completion_queue: multiprocessing.Queue,
+    attempt_fence_request_queue: multiprocessing.Queue,
+    attempt_fence_response_queue: multiprocessing.Queue,
 ) -> multiprocessing.Process:
     process = multiprocessing.Process(
         target=_process_executor_main,
@@ -317,6 +334,8 @@ def _start_process_executor(
             "child_env": spec.env,
             "assignment_queue": assignment_queue,
             "completion_queue": completion_queue,
+            "attempt_fence_request_queue": attempt_fence_request_queue,
+            "attempt_fence_response_queue": attempt_fence_response_queue,
         },
         name=f"perago-executor-{spec.slot:04d}",
     )
@@ -331,6 +350,8 @@ def _broker_process_main(
     process_count: int,
     assignment_queue: multiprocessing.Queue,
     completion_queue: multiprocessing.Queue,
+    attempt_fence_request_queue: multiprocessing.Queue,
+    attempt_fence_response_queues: dict[str, multiprocessing.Queue],
 ) -> None:
     os.environ.update(_broker_environment(config.worker_id_prefix))
     task = load_module_task(module_target)
@@ -338,6 +359,7 @@ def _broker_process_main(
     conductor_config = config.conductor
     if conductor_config is None:
         raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
+    conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process broker started"
@@ -349,6 +371,9 @@ def _broker_process_main(
         conductor_config=conductor_config,
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
+        attempt_fence_request_queue=attempt_fence_request_queue,
+        attempt_fence_response_queues=attempt_fence_response_queues,
+        client=conductor,
     )
 
 
@@ -359,19 +384,17 @@ def _process_executor_main(
     child_env: dict[str, str],
     assignment_queue: multiprocessing.Queue,
     completion_queue: multiprocessing.Queue,
+    attempt_fence_request_queue: multiprocessing.Queue,
+    attempt_fence_response_queue: multiprocessing.Queue,
 ) -> None:
     os.environ.update(child_env)
     task = load_module_task(module_target)
     runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
-    conductor_config = config.conductor
     lakefs_config = config.lakefs
-    if conductor_config is None:
-        raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
     if lakefs_config is None:
         raise RuntimeConfigError("LakeFS config is required for perago start")
 
     publish_budget = task.controls.publish_budget
-    conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
     lakefs = BoundLakeFSWorkspaceRuntime(
         LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
     )
@@ -385,7 +408,12 @@ def _process_executor_main(
         workspace_root=config.workspace_root,
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
-        load_current_attempt=lambda current_attempt: conductor.get_task(current_attempt.task_id),
+        load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
+            current_attempt,
+            worker_id=runtime.worker_id,
+            request_queue=attempt_fence_request_queue,
+            response_queue=attempt_fence_response_queue,
+        ),
         download_workspace=lakefs.download_workspace,
         stage_workspace=lakefs.stage_workspace,
         publish_workspace=lakefs.publish_workspace,
