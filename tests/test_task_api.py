@@ -63,7 +63,10 @@ def test_rejects_module_without_task() -> None:
 
 def test_rejects_non_module_targets() -> None:
     for target in [
+        "",
+        "app..workers.features_build",
         "app/workers/features_build.py",
+        "app.workers.features-build",
         "app.workers.features_build:build_features",
         "app\\workers\\features_build.py",
     ]:

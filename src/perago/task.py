@@ -171,5 +171,12 @@ def _is_pydantic_model(value: object) -> bool:
 
 
 def _validate_module_target(module_target: str) -> None:
-    if "/" in module_target or "\\" in module_target or ":" in module_target or module_target.endswith(".py"):
+    if (
+        "/" in module_target
+        or "\\" in module_target
+        or ":" in module_target
+        or module_target.endswith(".py")
+        or not module_target
+        or any(not segment.isidentifier() for segment in module_target.split("."))
+    ):
         raise TaskDefinitionError("module target must be a Python import path, not a file path or object path")
