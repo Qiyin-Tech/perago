@@ -214,11 +214,12 @@ def _close_object_schemas(schema: Any) -> None:
             _close_object_schemas(value)
 
 
-def _strip_titles(schema: Any) -> None:
+def _strip_titles(schema: Any, *, in_properties: bool = False) -> None:
     if isinstance(schema, dict):
-        schema.pop("title", None)
-        for value in schema.values():
-            _strip_titles(value)
+        if not in_properties:
+            schema.pop("title", None)
+        for key, value in schema.items():
+            _strip_titles(value, in_properties=(key == "properties"))
     elif isinstance(schema, list):
         for value in schema:
-            _strip_titles(value)
+            _strip_titles(value, in_properties=in_properties)
