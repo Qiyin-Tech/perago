@@ -99,15 +99,24 @@ def run_worker_supervisor(
             stop.wait(0.5)
     finally:
         stop.set()
-        for _, process, _ in children.values():
-            process.join(timeout=10)
-        for _, process, _ in children.values():
-            if process.is_alive():
-                process.terminate()
-        for _, process, _ in children.values():
-            process.join(timeout=5)
+        _stop_worker_processes([process for _, process, _ in children.values()])
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
+
+
+def _stop_worker_processes(processes: list[multiprocessing.Process]) -> None:
+    for process in processes:
+        process.join(timeout=10)
+    for process in processes:
+        if process.is_alive():
+            process.terminate()
+    for process in processes:
+        process.join(timeout=5)
+    for process in processes:
+        if process.is_alive():
+            process.kill()
+    for process in processes:
+        process.join(timeout=5)
 
 
 def _start_worker_process(

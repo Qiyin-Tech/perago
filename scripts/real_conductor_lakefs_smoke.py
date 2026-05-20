@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import signal
 import shutil
 import subprocess
 import sys
@@ -301,17 +300,11 @@ def stop_process(proc: subprocess.Popen[str]) -> None:
     if proc.poll() is not None:
         dump_worker_output(proc)
         return
+    proc.terminate()
     try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        output, _ = proc.communicate(timeout=15)
+        output, _ = proc.communicate(timeout=25)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        proc.kill()
         output, _ = proc.communicate(timeout=5)
     print_worker_output(output)
 

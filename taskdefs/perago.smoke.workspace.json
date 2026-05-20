@@ -1,0 +1,141 @@
+{
+  "name": "perago.smoke.workspace",
+  "ownerEmail": "data@example.com",
+  "retryCount": 3,
+  "retryLogic": "FIXED",
+  "retryDelaySeconds": 60,
+  "maxRetryDelaySeconds": 0,
+  "backoffJitterMs": 0,
+  "totalTimeoutSeconds": 0,
+  "timeoutPolicy": "TIME_OUT_WF",
+  "timeoutSeconds": 0,
+  "responseTimeoutSeconds": 600,
+  "pollTimeoutSeconds": 0,
+  "inputKeys": [
+    "workspace",
+    "params"
+  ],
+  "outputKeys": [
+    "workspace",
+    "result"
+  ],
+  "inputSchema": {
+    "name": "perago.smoke.workspace.input",
+    "version": 1,
+    "type": "JSON",
+    "data": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "branch": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "ref_type": {
+              "const": "commit",
+              "type": "string"
+            },
+            "ref": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "repository",
+            "branch",
+            "ref_type",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "params": {
+          "properties": {
+            "run_id": {
+              "type": "string"
+            },
+            "greeting": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "run_id",
+            "greeting"
+          ],
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspace",
+        "params"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "outputSchema": {
+    "name": "perago.smoke.workspace.output",
+    "version": 1,
+    "type": "JSON",
+    "data": {
+      "type": "object",
+      "properties": {
+        "workspace": {
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "branch": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "ref_type": {
+              "const": "commit",
+              "type": "string"
+            },
+            "ref": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "repository",
+            "branch",
+            "ref_type",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "result": {
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "input_text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message",
+            "input_text"
+          ],
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspace",
+        "result"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "description": "Real Conductor/LakeFS smoke workspace task."
+}
