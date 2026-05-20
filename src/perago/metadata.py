@@ -169,6 +169,24 @@ def build_workspace_publication_plan(
     )
 
 
+def find_matching_publication_commit(
+    commits: Sequence[object],
+    *,
+    logical_task_key: str,
+    task_id: str,
+    staging_commit: str,
+) -> str | None:
+    for commit in commits:
+        metadata = _commit_metadata(commit)
+        if (
+            metadata.get("perago.logical_task_key") == logical_task_key
+            and metadata.get("perago.task_id") == task_id
+            and metadata.get("perago.staging_commit") == staging_commit
+        ):
+            return _commit_id(commit)
+    return None
+
+
 def _commit_id(commit: object) -> str:
     if isinstance(commit, Mapping):
         return str(commit["id"])

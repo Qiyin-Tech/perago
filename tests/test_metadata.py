@@ -9,6 +9,7 @@ from perago import (
     build_workspace_publication_plan,
     choose_publish_base,
     confirm_metadata_extra,
+    find_matching_publication_commit,
     logical_task_key,
     metadata_value,
     perago_metadata,
@@ -171,3 +172,54 @@ def test_workspace_publication_plan_combines_publish_fence_and_metadata() -> Non
     assert plan.confirm_metadata["perago.staging_commit"] == "staging-commit"
     assert plan.confirm_metadata["perago.expected_head"] == "head-2"
     assert plan.confirm_metadata["perago.supersedes"] == "head-2"
+
+
+def test_find_matching_publication_commit_uses_transaction_metadata() -> None:
+    commits = [
+        {
+            "id": "other",
+            "metadata": {
+                "perago.logical_task_key": "wf-7f3d:build:2:0:features.build",
+                "perago.task_id": "task-other",
+                "perago.staging_commit": "staging-commit",
+            },
+        },
+        {
+            "id": "published",
+            "metadata": {
+                "perago.logical_task_key": "wf-7f3d:build:2:0:features.build",
+                "perago.task_id": "task-9b4c",
+                "perago.staging_commit": "staging-commit",
+            },
+        },
+    ]
+
+    assert (
+        find_matching_publication_commit(
+            commits,
+            logical_task_key="wf-7f3d:build:2:0:features.build",
+            task_id="task-9b4c",
+            staging_commit="staging-commit",
+        )
+        == "published"
+    )
+
+
+def test_find_matching_publication_commit_fails_closed_without_full_metadata_match() -> None:
+    assert (
+        find_matching_publication_commit(
+            [
+                {
+                    "id": "partial",
+                    "metadata": {
+                        "perago.logical_task_key": "wf-7f3d:build:2:0:features.build",
+                        "perago.task_id": "task-9b4c",
+                    },
+                },
+            ],
+            logical_task_key="wf-7f3d:build:2:0:features.build",
+            task_id="task-9b4c",
+            staging_commit="staging-commit",
+        )
+        is None
+    )
