@@ -1,6 +1,17 @@
 import json
 
+from pydantic import BaseModel
+
 from perago import build_taskdef, load_module_task, write_taskdef
+from perago.taskdef import schema_for_model
+
+
+class NestedSettings(BaseModel):
+    enabled: bool
+
+
+class NestedParams(BaseModel):
+    settings: NestedSettings
 
 
 def test_builds_workspace_taskdef() -> None:
@@ -36,3 +47,12 @@ def test_writes_taskdef_json(tmp_path) -> None:
     assert path == tmp_path / "taskdefs" / "metadata.validate.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["name"] == "metadata.validate"
+
+
+def test_schema_for_model_inlines_refs_and_closes_nested_objects() -> None:
+    schema = schema_for_model(NestedParams)
+
+    assert "$defs" not in schema
+    assert "$ref" not in json.dumps(schema)
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["settings"]["additionalProperties"] is False
