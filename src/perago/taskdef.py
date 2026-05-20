@@ -87,6 +87,9 @@ def schema_for_model(model: type[BaseModel]) -> dict[str, Any]:
 def _control_fields(task: TaskDefinition) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for conductor_name, path in CONTROL_FIELD_MAP.items():
+        if conductor_name == "responseTimeoutSeconds" and task.controls.publish_budget is not None:
+            fields[conductor_name] = task.controls.publish_budget.response_timeout_seconds
+            continue
         value: object = task.controls
         for segment in path:
             value = getattr(value, segment)

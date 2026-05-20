@@ -47,14 +47,6 @@ class ExecutionLimits(BaseModel):
         return self
 
 
-class TaskControls(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    retry: RetryPolicy = Field(default_factory=RetryPolicy)
-    timeout: TimeoutPolicy = Field(default_factory=TimeoutPolicy)
-    limits: ExecutionLimits = Field(default_factory=ExecutionLimits)
-
-
 class PublishBudget(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -84,6 +76,15 @@ class PublishBudget(BaseModel):
             + self.worker_shutdown_grace_seconds
             + self.heartbeat_interval_seconds
         )
+
+
+class TaskControls(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    retry: RetryPolicy = Field(default_factory=RetryPolicy)
+    timeout: TimeoutPolicy = Field(default_factory=TimeoutPolicy)
+    limits: ExecutionLimits = Field(default_factory=ExecutionLimits)
+    publish_budget: PublishBudget | None = None
 
 
 class WorkspaceSpec(BaseModel):
