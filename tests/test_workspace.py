@@ -7,6 +7,7 @@ import pytest
 from perago import TaskDefinitionError, WorkspaceSpec
 from perago.workspace import (
     ATTEMPT_WORKSPACE_MARKER,
+    build_workspace_sync_plan,
     cleanup_attempt_workspace,
     cleanup_attempt_workspace_safely,
     prepare_attempt_workspace,
@@ -147,6 +148,29 @@ def test_workspace_delete_object_paths_only_removes_stale_objects_under_prefix(t
     )
 
     assert delete_paths == ["audio/render/old.tmp"]
+
+
+def test_workspace_sync_plan_combines_uploads_and_stale_deletes(tmp_path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    (workspace_dir / ATTEMPT_WORKSPACE_MARKER).write_text("{}", encoding="utf-8")
+    (workspace_dir / "raw").mkdir()
+    (workspace_dir / "raw" / "input.wav").write_text("ok", encoding="utf-8")
+
+    plan = build_workspace_sync_plan(
+        workspace_dir,
+        WorkspaceSpec(prefix="/audio/render"),
+        [
+            "audio/render/raw/input.wav",
+            "audio/render/old.tmp",
+            "other/old.tmp",
+        ],
+    )
+
+    assert [(file.local_path.relative_to(workspace_dir), file.object_path) for file in plan.upload_files] == [
+        (Path("raw/input.wav"), "audio/render/raw/input.wav"),
+    ]
+    assert plan.delete_object_paths == ["audio/render/old.tmp"]
 
 
 def test_cleanup_requires_attempt_marker(tmp_path) -> None:

@@ -58,7 +58,9 @@ from perago.supervisor import WorkerChildSpec, restart_backoff_seconds, worker_c
 from perago.worker_runtime import WorkerRuntime, prepare_worker_runtime
 from perago.workspace import (
     WorkspaceDownloadFile,
+    WorkspaceSyncPlan,
     WorkspaceUploadFile,
+    build_workspace_sync_plan,
     workspace_delete_object_paths,
     workspace_download_files,
     workspace_local_path,
@@ -88,11 +90,13 @@ __all__ = [
     "WorkspacePublicationPlan",
     "WorkspaceSpec",
     "WorkspaceDownloadFile",
+    "WorkspaceSyncPlan",
     "WorkspaceUploadFile",
     "assert_current_attempt_snapshot",
     "build_taskdef",
     "build_workspace_free_task_output",
     "build_workspace_publication_plan",
+    "build_workspace_sync_plan",
     "build_workspace_task_output",
     "check_guardrails",
     "choose_publish_base",

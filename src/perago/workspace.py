@@ -29,6 +29,12 @@ class WorkspaceDownloadFile:
     local_path: Path
 
 
+@dataclass(frozen=True)
+class WorkspaceSyncPlan:
+    upload_files: list[WorkspaceUploadFile]
+    delete_object_paths: list[str]
+
+
 def workspace_object_prefix(workspace_spec: WorkspaceSpec) -> str:
     if workspace_spec.prefix == "/":
         return ""
@@ -132,6 +138,22 @@ def workspace_delete_object_paths(
             continue
         delete_paths.append(object_path)
     return delete_paths
+
+
+def build_workspace_sync_plan(
+    workspace_dir: Path,
+    workspace_spec: WorkspaceSpec,
+    existing_object_paths: list[str],
+) -> WorkspaceSyncPlan:
+    upload_files = workspace_upload_files(workspace_dir, workspace_spec)
+    return WorkspaceSyncPlan(
+        upload_files=upload_files,
+        delete_object_paths=workspace_delete_object_paths(
+            workspace_spec,
+            existing_object_paths,
+            upload_files,
+        ),
+    )
 
 
 def cleanup_attempt_workspace(workspace_dir: Path) -> None:
