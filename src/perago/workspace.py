@@ -118,6 +118,22 @@ def workspace_download_files(
     return files
 
 
+def workspace_delete_object_paths(
+    workspace_spec: WorkspaceSpec,
+    existing_object_paths: list[str],
+    uploaded_files: list[WorkspaceUploadFile],
+) -> list[str]:
+    uploaded_object_paths = {file.object_path for file in uploaded_files}
+    delete_paths: list[str] = []
+    for object_path in sorted(existing_object_paths):
+        if object_path in uploaded_object_paths:
+            continue
+        if workspace_local_path(workspace_spec, object_path) is None:
+            continue
+        delete_paths.append(object_path)
+    return delete_paths
+
+
 def cleanup_attempt_workspace(workspace_dir: Path) -> None:
     _require_attempt_marker(workspace_dir)
     shutil.rmtree(workspace_dir)

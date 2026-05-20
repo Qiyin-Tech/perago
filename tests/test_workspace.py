@@ -11,6 +11,7 @@ from perago.workspace import (
     cleanup_attempt_workspace_safely,
     prepare_attempt_workspace,
     sweep_abandoned_attempt_workspaces,
+    workspace_delete_object_paths,
     workspace_download_files,
     workspace_local_path,
     workspace_object_path,
@@ -125,6 +126,27 @@ def test_workspace_download_files_filter_to_prefix_and_skip_marker(tmp_path) -> 
         ("audio/render/features/out.parquet", Path("features/out.parquet")),
         ("audio/render/raw/input.wav", Path("raw/input.wav")),
     ]
+
+
+def test_workspace_delete_object_paths_only_removes_stale_objects_under_prefix(tmp_path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    (workspace_dir / "raw").mkdir()
+    (workspace_dir / "raw" / "input.wav").write_text("ok", encoding="utf-8")
+    uploaded = workspace_upload_files(workspace_dir, WorkspaceSpec(prefix="/audio/render"))
+
+    delete_paths = workspace_delete_object_paths(
+        WorkspaceSpec(prefix="/audio/render"),
+        [
+            "audio/render/raw/input.wav",
+            "audio/render/old.tmp",
+            "audio/render/.perago-attempt.json",
+            "other/old.tmp",
+        ],
+        uploaded,
+    )
+
+    assert delete_paths == ["audio/render/old.tmp"]
 
 
 def test_cleanup_requires_attempt_marker(tmp_path) -> None:

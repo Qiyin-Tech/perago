@@ -59,6 +59,7 @@ from perago.worker_runtime import WorkerRuntime, prepare_worker_runtime
 from perago.workspace import (
     WorkspaceDownloadFile,
     WorkspaceUploadFile,
+    workspace_delete_object_paths,
     workspace_download_files,
     workspace_local_path,
     workspace_upload_files,
@@ -119,6 +120,7 @@ __all__ = [
     "task",
     "terminal_failed_result",
     "worker_child_specs",
+    "workspace_delete_object_paths",
     "workspace_download_files",
     "workspace_local_path",
     "workspace_upload_files",
