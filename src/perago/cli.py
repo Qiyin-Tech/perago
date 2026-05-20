@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from pydantic.errors import PydanticInvalidForJsonSchema
 
 from perago.conductor_runtime import OrkesConductorRuntimeClient
-from perago.config import load_runtime_config
+from perago.config import ExecutionMode, load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
 from perago.supervisor import run_worker_supervisor
 from perago.task import load_module_task
@@ -47,16 +47,23 @@ def extract(module_target: str, output: Path = typer.Option(..., "--output", "-o
 
 
 @app.command()
-def start(module_target: str, j: int = typer.Option(1, "-j", min=1)) -> None:
+def start(
+    module_target: str,
+    j: int = typer.Option(1, "-j", min=1),
+    execution_mode: ExecutionMode | None = typer.Option(None, "--execution-mode"),
+) -> None:
     """Start Conductor worker processes for one Perago task module."""
     try:
         config = load_runtime_config(module_target)
+        resolved_execution_mode = execution_mode or config.execution_mode
         if config.conductor is None:
             raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
         if config.lakefs is None:
             raise RuntimeConfigError("LakeFS config is required for perago start")
         task = load_module_task(module_target)
         build_taskdef(task)
+        if resolved_execution_mode == "thread":
+            raise RuntimeConfigError("thread execution mode is not implemented yet")
         conductor = OrkesConductorRuntimeClient.from_config(config.conductor)
         if not conductor.taskdef_exists(task.name):
             raise RuntimeConfigError(
@@ -66,7 +73,12 @@ def start(module_target: str, j: int = typer.Option(1, "-j", min=1)) -> None:
         _fail(str(exc))
     except Exception as exc:  # noqa: BLE001
         _fail(f"failed to validate Conductor TaskDef: {exc}")
-    run_worker_supervisor(config=config, module_target=module_target, process_count=j)
+    run_worker_supervisor(
+        config=config,
+        module_target=module_target,
+        process_count=j,
+        execution_mode=resolved_execution_mode,
+    )
 
 
 def _fail(message: str) -> None:

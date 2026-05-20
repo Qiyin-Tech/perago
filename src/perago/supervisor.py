@@ -9,7 +9,7 @@ from types import FrameType
 from loguru import logger
 
 from perago.conductor_runtime import OrkesConductorRuntimeClient, run_worker_poll_loop
-from perago.config import RuntimeConfig, child_environment
+from perago.config import ExecutionMode, RuntimeConfig, child_environment
 from perago.errors import RuntimeConfigError
 from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
 from perago.task import load_module_task
@@ -177,7 +177,10 @@ def run_worker_supervisor(
     config: RuntimeConfig,
     module_target: str,
     process_count: int,
+    execution_mode: ExecutionMode = "process",
 ) -> None:
+    if execution_mode != "process":
+        raise RuntimeConfigError("thread execution mode is not implemented yet")
     specs = worker_child_specs(
         base_env={"PERAGO_WORKER_ID_PREFIX": config.worker_id_prefix},
         module_target=module_target,

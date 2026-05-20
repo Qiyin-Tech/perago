@@ -126,6 +126,11 @@ Acceptance criteria:
     - 更新 `docs/runtime/worker-processes.md`、`docs/runtime/conductor.md`、`docs/reference/environment-variables.md`。
     - 明确 `process` 默认、`thread` 显式选择、CLI 参数优先于环境变量。
 
+  ## Progress
+
+  - [x] Public interface parsing: `PERAGO_EXECUTION_MODE` is loaded into `RuntimeConfig.execution_mode`, `perago start --execution-mode` overrides it, and `process` remains the default.
+  - [ ] SDK broker/runner adapters and process/thread execution mode implementations.
+
   ## Assumptions
 
   - 以当前 lockfile 的 `conductor-python==1.3.11` 为目标；该版本已有 SDK `TaskRunner`、batch poll、adaptive empty-poll backoff、`LeaseManager`、`lease_extend_enabled` 和

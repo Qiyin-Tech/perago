@@ -32,6 +32,7 @@ Perago 目前不会把 Conductor auth key、Conductor auth secret 或 LakeFS 配
 | `PERAGO_LOG_RETENTION` | optional | `30d` | `RuntimeConfig.log_retention` | 接受正整数加 `d`，大小写不敏感，例如 `7d` 或 `30D`。`0d` 和其他单位会被拒绝。 |
 | `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | `RuntimeConfig.worker_id_prefix` | 只能包含 ASCII 字母和数字。supervisor 使用它为 child process 生成 `PERAGO_WORKER_ID`。 |
 | `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 调试进程退回到 `<module-target-prefix>-pid-<pid>` | worker runtime identity | `perago start -j` 为每个 child process 写入该值。常规部署不应在 `.env` 中配置。 |
+| `PERAGO_EXECUTION_MODE` | optional | `process` | `RuntimeConfig.execution_mode` | 接受 `process` 或 `thread`，大小写不敏感。CLI `perago start --execution-mode ...` 会覆盖该环境变量。当前实现只完成公共接口解析；`thread` runner 仍在重构计划后续步骤中落地。 |
 
 ## `.env` 解析规则
 
@@ -50,6 +51,7 @@ export PERAGO_LOG_FILE_MAX_SIZE=512KB
 PERAGO_WORKSPACE_ROOT='/tmp/perago/workspaces'
 PERAGO_LOG_ROOT="/tmp/perago/logs"
 PERAGO_WORKER_ID_PREFIX=localWorker
+PERAGO_EXECUTION_MODE=process
 ```
 
 ## 命令要求
@@ -72,3 +74,4 @@ PERAGO_WORKER_ID_PREFIX=localWorker
 | `PERAGO_LOG_FILE_MAX_SIZE must be a positive size ...` | 日志文件大小不是 `512KB`/`100MB`/`1.5GB` 这类格式。 | 使用正数和 `KB`、`MB` 或 `GB` 单位。 |
 | `PERAGO_LOG_RETENTION must be a positive day count ...` | 日志保留期不是正整数天数。 | 使用 `7d`、`30d` 这类格式。 |
 | `PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits` | worker id prefix 含有连字符、下划线、点号或非 ASCII 字符。 | 改成只含字母和数字的前缀，例如 `prodAFeaturesBuild`。 |
+| `PERAGO_EXECUTION_MODE must be either 'process' or 'thread'` | execution mode 不是支持的枚举值。 | 使用默认 `process`，或显式设置为 `thread`。 |

@@ -6,6 +6,7 @@ import tempfile
 from datetime import timedelta
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -17,6 +18,7 @@ LOG_SIZE_UNITS = {
     "MB": 1024 * 1024,
     "GB": 1024 * 1024 * 1024,
 }
+ExecutionMode = Literal["process", "thread"]
 
 
 class ConductorConfig(BaseModel):
@@ -139,6 +141,9 @@ class RuntimeConfig(BaseModel):
     worker_id_prefix : str
         ASCII alphanumeric prefix used by the supervisor to generate child
         ``PERAGO_WORKER_ID`` values.
+    execution_mode : "process" or "thread"
+        Worker execution model. Defaults to ``"process"`` and may be
+        overridden by ``PERAGO_EXECUTION_MODE`` or the ``perago start`` CLI.
     conductor : ConductorConfig or None, default=None
         Optional Conductor connection config. ``perago start`` requires it.
     lakefs : LakeFSConfig or None, default=None
@@ -176,6 +181,7 @@ class RuntimeConfig(BaseModel):
     log_file_max_size: int
     log_retention: timedelta
     worker_id_prefix: str
+    execution_mode: ExecutionMode = "process"
     conductor: ConductorConfig | None = None
     lakefs: LakeFSConfig | None = None
 
@@ -256,6 +262,7 @@ def load_runtime_config(
         log_file_max_size=parse_log_file_max_size(env.get("PERAGO_LOG_FILE_MAX_SIZE")),
         log_retention=parse_log_retention(env.get("PERAGO_LOG_RETENTION")),
         worker_id_prefix=resolve_worker_id_prefix(module_target, env),
+        execution_mode=parse_execution_mode(env.get("PERAGO_EXECUTION_MODE")),
         conductor=parse_conductor_config(env),
         lakefs=parse_lakefs_config(env),
     )
@@ -325,6 +332,15 @@ def parse_log_retention(value: str | None) -> timedelta:
     if not match:
         raise RuntimeConfigError("PERAGO_LOG_RETENTION must be a positive day count such as '7d' or '30d'")
     return timedelta(days=int(match.group(1)))
+
+
+def parse_execution_mode(value: str | None) -> ExecutionMode:
+    if value is None or value.strip() == "":
+        return "process"
+    mode = value.strip().lower()
+    if mode not in {"process", "thread"}:
+        raise RuntimeConfigError("PERAGO_EXECUTION_MODE must be either 'process' or 'thread'")
+    return mode
 
 
 def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:

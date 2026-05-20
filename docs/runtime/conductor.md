@@ -23,12 +23,12 @@ error: Conductor TaskDef 'features.build' is not registered; run perago extract 
 ```bash
 perago check app.workers.features_build
 perago extract app.workers.features_build --output generated/features.build.json
-perago start app.workers.features_build -j 2
+perago start app.workers.features_build -j 2 --execution-mode process
 ```
 
 ## Poll loop
 
-每个 worker child process 只 poll 当前 module 中定义的单个 task name，并用 supervisor 注入的 `PERAGO_WORKER_ID` 作为 Conductor worker id。
+当前已实现的 `process` runtime 中，每个 worker child process 只 poll 当前 module 中定义的单个 task name，并用 supervisor 注入的 `PERAGO_WORKER_ID` 作为 Conductor worker id。`perago start --execution-mode ...` 与 `PERAGO_EXECUTION_MODE` 的解析已经可用，优先级是 CLI 参数高于环境变量，默认值为 `process`；真正的单 broker + N executor process 调度模型会在后续重构步骤替换这一段 poll loop。
 
 一次循环的顺序是：
 
