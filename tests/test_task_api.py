@@ -6,7 +6,9 @@ from pydantic import BaseModel, ValidationError
 import perago
 from perago import (
     GuardrailViolation,
+    PublishBudget,
     TaskDefinitionError,
+    TaskControls,
     WorkspaceSpec,
     check_guardrails,
     load_module_task,
@@ -117,6 +119,29 @@ def test_rejects_invalid_task_decorator_option_types() -> None:
 
         @task(name="bad.workspace.type", owner_email="data@example.com", workspace={})
         def bad_workspace_type(params: Params) -> Output:
+            return Output(value=params.value)
+
+
+def test_rejects_publish_budget_on_workspace_free_tasks() -> None:
+    budget = PublishBudget(
+        max_changed_objects=1,
+        max_changed_bytes=1,
+        observed_merge_p99_seconds=1,
+        safety_margin_seconds=1,
+        lakefs_merge_timeout_seconds=2,
+        conductor_completion_timeout_seconds=1,
+        worker_shutdown_grace_seconds=1,
+        heartbeat_interval_seconds=1,
+    )
+
+    with pytest.raises(TaskDefinitionError, match="publish_budget requires workspace"):
+
+        @task(
+            name="bad.publish_budget",
+            owner_email="data@example.com",
+            controls=TaskControls(publish_budget=budget),
+        )
+        def bad_publish_budget(params: Params) -> Output:
             return Output(value=params.value)
 
 

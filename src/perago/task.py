@@ -101,6 +101,8 @@ def _build_task_definition(
         raise TaskDefinitionError("workspace must be a WorkspaceSpec")
     if not isinstance(controls, TaskControls):
         raise TaskDefinitionError("controls must be a TaskControls")
+    if workspace is None and controls.publish_budget is not None:
+        raise TaskDefinitionError("publish_budget requires workspace=WorkspaceSpec(...)")
     if inspect.iscoroutinefunction(fn):
         raise TaskDefinitionError("task function must be a synchronous function")
 
