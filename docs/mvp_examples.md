@@ -497,6 +497,8 @@ PERAGO_WORKER_ID_PREFIX=prodAFeaturesBuild
 
 For local development these may be loaded from `.env`. They are worker-local runtime configuration and are not part of Conductor task input or output. Real process environment variables take precedence over `.env`; `.env` only fills missing values. `perago check`, `perago extract`, and `perago start` all read `.env` with the same precedence rule before loading the task module.
 
+Perago parses the connection variables into `ConductorConfig` and `LakeFSConfig` when present. Missing Conductor auth is allowed, but if either `CONDUCTOR_AUTH_KEY` or `CONDUCTOR_AUTH_SECRET` is set, both must be set. LakeFS endpoint, access key, and secret key must be configured together.
+
 For `perago start`, `PERAGO_WORKER_ID` is written by the Worker Supervisor rather than by a user's `.env`. A user-provided value is only a fallback for unsupervised or local debugging runs. `PERAGO_WORKER_ID_PREFIX` may be set in `.env`; it is the user-facing knob for avoiding worker id collisions.
 
 `PERAGO_WORKSPACE_ROOT` is Perago-specific because it controls local disk placement for all attempt-local workspaces. It is a host file-system path, not a LakeFS path and not a Workspace Path. Perago parses it with `pathlib.Path` so deployments can use platform-native paths:

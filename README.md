@@ -121,6 +121,8 @@ PERAGO_WORKER_ID_PREFIX=prodAFeaturesBuild
 
 Runtime models and config validation use Pydantic. CLI commands use Typer. Runtime logs use loguru JSONL files with UTC+08:00 timestamps.
 
+Conductor and LakeFS connection environment variables are parsed into local runtime config and checked for incomplete credential groups. `perago check` still does not connect to either service.
+
 ## Workspace guardrails
 
 Workspace guardrails are file-shape checks over the local workspace root exposed by `WorkspaceSpec(prefix=...)`.
