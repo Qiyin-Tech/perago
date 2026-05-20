@@ -90,6 +90,28 @@ def test_prepares_and_cleans_attempt_workspace(tmp_path) -> None:
     cleanup_attempt_workspace(workspace_dir)
 
     assert not workspace_dir.exists()
+    assert not (tmp_path / "wf-7f3d" / "features.build" / "task_id=9b4c").exists()
+    assert not (tmp_path / "wf-7f3d" / "features.build").exists()
+    assert not (tmp_path / "wf-7f3d").exists()
+    assert tmp_path.exists()
+
+
+def test_cleanup_preserves_non_empty_attempt_parent_dirs(tmp_path) -> None:
+    task = Attempt(
+        workflow_instance_id="wf-7f3d",
+        task_def_name="features.build",
+        task_id="9b4c",
+        retry_count=2,
+    )
+    workspace_dir = prepare_attempt_workspace(tmp_path, task)
+    sibling = workspace_dir.parent / "retry_count=3"
+    sibling.mkdir()
+
+    cleanup_attempt_workspace(workspace_dir)
+
+    assert not workspace_dir.exists()
+    assert sibling.exists()
+    assert workspace_dir.parent.exists()
 
 
 def test_workspace_upload_files_map_local_files_under_prefix_and_skip_marker(tmp_path) -> None:

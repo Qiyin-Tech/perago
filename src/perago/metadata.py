@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from perago._segments import safe_segment
 from perago.errors import PublishFenceError
 from perago.models import WorkspaceInput, WorkspaceSpec
 
@@ -99,14 +99,14 @@ def staging_branch_name(task: object) -> str:
     parts = [
         "perago",
         "staging",
-        safe_segment(_task_attr(task, "workflow_instance_id")),
-        safe_segment(_task_attr(task, "reference_task_name")),
-        f"seq={safe_segment(_task_attr(task, 'seq'))}",
-        f"iteration={safe_segment(_task_attr(task, 'iteration'))}",
-        f"task_id={safe_segment(_task_attr(task, 'task_id'))}",
-        f"retry={safe_segment(_task_attr(task, 'retry_count'))}",
+        _lakefs_branch_segment(_task_attr(task, "workflow_instance_id")),
+        _lakefs_branch_segment(_task_attr(task, "reference_task_name")),
+        f"seq-{_lakefs_branch_segment(_task_attr(task, 'seq'))}",
+        f"iteration-{_lakefs_branch_segment(_task_attr(task, 'iteration'))}",
+        f"task-id-{_lakefs_branch_segment(_task_attr(task, 'task_id'))}",
+        f"retry-{_lakefs_branch_segment(_task_attr(task, 'retry_count'))}",
     ]
-    return "/".join(parts)
+    return "-".join(parts)
 
 
 def confirm_metadata_extra(
@@ -208,3 +208,10 @@ def _task_attr(task: object, name: str) -> object:
         return getattr(task, name)
     except AttributeError as exc:
         raise AttributeError(f"task is missing required attribute {name}") from exc
+
+
+def _lakefs_branch_segment(value: object) -> str:
+    text = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value)).strip("-_")
+    if not text or text.startswith("-"):
+        return "unknown"
+    return text

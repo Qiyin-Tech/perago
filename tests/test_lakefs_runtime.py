@@ -4,6 +4,7 @@ from pathlib import Path
 
 from perago.execution import StagedWorkspace
 from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
+from perago.metadata import staging_branch_name
 from perago.models import WorkspaceInput, WorkspaceSpec
 
 
@@ -121,7 +122,7 @@ class FakeRepo:
 
     def branch(self, branch_id: str):
         if branch_id not in self.branches:
-            store = self.staging_store if branch_id.startswith("perago/staging") else {}
+            store = self.staging_store if branch_id.startswith("perago-staging-") else {}
             self.branches[branch_id] = FakeBranch(branch_id, store, self.deleted)
         return self.branches[branch_id]
 
@@ -157,6 +158,7 @@ def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     (tmp_path / "features" / "out.txt").write_bytes(b"feature")
     staged = runtime.stage_workspace(tmp_path, workspace, spec, attempt)
 
+    assert staged.branch == staging_branch_name(attempt)
     staging_branch = repo.branches[staged.branch]
     assert staging_branch.created_from == "input-commit"
     assert repo.staging_store["audio/render/raw/input.txt"] == b"updated"

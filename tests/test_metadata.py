@@ -130,8 +130,29 @@ def test_choose_publish_base_rejects_incomplete_commit_ranges() -> None:
 
 def test_staging_branch_name_is_internal_and_attempt_scoped() -> None:
     assert staging_branch_name(Attempt(task_id="task/9b4c", retry_count=3)) == (
-        "perago/staging/wf-7f3d/build/seq=2/iteration=0/task_id=task_9b4c/retry=3"
+        "perago-staging-wf-7f3d-build-seq-2-iteration-0-task-id-task-9b4c-retry-3"
     )
+
+
+def test_staging_branch_name_uses_lakefs_branch_id_safe_characters() -> None:
+    branch = staging_branch_name(
+        Attempt(
+            workflow_instance_id="4677a373-4878-4e6f-bfa4-876036537a33",
+            reference_task_name="hello/workspace",
+            seq=1,
+            iteration=0,
+            task_def_name="perago.smoke.workspace",
+            task_id="42cfee5b-bca4-4b78-9bf2-86b47b3df2b6",
+            retry_count=0,
+        )
+    )
+
+    assert branch == (
+        "perago-staging-4677a373-4878-4e6f-bfa4-876036537a33-hello-workspace-"
+        "seq-1-iteration-0-task-id-42cfee5b-bca4-4b78-9bf2-86b47b3df2b6-retry-0"
+    )
+    assert not branch.startswith("-")
+    assert all(char.isalnum() or char in {"_", "-"} for char in branch)
 
 
 def test_confirm_metadata_extra_matches_publish_metadata_fields() -> None:
@@ -163,7 +184,7 @@ def test_workspace_publication_plan_combines_publish_fence_and_metadata() -> Non
 
     assert isinstance(plan, WorkspacePublicationPlan)
     assert plan.logical_task_key == "wf-7f3d:build:2:0:features.build"
-    assert plan.staging_branch == "perago/staging/wf-7f3d/build/seq=2/iteration=0/task_id=task-9b4c/retry=1"
+    assert plan.staging_branch == "perago-staging-wf-7f3d-build-seq-2-iteration-0-task-id-task-9b4c-retry-1"
     assert plan.publish_base_head == "head-2"
     assert plan.superseded_commit == "head-2"
     assert plan.try_metadata["perago.phase"] == "try"

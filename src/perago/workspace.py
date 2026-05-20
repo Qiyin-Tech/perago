@@ -196,6 +196,7 @@ def assert_workspace_sync_plan_within_budget(plan: WorkspaceSyncPlan, budget: Pu
 def cleanup_attempt_workspace(workspace_dir: Path) -> None:
     _require_attempt_marker(workspace_dir)
     shutil.rmtree(workspace_dir)
+    _cleanup_empty_attempt_parents(workspace_dir, depth=3)
 
 
 def cleanup_attempt_workspace_safely(workspace_dir: Path, task: object) -> bool:
@@ -223,6 +224,16 @@ def sweep_abandoned_attempt_workspaces(workspace_root: Path) -> list[Path]:
         shutil.rmtree(workspace_dir)
         removed.append(workspace_dir)
     return removed
+
+
+def _cleanup_empty_attempt_parents(workspace_dir: Path, *, depth: int) -> None:
+    current = workspace_dir.parent
+    for _ in range(depth):
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
 
 
 def _require_attempt_marker(workspace_dir: Path) -> None:
