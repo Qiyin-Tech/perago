@@ -4,7 +4,7 @@
 
 ## 前置条件
 
-Perago 要求 Python 3.12 或更新版本。仓库本地开发默认使用 `uv`：
+Perago 要求 Python 3.10 或更新版本。仓库本地开发默认使用 `uv`：
 
 ```bash
 uv sync

@@ -93,7 +93,7 @@ version: 2
 build:
   os: ubuntu-24.04
   tools:
-    python: "3.12"
+    python: "3.10"
 
 sphinx:
   configuration: docs/conf.py
@@ -108,7 +108,7 @@ python:
 
 说明：
 
-- Perago 的 `pyproject.toml` 已要求 Python `>=3.12`，Read the Docs 构建也固定到 Python 3.12。
+- Perago 的 `pyproject.toml` 已要求 Python `>=3.10`，Read the Docs 构建也固定到 Python 3.10。
 - `fail_on_warning: true` 应在文档基本稳定后打开。如果初始迁移警告过多，可以先关闭，待 M3 阶段再打开。
 - 如果内部 Read the Docs 实例不支持 `ubuntu-24.04`，退回其支持的最新 Ubuntu 镜像。
 
@@ -806,4 +806,3 @@ PostGuardrailViolation
 5. `docs: add runtime and publication guides`
 6. `docs: add docstring and api coverage checks`
 7. `docs: enable warning-as-error for readthedocs build`
-
