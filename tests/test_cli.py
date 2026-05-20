@@ -118,6 +118,17 @@ def test_check_cli_reports_task_parameter_defaults(monkeypatch, tmp_path) -> Non
     assert "task function parameters must not declare defaults" in result.output
 
 
+def test_check_cli_reports_bad_decorator_option_types(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.bad_decorator_types"])
+
+    assert result.exit_code == 1
+    assert "controls must be a TaskControls" in result.output
+
+
 def test_check_cli_rejects_non_module_target(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)

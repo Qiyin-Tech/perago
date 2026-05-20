@@ -53,7 +53,7 @@ def task(
                 owner_email=owner_email,
                 description=description,
                 workspace=workspace,
-                controls=controls or TaskControls(),
+                controls=controls if controls is not None else TaskControls(),
             )
         except ValidationError as exc:
             raise TaskDefinitionError(str(exc)) from exc
@@ -97,6 +97,10 @@ def _build_task_definition(
     controls: TaskControls,
 ) -> TaskDefinition:
     _validate_required_metadata(name=name, owner_email=owner_email)
+    if workspace is not None and not isinstance(workspace, WorkspaceSpec):
+        raise TaskDefinitionError("workspace must be a WorkspaceSpec")
+    if not isinstance(controls, TaskControls):
+        raise TaskDefinitionError("controls must be a TaskControls")
     if inspect.iscoroutinefunction(fn):
         raise TaskDefinitionError("task function must be a synchronous function")
 

@@ -106,6 +106,17 @@ def test_rejects_duplicate_contract_metadata() -> None:
             return Output(value=params.value)
 
 
+def test_rejects_invalid_task_decorator_option_types() -> None:
+    with pytest.raises(TaskDefinitionError, match="controls must be a TaskControls"):
+        load_module_task("app.workers.bad_decorator_types")
+
+    with pytest.raises(TaskDefinitionError, match="workspace must be a WorkspaceSpec"):
+
+        @task(name="bad.workspace.type", owner_email="data@example.com", workspace={})
+        def bad_workspace_type(params: Params) -> Output:
+            return Output(value=params.value)
+
+
 def test_guardrail_path_canonicalization() -> None:
     assert require_file(Path("raw") / "manifest.json").path == "raw/manifest.json"
     assert require_file(PureWindowsPath("raw") / "manifest.json").path == "raw/manifest.json"
