@@ -85,6 +85,14 @@ def test_rejects_missing_required_task_metadata() -> None:
             return Output(value=params.value)
 
 
+def test_rejects_duplicate_contract_metadata() -> None:
+    with pytest.raises(TaskDefinitionError, match="unsupported task decorator fields: output, params"):
+
+        @task(name="metadata.validate", owner_email="data@example.com", params=Params, output=Output)
+        def duplicate_contract(params: Params) -> Output:
+            return Output(value=params.value)
+
+
 def test_guardrail_path_canonicalization() -> None:
     assert require_file(Path("raw") / "manifest.json").path == "raw/manifest.json"
     assert require_file(PureWindowsPath("raw") / "manifest.json").path == "raw/manifest.json"
