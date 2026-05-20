@@ -56,7 +56,7 @@ class TaskControls(BaseModel):
 
 
 class WorkspaceSpec(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     prefix: str = "/"
     pre: list[_WorkspaceGuardrail] = Field(default_factory=list)

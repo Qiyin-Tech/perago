@@ -117,6 +117,8 @@ def test_workspace_prefix_validation() -> None:
     assert WorkspaceSpec(prefix="/audio/render").prefix == "audio/render"
     with pytest.raises(ValidationError, match="stay inside"):
         WorkspaceSpec(prefix="../raw")
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        WorkspaceSpec(prefx="/audio/render")
 
 
 def test_guardrail_runtime_checks(tmp_path: Path) -> None:

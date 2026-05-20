@@ -20,7 +20,7 @@ LOG_SIZE_UNITS = {
 
 
 class RuntimeConfig(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     workspace_root: Path
     log_root: Path

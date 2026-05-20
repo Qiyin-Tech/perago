@@ -100,6 +100,15 @@ def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
     assert isinstance(config, BaseModel)
     with pytest.raises(ValidationError):
         config.worker_id_prefix = "other"
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        RuntimeConfig(
+            workspace_root=tmp_path / "workspaces",
+            log_root=tmp_path / "logs",
+            log_file_max_size=1024,
+            log_retention=timedelta(days=1),
+            worker_id_prefix="worker",
+            worker_prefix="typo",
+        )
 
 
 def test_parse_log_file_max_size() -> None:
