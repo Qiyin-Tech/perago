@@ -1,3 +1,4 @@
+from perago.attempt import assert_current_attempt_snapshot
 from perago.config import RuntimeConfig, load_runtime_config
 from perago.errors import (
     GuardrailViolation,
@@ -5,6 +6,7 @@ from perago.errors import (
     PublishFenceError,
     PreGuardrailViolation,
     RuntimeConfigError,
+    StaleAttemptError,
     TaskDefinitionError,
     TaskInputError,
 )
@@ -58,6 +60,7 @@ __all__ = [
     "RuntimeConfig",
     "RuntimeConfigError",
     "RuntimeTaskResult",
+    "StaleAttemptError",
     "TaskControls",
     "TaskDefinition",
     "TaskDefinitionError",
@@ -66,6 +69,7 @@ __all__ = [
     "WorkerChildSpec",
     "WorkspaceInput",
     "WorkspaceSpec",
+    "assert_current_attempt_snapshot",
     "build_taskdef",
     "build_workspace_free_task_output",
     "build_workspace_task_output",

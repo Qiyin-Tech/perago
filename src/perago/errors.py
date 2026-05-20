@@ -24,3 +24,7 @@ class PostGuardrailViolation(GuardrailViolation):
 
 class PublishFenceError(RuntimeError):
     """Raised when a workspace branch cannot be safely advanced by an attempt."""
+
+
+class StaleAttemptError(RuntimeError):
+    """Raised when a Conductor task snapshot no longer matches the current attempt."""
