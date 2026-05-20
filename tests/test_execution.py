@@ -8,6 +8,8 @@ from perago import (
     PreGuardrailViolation,
     TaskInputError,
     WorkspaceSpec,
+    build_workspace_free_task_output,
+    build_workspace_task_output,
     invoke_workspace_free_task,
     invoke_workspace_task_body,
     load_module_task,
@@ -104,6 +106,35 @@ def test_invokes_workspace_free_task_from_wrapped_params() -> None:
     )
 
     assert output == {"result": {"valid": True, "reason": None}}
+
+
+def test_builds_workspace_task_output_with_published_ref() -> None:
+    task = load_module_task("app.workers.features_build")
+
+    output = build_workspace_task_output(
+        task,
+        WORKSPACE_INPUT,
+        "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca",
+        {"row_count": 100, "feature_count": 24},
+    )
+
+    assert output == {
+        "workspace": {
+            "repository": "song-000123",
+            "branch": "main",
+            "ref_type": "commit",
+            "ref": "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca",
+        },
+        "result": {"row_count": 100, "feature_count": 24},
+    }
+
+
+def test_builds_workspace_free_task_output() -> None:
+    task = load_module_task("app.workers.metadata_validate")
+
+    output = build_workspace_free_task_output(task, {"valid": False, "reason": "missing"})
+
+    assert output == {"result": {"valid": False, "reason": "missing"}}
 
 
 def test_workspace_free_invocation_rejects_expanded_top_level_params() -> None:

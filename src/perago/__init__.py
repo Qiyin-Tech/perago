@@ -7,7 +7,12 @@ from perago.errors import (
     TaskDefinitionError,
     TaskInputError,
 )
-from perago.execution import invoke_workspace_free_task, invoke_workspace_task_body
+from perago.execution import (
+    build_workspace_free_task_output,
+    build_workspace_task_output,
+    invoke_workspace_free_task,
+    invoke_workspace_task_body,
+)
 from perago.guards import (
     check_guardrails,
     forbid_glob,
@@ -43,6 +48,8 @@ __all__ = [
     "WorkspaceInput",
     "WorkspaceSpec",
     "build_taskdef",
+    "build_workspace_free_task_output",
+    "build_workspace_task_output",
     "check_guardrails",
     "forbid_glob",
     "invoke_workspace_free_task",

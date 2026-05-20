@@ -48,8 +48,37 @@ def invoke_workspace_free_task(task: TaskDefinition, input_data: Mapping[str, An
 
     params = task.params_model.model_validate(input_data["params"])
     raw_result = task.fn(params)
+    return build_workspace_free_task_output(task, raw_result)
+
+
+def build_workspace_free_task_output(task: TaskDefinition, raw_result: object) -> dict[str, Any]:
+    if task.has_workspace:
+        raise TaskInputError("workspace-free output can only be built for workspace-free tasks")
     result = _validate_result(task, raw_result)
     return {"result": result.model_dump(mode="json")}
+
+
+def build_workspace_task_output(
+    task: TaskDefinition,
+    input_workspace: WorkspaceInput | Mapping[str, Any],
+    published_ref: str,
+    raw_result: object,
+) -> dict[str, Any]:
+    if not task.has_workspace:
+        raise TaskInputError("workspace output can only be built for workspace tasks")
+    workspace_input = WorkspaceInput.model_validate(input_workspace)
+    workspace_output = WorkspaceInput.model_validate(
+        {
+            **workspace_input.model_dump(mode="json"),
+            "ref_type": "commit",
+            "ref": published_ref,
+        }
+    )
+    result = _validate_result(task, raw_result)
+    return {
+        "workspace": workspace_output.model_dump(mode="json"),
+        "result": result.model_dump(mode="json"),
+    }
 
 
 def _check_phase_guardrails(
