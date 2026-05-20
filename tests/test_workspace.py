@@ -12,6 +12,7 @@ from perago.workspace import (
     cleanup_attempt_workspace,
     cleanup_attempt_workspace_safely,
     garbage_collect_attempt_workspaces,
+    garbage_collect_workspace_owner,
     prepare_attempt_workspace,
     WorkspaceOwner,
     sweep_abandoned_attempt_workspaces,
@@ -30,6 +31,7 @@ class Attempt:
     task_def_name: str
     task_id: str
     retry_count: int
+    execution_id: str = "exec-1"
 
 
 def test_workspace_object_prefix_maps_root_prefix_to_empty_object_prefix() -> None:
@@ -81,13 +83,14 @@ def test_prepares_and_cleans_attempt_workspace(tmp_path) -> None:
     workspace_dir = prepare_attempt_workspace(tmp_path, task, owner)
 
     marker = workspace_dir / ATTEMPT_WORKSPACE_MARKER
-    assert workspace_dir == tmp_path / "task_id=9b4c"
+    assert workspace_dir == tmp_path / "task_id=9b4c-exec=exec-1"
     marker_data = json.loads(marker.read_text(encoding="utf-8"))
     assert marker_data.pop("started_at")
     assert marker_data == {
         "owner_pid": 1234,
         "owner_token": "owner-token",
         "owner_worker_id": "featuresBuild0001",
+        "execution_id": "exec-1",
         "retry_count": 2,
         "task_def_name": "features.build",
         "task_id": "9b4c",
@@ -258,6 +261,7 @@ def test_sweep_removes_only_marked_attempt_workspaces(tmp_path) -> None:
             {
                 "workflow_instance_id": "wf",
                 "task_id": "1",
+                "execution_id": "exec-1",
                 "retry_count": 0,
                 "task_def_name": "task",
                 "owner_worker_id": "worker0001",
@@ -328,6 +332,32 @@ def test_gc_keeps_active_owners_and_removes_old_dead_owners(tmp_path) -> None:
     assert young.exists()
 
 
+def test_targeted_gc_removes_only_dead_owner_workspaces(tmp_path) -> None:
+    started_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    target = _marked_workspace(
+        tmp_path,
+        "target",
+        owner_worker_id="worker0001",
+        owner_pid=111,
+        owner_token="target-token",
+        started_at=started_at,
+    )
+    other = _marked_workspace(
+        tmp_path,
+        "other",
+        owner_worker_id="worker0002",
+        owner_pid=222,
+        owner_token="other-token",
+        started_at=started_at,
+    )
+
+    removed = garbage_collect_workspace_owner(tmp_path, owner_worker_id="worker0001", owner_pid=111)
+
+    assert removed == [target]
+    assert not target.exists()
+    assert other.exists()
+
+
 def test_gc_skips_legacy_and_bad_markers(tmp_path) -> None:
     legacy = tmp_path / "task_id=legacy"
     legacy.mkdir()
@@ -364,6 +394,7 @@ def _marked_workspace(
             {
                 "workflow_instance_id": "wf",
                 "task_id": task_id,
+                "execution_id": f"exec-{task_id}",
                 "retry_count": 0,
                 "task_def_name": "task",
                 "owner_worker_id": owner_worker_id,

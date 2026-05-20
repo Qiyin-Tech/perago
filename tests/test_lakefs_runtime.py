@@ -21,6 +21,7 @@ class Attempt:
     retry_count: int = 2
     seq: int = 3
     iteration: int = 1
+    execution_id: str = "exec-1"
 
 
 @dataclass
@@ -87,6 +88,7 @@ class FakeBranch(FakeRef):
         super().__init__(store, deleted)
         self.id = branch_id
         self.created_from = None
+        self.create_exist_ok: bool | None = None
         self.deleted = False
         self.commits: list[FakeCommit] = []
         self.merges: list[dict] = []
@@ -94,8 +96,8 @@ class FakeBranch(FakeRef):
         self.log_calls: list[dict] = []
 
     def create(self, source_reference: str, exist_ok: bool = False):
-        assert exist_ok is True
         self.created_from = source_reference
+        self.create_exist_ok = exist_ok
         return self
 
     def commit(self, message: str, metadata: dict[str, str]):
@@ -211,6 +213,7 @@ def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     assert staged.branch == staging_branch_name(attempt)
     staging_branch = repo.branches[staged.branch]
     assert staging_branch.created_from == "input-commit"
+    assert staging_branch.create_exist_ok is False
     assert repo.staging_store["audio/render/raw/input.txt"] == b"updated"
     assert repo.staging_store["audio/render/features/out.txt"] == b"feature"
     assert "audio/render/old.txt" in repo.deleted

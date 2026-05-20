@@ -16,6 +16,7 @@ from perago.config import (
     parse_lakefs_config,
     parse_log_file_max_size,
     parse_log_retention,
+    parse_optional_duration,
     read_dotenv,
     resolve_worker_id,
 )
@@ -59,6 +60,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "PERAGO_LOG_RETENTION=7d",
                 "PERAGO_WORKSPACE_GC_TTL=30s",
                 "PERAGO_WORKSPACE_GC_INTERVAL=5m",
+                "PERAGO_SHUTDOWN_FORCE_KILL_AFTER=20s",
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
                 "PERAGO_EXECUTION_MODE=thread",
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
@@ -83,6 +85,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.log_retention == timedelta(days=7)
     assert config.workspace_gc_ttl == timedelta(seconds=30)
     assert config.workspace_gc_interval == timedelta(minutes=5)
+    assert config.shutdown_force_kill_after == timedelta(seconds=20)
     assert config.worker_id_prefix == "dotenvPrefix"
     assert config.execution_mode == "thread"
     assert config.conductor == ConductorConfig(
@@ -173,6 +176,12 @@ def test_parse_duration_defaults_units_and_errors() -> None:
 
     with pytest.raises(RuntimeConfigError, match="PERAGO_WORKSPACE_GC_TTL"):
         parse_duration("0s", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL")
+
+
+def test_parse_optional_duration_defaults_to_none() -> None:
+    assert parse_optional_duration(None, name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER") is None
+    assert parse_optional_duration("", name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER") is None
+    assert parse_optional_duration("15s", name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER") == timedelta(seconds=15)
 
 
 def test_parse_connection_configs_are_optional() -> None:

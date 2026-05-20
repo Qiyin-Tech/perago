@@ -12,6 +12,7 @@ from perago.errors import (
 )
 from perago.execution import (
     StagedWorkspace,
+    TaskExecutionContext,
     build_workspace_free_task_output,
     build_workspace_task_output,
     invoke_workspace_free_task,
@@ -88,6 +89,7 @@ __all__ = [
     "TaskControls",
     "TaskDefinition",
     "TaskDefinitionError",
+    "TaskExecutionContext",
     "TaskInputError",
     "TimeoutPolicy",
     "WorkerChildSpec",

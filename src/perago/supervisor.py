@@ -25,6 +25,7 @@ from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRu
 from perago.task import load_module_task
 from perago.worker_runtime import prepare_worker_runtime
 from perago.workspace import garbage_collect_attempt_workspaces
+from perago.workspace import garbage_collect_workspace_owner, sweep_abandoned_attempt_workspaces
 
 
 RESTART_BACKOFF_SECONDS = (1, 2, 4, 8, 16)
@@ -192,6 +193,9 @@ def run_worker_supervisor(
 ) -> None:
     if process_count < 1:
         raise RuntimeConfigError("worker process count must be at least 1")
+    removed = sweep_abandoned_attempt_workspaces(config.workspace_root)
+    if removed:
+        logger.bind(removed_count=len(removed)).info("swept abandoned attempt workspaces at startup")
     if execution_mode == "thread":
         gc_loop = start_workspace_gc_loop(
             config=config,
@@ -263,10 +267,12 @@ def run_worker_supervisor(
                 delay = restart_backoff_seconds(restart_count)
                 logger.bind(
                     worker_id=spec.worker_id,
+                    pid=getattr(process, "pid", None),
                     slot=slot,
                     exit_code=exit_code,
                     restart_delay_seconds=delay,
                 ).error("worker process exited; restarting")
+                _targeted_workspace_gc(config=config, worker_id=spec.worker_id, process=process)
                 if stop.wait(delay):
                     break
                 replacement = _start_process_executor(
@@ -285,24 +291,79 @@ def run_worker_supervisor(
         gc_loop.stop()
         for _ in executors:
             assignment_queue.put(StopProcessExecutor())
-        _stop_worker_processes([broker, *[process for _, process, _ in executors.values()]])
+        if broker.is_alive():
+            broker.terminate()
+        _stop_worker_processes(
+            [broker, *[process for _, process, _ in executors.values()]],
+            force_kill_after=config.shutdown_force_kill_after,
+            workspace_root=config.workspace_root,
+            process_worker_ids={id(process): spec.worker_id for spec, process, _ in executors.values()},
+        )
+        final_removed = sweep_abandoned_attempt_workspaces(config.workspace_root)
+        if final_removed:
+            logger.bind(removed_count=len(final_removed)).info("swept abandoned attempt workspaces after shutdown")
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def _stop_worker_processes(processes: list[multiprocessing.Process]) -> None:
+def _stop_worker_processes(
+    processes: list[multiprocessing.Process],
+    *,
+    force_kill_after: timedelta | None = None,
+    workspace_root: os.PathLike[str] | None = None,
+    process_worker_ids: dict[int, str] | None = None,
+) -> None:
+    timeout = None if force_kill_after is None else _duration_seconds(force_kill_after)
     for process in processes:
-        process.join(timeout=10)
+        process.join(timeout=timeout)
+    if force_kill_after is None:
+        return
+
+    deadline = force_kill_after.total_seconds()
     for process in processes:
         if process.is_alive():
-            process.terminate()
-    for process in processes:
-        process.join(timeout=5)
-    for process in processes:
-        if process.is_alive():
+            _log_force_kill(
+                process=process,
+                deadline_seconds=deadline,
+                workspace_root=workspace_root,
+                worker_id=(process_worker_ids or {}).get(id(process)),
+            )
             process.kill()
     for process in processes:
         process.join(timeout=5)
+
+
+def _targeted_workspace_gc(*, config: RuntimeConfig, worker_id: str, process: multiprocessing.Process) -> None:
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int):
+        return
+    removed = garbage_collect_workspace_owner(
+        config.workspace_root,
+        owner_worker_id=worker_id,
+        owner_pid=pid,
+    )
+    if removed:
+        logger.bind(worker_id=worker_id, pid=pid, removed_count=len(removed)).info(
+            "garbage-collected workspaces for dead executor"
+        )
+
+
+def _log_force_kill(
+    *,
+    process: multiprocessing.Process,
+    deadline_seconds: float,
+    workspace_root: os.PathLike[str] | None,
+    worker_id: str | None,
+) -> None:
+    logger.bind(
+        worker_id=worker_id,
+        pid=getattr(process, "pid", None),
+        task_id=None,
+        execution_id=None,
+        phase="shutdown-force-kill",
+        deadline_seconds=deadline_seconds,
+        workspace_root=str(workspace_root) if workspace_root is not None else None,
+    ).error("force-killing worker process after shutdown drain deadline")
 
 
 class WorkspaceGCLoop:

@@ -30,6 +30,8 @@ PERAGO_LOG_ROOT=/var/tmp/perago/logs
 PERAGO_LOG_FILE_MAX_SIZE=100MB
 PERAGO_LOG_RETENTION=30d
 PERAGO_WORKER_ID_PREFIX=peragoLocalWorker
+# Optional; unset by default.
+PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 ```
 
 `replace-me` 不是有效运行时值。Perago 看到未替换的连接密钥占位值时会拒绝启动。
@@ -44,6 +46,7 @@ PERAGO_WORKER_ID_PREFIX=peragoLocalWorker
 | `PERAGO_LOG_RETENTION` | optional | `30d` | 日志保留天数。接受正整数加 `d`，例如 `7d` 或 `30d`。 |
 | `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | supervisor 为子进程生成 `PERAGO_WORKER_ID` 的前缀。显式配置时只能包含 ASCII 字母和数字。 |
 | `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 进程退回到 module target 加 pid | worker process 身份。`perago start -j` 会为每个 child slot 写入该值；用户一般不应在 `.env` 中配置。 |
+| `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` | optional | unset | shutdown drain 的可选强制 kill deadline。未配置时 Perago 不调用 `process.kill()`；配置后接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30s`。 |
 | `CONDUCTOR_SERVER_URL` | required for `perago start` | 无 | Conductor API endpoint。`perago check` 和 `perago extract` 可在未配置时运行并报告 `not configured`。 |
 | `LAKECTL_SERVER_ENDPOINT_URL` | required for `perago start` | 无 | LakeFS endpoint。LakeFS 三个变量必须同时配置或同时省略。 |
 | `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for `perago start` | 无 | LakeFS access key id。 |

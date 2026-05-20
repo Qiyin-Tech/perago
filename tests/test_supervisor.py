@@ -19,11 +19,12 @@ from perago.supervisor import (
 
 
 class FakeProcess:
-    def __init__(self) -> None:
+    def __init__(self, *, pid: int | None = 1234) -> None:
         self.alive = True
+        self.pid = pid
         self.events: list[tuple[str, int | None]] = []
 
-    def join(self, timeout: int) -> None:
+    def join(self, timeout: int | float | None) -> None:
         self.events.append(("join", timeout))
 
     def is_alive(self) -> bool:
@@ -222,7 +223,7 @@ def test_run_worker_supervisor_process_mode_starts_broker_and_executors(monkeypa
 
     monkeypatch.setattr("perago.supervisor._start_broker_process", fake_start_broker_process)
     monkeypatch.setattr("perago.supervisor._start_process_executor", fake_start_process_executor)
-    monkeypatch.setattr("perago.supervisor._stop_worker_processes", lambda processes: stopped.extend(processes))
+    monkeypatch.setattr("perago.supervisor._stop_worker_processes", lambda processes, **kwargs: stopped.extend(processes))
 
     run_worker_supervisor(
         config=config,
@@ -626,15 +627,26 @@ def test_thread_runner_main_requires_runtime_configs(monkeypatch, tmp_path) -> N
         )
 
 
-def test_stop_worker_processes_escalates_after_grace_periods() -> None:
+def test_stop_worker_processes_waits_without_default_force_kill() -> None:
     process = FakeProcess()
 
     _stop_worker_processes([process])  # type: ignore[list-item]
 
+    assert process.events == [("join", None)]
+
+
+def test_stop_worker_processes_kills_only_after_configured_deadline(tmp_path) -> None:
+    process = FakeProcess(pid=4321)
+
+    _stop_worker_processes(
+        [process],  # type: ignore[list-item]
+        force_kill_after=timedelta(seconds=3),
+        workspace_root=tmp_path,
+        process_worker_ids={id(process): "worker0001"},
+    )
+
     assert process.events == [
-        ("join", 10),
-        ("terminate", None),
-        ("join", 5),
+        ("join", 3.0),
         ("kill", None),
         ("join", 5),
     ]

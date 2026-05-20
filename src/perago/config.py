@@ -184,6 +184,7 @@ class RuntimeConfig(BaseModel):
     execution_mode: ExecutionMode = "process"
     workspace_gc_ttl: timedelta = timedelta(hours=24)
     workspace_gc_interval: timedelta = timedelta(hours=1)
+    shutdown_force_kill_after: timedelta | None = None
     conductor: ConductorConfig | None = None
     lakefs: LakeFSConfig | None = None
 
@@ -274,6 +275,10 @@ def load_runtime_config(
             env.get("PERAGO_WORKSPACE_GC_INTERVAL"),
             default=timedelta(hours=1),
             name="PERAGO_WORKSPACE_GC_INTERVAL",
+        ),
+        shutdown_force_kill_after=parse_optional_duration(
+            env.get("PERAGO_SHUTDOWN_FORCE_KILL_AFTER"),
+            name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER",
         ),
         conductor=parse_conductor_config(env),
         lakefs=parse_lakefs_config(env),
@@ -370,6 +375,12 @@ def parse_duration(value: str | None, *, default: timedelta, name: str) -> timed
     if unit == "h":
         return timedelta(hours=amount)
     return timedelta(days=amount)
+
+
+def parse_optional_duration(value: str | None, *, name: str) -> timedelta | None:
+    if value is None or value.strip() == "":
+        return None
+    return parse_duration(value, default=timedelta(seconds=1), name=name)
 
 
 def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:

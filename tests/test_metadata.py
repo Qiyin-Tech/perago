@@ -26,6 +26,7 @@ class Attempt:
     task_def_name: str = "features.build"
     task_id: str = "task-9b4c"
     retry_count: int = 1
+    execution_id: str = "exec-1"
     retried_task_id: str | None = None
 
 
@@ -130,8 +131,17 @@ def test_choose_publish_base_rejects_incomplete_commit_ranges() -> None:
 
 def test_staging_branch_name_is_internal_and_attempt_scoped() -> None:
     assert staging_branch_name(Attempt(task_id="task/9b4c", retry_count=3)) == (
-        "perago-staging-wf-7f3d-build-seq-2-iteration-0-task-id-task-9b4c-retry-3"
+        "perago-staging-wf-7f3d-build-seq-2-iteration-0-task-id-task-9b4c-retry-3-exec-exec-1"
     )
+
+
+def test_staging_branch_name_isolated_by_execution_id() -> None:
+    first = staging_branch_name(Attempt(execution_id="exec-a"))
+    second = staging_branch_name(Attempt(execution_id="exec-b"))
+
+    assert first != second
+    assert first.endswith("-exec-exec-a")
+    assert second.endswith("-exec-exec-b")
 
 
 def test_staging_branch_name_uses_lakefs_branch_id_safe_characters() -> None:
@@ -144,12 +154,13 @@ def test_staging_branch_name_uses_lakefs_branch_id_safe_characters() -> None:
             task_def_name="perago.smoke.workspace",
             task_id="42cfee5b-bca4-4b78-9bf2-86b47b3df2b6",
             retry_count=0,
+            execution_id="exec/42",
         )
     )
 
     assert branch == (
         "perago-staging-4677a373-4878-4e6f-bfa4-876036537a33-hello-workspace-"
-        "seq-1-iteration-0-task-id-42cfee5b-bca4-4b78-9bf2-86b47b3df2b6-retry-0"
+        "seq-1-iteration-0-task-id-42cfee5b-bca4-4b78-9bf2-86b47b3df2b6-retry-0-exec-exec-42"
     )
     assert not branch.startswith("-")
     assert all(char.isalnum() or char in {"_", "-"} for char in branch)
@@ -184,7 +195,7 @@ def test_workspace_publication_plan_combines_publish_fence_and_metadata() -> Non
 
     assert isinstance(plan, WorkspacePublicationPlan)
     assert plan.logical_task_key == "wf-7f3d:build:2:0:features.build"
-    assert plan.staging_branch == "perago-staging-wf-7f3d-build-seq-2-iteration-0-task-id-task-9b4c-retry-1"
+    assert plan.staging_branch == "perago-staging-wf-7f3d-build-seq-2-iteration-0-task-id-task-9b4c-retry-1-exec-exec-1"
     assert plan.publish_base_head == "head-2"
     assert plan.superseded_commit == "head-2"
     assert plan.try_metadata["perago.phase"] == "try"

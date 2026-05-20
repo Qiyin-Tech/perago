@@ -71,7 +71,7 @@ class LakeFSWorkspaceRuntime:
     ) -> StagedWorkspace:
         repo = self._repo(workspace_input.repository)
         staging_branch = staging_branch_name(attempt)
-        branch = repo.branch(staging_branch).create(workspace_input.ref, exist_ok=True)
+        branch = repo.branch(staging_branch).create(workspace_input.ref, exist_ok=False)
         existing_paths = [
             getattr(item, "path")
             for item in branch.objects(prefix=workspace_object_prefix(workspace_spec))

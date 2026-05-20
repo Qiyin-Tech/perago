@@ -25,7 +25,7 @@ Perago 当前已支持解析 execution mode 公共接口：`perago start --execu
 
 默认 process 模式的 task body 并发单位仍是独立 executor process，不是同一进程内的线程池或 asyncio worker pool。broker process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor；executor process 只消费 broker 派发的 assignment。
 
-process broker 的 adapter、SDK runner 启动函数和 supervisor 进程树已经落地。`run_conductor_process_broker(...)` 会把 `PeragoProcessDispatchWorker` 包进 SDK `TaskRunner(thread_count=N)`，让 broker 负责 poll、续租和 update result，同时把 task body 执行派发到 executor assignment queue。executor completion 必须带回同一个 `task_id` 的 `RuntimeTaskResult`；broker adapter 会 fail closed 处理无法匹配的 completion。
+process broker 的 adapter、SDK runner 启动函数和 supervisor 进程树已经落地。`run_conductor_process_broker(...)` 会把 `PeragoProcessDispatchWorker` 包进 SDK `TaskRunner(thread_count=N)`，让 broker 负责 poll、续租和 update result，同时把 task body 执行派发到 executor assignment queue。每次派发都会生成 execution id；executor completion 必须带回同一个 `task_id` 和同一个 `execution_id` 的 `RuntimeTaskResult`，broker adapter 会 fail closed 处理无法匹配的 completion。
 
 executor 侧的本地执行循环是 `run_process_executor_loop(...)`。它只消费 broker 派发的 `ProcessTaskAssignment`，执行 Perago task runtime，然后把 `ProcessTaskCompletion` 写回 broker completion queue；它不直接 poll Conductor，也不直接 update result。workspace attempt fence reload 会通过 `ProcessAttemptFenceRequest` 发给 broker，broker 调 Conductor `get_task` 并把 `ProcessAttemptFenceResponse` 返回到该 executor 的 response queue。
 
@@ -69,7 +69,7 @@ supervisor 会把每个 executor 的 `PERAGO_WORKER_ID` 写入 child environment
 5. broker 绑定 Conductor SDK runner 并进入 poll/update loop。
 6. executor 绑定 LakeFS workspace runtime，并进入 assignment queue loop。
 
-准备 worker runtime 会做两件本机工作：
+启动时 supervisor 会先 sweep 一次上次 supervisor/host crash 遗留的 orphan attempt workspace。准备 worker runtime 会做两件本机工作：
 
 | 步骤 | 结果 |
 | --- | --- |
@@ -101,15 +101,23 @@ supervisor 会持续监控 broker 和每个 executor process。如果 broker 退
 
 重启后，该 slot 的 worker id 不变。例如 slot `2` 退出后，替换进程仍使用 `prodAFeaturesBuild0002`。这让日志目录和 Conductor worker id 按 slot 保持稳定。
 
-收到 `SIGINT` 或 `SIGTERM` 时，supervisor 会向 assignment queue 写入 executor stop sentinel，并停止 broker/executor 进程。随后停止流程按固定顺序执行：
+收到 `SIGINT` 或 `SIGTERM` 时，supervisor 会进入 drain：
 
-1. 等待 child 自然退出，最多 `10` 秒。
-2. 对仍存活的 child 调用 `terminate()`。
-3. 再等待 `5` 秒。
-4. 对仍存活的 child 调用 `kill()`。
-5. 最后再等待 `5` 秒完成回收。
+1. broker 停止继续 poll 新 Conductor task。
+2. supervisor 向 assignment queue 写入 executor stop sentinel。
+3. idle executor 从 queue poll 中退出。
+4. 正在执行 assignment 的 executor 不会被信号打断；它会尽量跑完当前 task、staging cleanup、本机 workspace cleanup 和 completion enqueue。
+5. supervisor 等待 child 自然退出，然后做一次最终 workspace GC sweep。
 
-因此 task body 应避免吞掉进程信号或长期阻塞不可中断 I/O；否则 supervisor 会在宽限期后强制结束进程。
+executor child 自己收到 `SIGTERM` 或 `SIGINT` 时只设置停止标志，不会在 signal handler 中 `sys.exit()`、抛异常、清理 workspace、调用 LakeFS 或调用 Conductor。当前 assignment 的 `finally` 仍有机会执行。
+
+默认情况下，Perago 不调用 `process.kill()`。如果确实需要 supervisor 在 drain deadline 后强制结束子进程，可以显式配置：
+
+```text
+PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
+```
+
+该值未配置时，最终强制退出交给 systemd、Kubernetes 或容器 runtime。配置后，超过 deadline 仍存活的 child 会被 `kill()`，并记录 worker id、pid、phase、deadline 等字段；异常死亡后，supervisor 会对该 dead executor 的本机 attempt workspace 运行 targeted GC。
 
 ## 运行时边界
 

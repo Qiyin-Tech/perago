@@ -33,7 +33,7 @@ perago start app.workers.features_build -j 2 --execution-mode process
 一次 broker dispatch 的顺序是：
 
 1. SDK `TaskRunner` poll 当前 task name，并按 SDK 策略处理空 poll、错误退避和 lease tracking。
-2. broker adapter 把 SDK `Task` 转成 `ConductorTaskAttempt`，写入 assignment queue。
+2. broker adapter 把 SDK `Task` 转成 `ConductorTaskAttempt`，为这次实际执行生成 execution id，并写入 assignment queue。
 3. executor 执行 workspace task 或 workspace-free task。
 4. workspace task 的 attempt fence 通过 broker IPC 重新读取 fresh attempt。
 5. executor 把 `RuntimeTaskResult` 写回 completion queue。
@@ -44,9 +44,11 @@ process mode 不会在一个 Python module 内路由多个 task。并发来自 b
 
 显式 `thread` runtime 使用 SDK `TaskRunner` 和 `PeragoThreadWorker`。`-j N` 会传给 SDK worker 的 `thread_count`，`lease_extend_enabled=True`，并且 `register_task_def=False`、`register_schema=False`。在这个模式下，SDK thread pool 负责 poll、LeaseManager 追踪和 result update；Perago adapter 只把 SDK `Task` 转成 `ConductorTaskAttempt`，执行现有 task body/workspace 流程，再把 `RuntimeTaskResult` 转回 SDK `TaskResult`。thread mode 的 Conductor 可见 worker id 当前由 `PERAGO_WORKER_ID_PREFIX + "Broker"` 派生。
 
-process broker 由 `PeragoProcessDispatchWorker` 与 `run_conductor_process_broker(...)` 组成。它同样满足 SDK worker contract：`thread_count=N`、`lease_extend_enabled=True`、`register_task_def=False`、`register_schema=False`，并用 broker worker id 作为 Conductor 可见 identity。和 thread worker 不同，它不会在 SDK worker thread 内执行 task body；`execute(...)` 会把 SDK `Task` 转成 `ConductorTaskAttempt`，放入 broker-to-executor assignment queue，等待 executor 返回 `RuntimeTaskResult` completion，再映射成 SDK `TaskResult`。SDK `TaskRunner` 仍负责 broker 侧 poll、LeaseManager tracking 和 result update。
+process broker 由 `PeragoProcessDispatchWorker` 与 `run_conductor_process_broker(...)` 组成。它同样满足 SDK worker contract：`thread_count=N`、`lease_extend_enabled=True`、`register_task_def=False`、`register_schema=False`，并用 broker worker id 作为 Conductor 可见 identity。和 thread worker 不同，它不会在 SDK worker thread 内执行 task body；`execute(...)` 会把 SDK `Task` 转成 `ConductorTaskAttempt`，生成本次 execution id，放入 broker-to-executor assignment queue，等待 executor 返回同一个 `task_id` 和同一个 `execution_id` 的 `RuntimeTaskResult` completion，再映射成 SDK `TaskResult`。SDK `TaskRunner` 仍负责 broker 侧 poll、LeaseManager tracking 和 result update。
 
-process executor 的本地执行循环是 `run_process_executor_loop(...)`。executor 只消费 `ProcessTaskAssignment`，复用现有 `execute_polled_task()` 跑 workspace 或 workspace-free task，再把同一 `task_id` 的 `ProcessTaskCompletion` 写回 completion queue；它不 poll Conductor，也不 update Conductor result。workspace task 的 attempt-fence reload 会写入 `attempt_fence_request_queue`，由 broker 调 Conductor `get_task` 后通过对应 executor 的 response queue 返回 fresh attempt snapshot。
+process executor 的本地执行循环是 `run_process_executor_loop(...)`。executor 只消费 `ProcessTaskAssignment`，复用现有 `execute_polled_task()` 跑 workspace 或 workspace-free task，再把同一 `task_id` 和 `execution_id` 的 `ProcessTaskCompletion` 写回 completion queue；它不 poll Conductor，也不 update Conductor result。workspace task 的 attempt-fence reload 会写入 `attempt_fence_request_queue`，由 broker 调 Conductor `get_task` 后通过对应 executor 的 response queue 返回 fresh attempt snapshot。
+
+execution id 的作用域是“一次 executor 实际执行 assignment”。它不是 Conductor task id，也不是 workflow step identity；broker 使用它拒绝旧 completion 或重复派发残留 completion，LakeFS runtime 使用它隔离 staging branch 和本机 attempt workspace。
 
 ## Attempt snapshot
 
@@ -110,3 +112,4 @@ Conductor runtime 页面只覆盖与 Conductor 交互有关的边界：
 - poll 失败和 result update 失败会记录日志并退避重试，不会让 supervisor 立即退出。
 - result update 失败发生在 task 已经本地执行之后；对于 workspace task，publish 可能已经完成，因此排查时要同时看 Conductor task 状态、worker JSONL 日志和 LakeFS publication metadata。
 - attempt fence 是 client-side soft fence。它降低旧 attempt 继续发布的风险，但不是 exactly-once 证明。
+- 如果 LakeFS publish 已成功但 Conductor result update 未完成，Perago 不会在下一次启动时补发 completion，也不会从 LakeFS metadata 恢复旧 attempt 状态；最终由 Conductor timeout/fail/retry 处理。

@@ -256,6 +256,7 @@ def staging_branch_name(task: object) -> str:
         f"iteration-{_lakefs_branch_segment(_task_attr(task, 'iteration'))}",
         f"task-id-{_lakefs_branch_segment(_task_attr(task, 'task_id'))}",
         f"retry-{_lakefs_branch_segment(_task_attr(task, 'retry_count'))}",
+        f"exec-{_lakefs_branch_segment(_task_attr(task, 'execution_id'))}",
     ]
     return "-".join(parts)
 

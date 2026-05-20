@@ -290,10 +290,14 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
             self.items.append(item)
 
     class FakeCompletionQueue:
+        def __init__(self, assignment_queue) -> None:
+            self.assignment_queue = assignment_queue
+
         def get(self, timeout=None):
             del timeout
             return ProcessTaskCompletion(
                 task_id="task-9b4c",
+                execution_id=self.assignment_queue.items[0].execution_id,
                 result=completed_result({"result": {"valid": True, "reason": None}}),
             )
 
@@ -303,7 +307,7 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
         worker_id="metadataBroker",
         thread_count=1,
         assignment_queue=assignment_queue,
-        completion_queue=FakeCompletionQueue(),
+        completion_queue=FakeCompletionQueue(assignment_queue),
     )
     task = Task(
         workflow_instance_id="wf-7f3d",
@@ -324,6 +328,7 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
     assignment = assignment_queue.items[0]
     assert isinstance(assignment, ProcessTaskAssignment)
     assert assignment.attempt.task_id == "task-9b4c"
+    assert assignment.execution_id
     assert assignment.attempt.response_timeout_seconds == 75
     assert result.workflow_instance_id == "wf-7f3d"
     assert result.task_id == "task-9b4c"
@@ -333,6 +338,48 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
 
 
 def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None:
+    assignment_queue = None
+
+    class FakeAssignmentQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeCompletionQueue:
+        def get(self, timeout=None):
+            del timeout
+            assert assignment_queue is not None
+            return ProcessTaskCompletion(
+                task_id="other-task",
+                execution_id=assignment_queue.item.execution_id,
+                result=completed_result({"result": {"valid": True, "reason": None}}),
+            )
+
+    assignment_queue = FakeAssignmentQueue()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=assignment_queue,
+        completion_queue=FakeCompletionQueue(),
+    )
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+    )
+
+    result = worker.execute(task)
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "executor returned completion for task other-task; expected task-9b4c"
+
+
+def test_process_dispatch_worker_fails_closed_on_mismatched_execution_completion() -> None:
     class FakeAssignmentQueue:
         def put(self, item) -> None:
             self.item = item
@@ -341,7 +388,8 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None
         def get(self, timeout=None):
             del timeout
             return ProcessTaskCompletion(
-                task_id="other-task",
+                task_id="task-9b4c",
+                execution_id="old-execution",
                 result=completed_result({"result": {"valid": True, "reason": None}}),
             )
 
@@ -366,7 +414,7 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None
     result = worker.execute(task)
 
     assert result.status == "FAILED"
-    assert result.reason_for_incompletion == "executor returned completion for task other-task; expected task-9b4c"
+    assert "executor returned completion for execution old-execution; expected" in result.reason_for_incompletion
 
 
 def test_process_dispatch_worker_fails_closed_on_invalid_completion() -> None:
@@ -440,6 +488,7 @@ def test_process_dispatch_worker_times_out_waiting_for_completion() -> None:
 
 def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting() -> None:
     fresh_attempt = _attempt()
+    assignment_queue = None
 
     class FakeAssignmentQueue:
         def put(self, item) -> None:
@@ -448,8 +497,10 @@ def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting()
     class FakeCompletionQueue:
         def get(self, timeout=None):
             del timeout
+            assert assignment_queue is not None
             return ProcessTaskCompletion(
                 task_id="task-9b4c",
+                execution_id=assignment_queue.item.execution_id,
                 result=completed_result({"result": {"valid": True, "reason": None}}),
             )
 
@@ -477,11 +528,12 @@ def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting()
             return fresh_attempt
 
     response_queue = FakeResponseQueue()
+    assignment_queue = FakeAssignmentQueue()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=FakeAssignmentQueue(),
+        assignment_queue=assignment_queue,
         completion_queue=FakeCompletionQueue(),
         attempt_fence_request_queue=FakeRequestQueue(),
         attempt_fence_response_queues={"metadata0001": response_queue},
@@ -627,7 +679,7 @@ def test_process_executor_loop_executes_assignment_and_returns_completion() -> N
     class FakeAssignmentQueue:
         def __init__(self) -> None:
             self.items = [
-                ProcessTaskAssignment(attempt=_attempt()),
+                ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1"),
                 StopProcessExecutor(),
             ]
 
@@ -660,10 +712,106 @@ def test_process_executor_loop_executes_assignment_and_returns_completion() -> N
     completion = completion_queue.items[0]
     assert isinstance(completion, ProcessTaskCompletion)
     assert completion.task_id == "task-9b4c"
+    assert completion.execution_id == "exec-1"
     assert completion.result.conductor_payload() == {
         "status": "COMPLETED",
         "output": {"result": {"valid": True, "reason": None}},
     }
+
+
+def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monkeypatch) -> None:
+    handlers = {}
+
+    def fake_signal(signum, handler):
+        previous = handlers.get(signum)
+        handlers[signum] = handler
+        return previous
+
+    class FakeAssignmentQueue:
+        def __init__(self) -> None:
+            self.items = [ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1")]
+
+        def get(self, timeout=None):
+            del timeout
+            if not self.items:
+                raise Empty
+            return self.items.pop(0)
+
+    class FakeCompletionQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    def fake_execute_polled_task(**kwargs):
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+        return completed_result({"result": {"valid": True, "reason": None}})
+
+    import signal
+
+    monkeypatch.setattr("perago.conductor_runtime.signal.signal", fake_signal)
+    monkeypatch.setattr("perago.conductor_runtime.execute_polled_task", fake_execute_polled_task)
+    completion_queue = FakeCompletionQueue()
+
+    run_process_executor_loop(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadata0001",
+        workspace_root="unused",
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=completion_queue,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+    )
+
+    assert len(completion_queue.items) == 1
+    assert completion_queue.items[0].execution_id == "exec-1"
+
+
+def test_idle_process_executor_loop_exits_after_signal(monkeypatch) -> None:
+    handlers = {}
+
+    def fake_signal(signum, handler):
+        previous = handlers.get(signum)
+        handlers[signum] = handler
+        return previous
+
+    class FakeAssignmentQueue:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, timeout=None):
+            del timeout
+            self.calls += 1
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+            raise Empty
+
+    class FakeCompletionQueue:
+        def put(self, item) -> None:
+            raise AssertionError("idle shutdown must not complete an assignment")
+
+    import signal
+
+    monkeypatch.setattr("perago.conductor_runtime.signal.signal", fake_signal)
+    assignment_queue = FakeAssignmentQueue()
+
+    run_process_executor_loop(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadata0001",
+        workspace_root="unused",
+        assignment_queue=assignment_queue,
+        completion_queue=FakeCompletionQueue(),
+        load_current_attempt=lambda current_attempt: current_attempt,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+    )
+
+    assert assignment_queue.calls == 1
 
 
 def test_process_executor_loop_ignores_invalid_assignments() -> None:

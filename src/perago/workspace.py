@@ -236,7 +236,11 @@ class WorkspaceOwner:
 
 
 def attempt_workspace_dir(workspace_root: Path, task: object) -> Path:
-    return workspace_root / f"task_id={safe_segment(_task_attr(task, 'task_id'))}"
+    task_part = f"task_id={safe_segment(_task_attr(task, 'task_id'))}"
+    execution_id = _optional_task_attr(task, "execution_id")
+    if execution_id is None:
+        return workspace_root / task_part
+    return workspace_root / f"{task_part}-exec={safe_segment(execution_id)}"
 
 
 def new_workspace_owner(worker_id: str) -> WorkspaceOwner:
@@ -266,6 +270,7 @@ def prepare_attempt_workspace(workspace_root: Path, task: object, owner: Workspa
     marker = {
         "workflow_instance_id": _task_attr(task, "workflow_instance_id"),
         "task_id": _task_attr(task, "task_id"),
+        "execution_id": _task_attr(task, "execution_id"),
         "retry_count": _task_attr(task, "retry_count"),
         "task_def_name": _task_attr(task, "task_def_name"),
         "owner_worker_id": owner.worker_id,
@@ -557,12 +562,28 @@ def sweep_abandoned_attempt_workspaces(workspace_root: Path) -> list[Path]:
     )
 
 
+def garbage_collect_workspace_owner(
+    workspace_root: Path,
+    *,
+    owner_worker_id: str,
+    owner_pid: int,
+) -> list[Path]:
+    return garbage_collect_attempt_workspaces(
+        workspace_root,
+        ttl=timedelta(seconds=0),
+        active_process_owners=set(),
+        active_owner_tokens=set(),
+        target_process_owner=(owner_worker_id, owner_pid),
+    )
+
+
 def garbage_collect_attempt_workspaces(
     workspace_root: Path,
     *,
     ttl: timedelta,
     active_process_owners: set[tuple[str, int]] | None = None,
     active_owner_tokens: set[str] | None = None,
+    target_process_owner: tuple[str, int] | None = None,
     now: datetime | None = None,
 ) -> list[Path]:
     if not workspace_root.exists():
@@ -581,6 +602,8 @@ def garbage_collect_attempt_workspaces(
         owner_worker_id = marker_data["owner_worker_id"]
         owner_pid = marker_data["owner_pid"]
         owner_token = marker_data["owner_token"]
+        if target_process_owner is not None and (owner_worker_id, owner_pid) != target_process_owner:
+            continue
         if (owner_worker_id, owner_pid) in process_owners:
             continue
         if owner_token in owner_tokens:
@@ -610,12 +633,20 @@ def _task_attr(task: object, name: str) -> Any:
         raise AttributeError(f"task is missing required attribute {name}") from exc
 
 
+def _optional_task_attr(task: object, name: str) -> str | None:
+    value = getattr(task, name, None)
+    if value is None:
+        return None
+    return str(value)
+
+
 def _read_gc_marker(marker: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(marker.read_text(encoding="utf-8"))
         owner_worker_id = data["owner_worker_id"]
         owner_pid = data["owner_pid"]
         owner_token = data["owner_token"]
+        execution_id = data["execution_id"]
         started_at = data["started_at"]
     except (OSError, json.JSONDecodeError, KeyError, TypeError):
         return None
@@ -624,6 +655,8 @@ def _read_gc_marker(marker: Path) -> dict[str, Any] | None:
     if not isinstance(owner_pid, int):
         return None
     if not isinstance(owner_token, str) or not owner_token:
+        return None
+    if not isinstance(execution_id, str) or not execution_id:
         return None
     if not isinstance(started_at, str):
         return None
@@ -637,5 +670,6 @@ def _read_gc_marker(marker: Path) -> dict[str, Any] | None:
         "owner_worker_id": owner_worker_id,
         "owner_pid": owner_pid,
         "owner_token": owner_token,
+        "execution_id": execution_id,
         "started_at": parsed_started_at,
     }

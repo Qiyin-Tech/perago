@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from queue import Empty
 from types import FrameType
 from typing import Any, Protocol
+from uuid import uuid4
 
 from conductor.client.automator.task_runner import TaskRunner
 from conductor.client.configuration.configuration import Configuration
@@ -50,11 +51,13 @@ class ConductorTaskAttempt:
 @dataclass(frozen=True)
 class ProcessTaskAssignment:
     attempt: ConductorTaskAttempt
+    execution_id: str
 
 
 @dataclass(frozen=True)
 class ProcessTaskCompletion:
     task_id: str
+    execution_id: str
     result: RuntimeTaskResult
 
 
@@ -146,6 +149,7 @@ class PeragoThreadWorker(WorkerInterface):
 
     def execute(self, task: Task) -> TaskResult:
         attempt = conductor_task_to_attempt(task)
+        execution_id = uuid4().hex
         result = execute_polled_task(
             task=self.task,
             attempt=attempt,
@@ -156,6 +160,7 @@ class PeragoThreadWorker(WorkerInterface):
             publish_workspace=self._publish_workspace,
             cleanup_staging=self._cleanup_staging,
             owner_worker_id=self.worker_id,
+            execution_id=execution_id,
         )
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 
@@ -193,11 +198,12 @@ class PeragoProcessDispatchWorker(WorkerInterface):
 
     def execute(self, task: Task) -> TaskResult:
         attempt = conductor_task_to_attempt(task)
-        self._assignment_queue.put(ProcessTaskAssignment(attempt=attempt))
-        result = self._wait_for_completion(attempt)
+        execution_id = uuid4().hex
+        self._assignment_queue.put(ProcessTaskAssignment(attempt=attempt, execution_id=execution_id))
+        result = self._wait_for_completion(attempt, execution_id)
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 
-    def _wait_for_completion(self, attempt: ConductorTaskAttempt) -> RuntimeTaskResult:
+    def _wait_for_completion(self, attempt: ConductorTaskAttempt, execution_id: str) -> RuntimeTaskResult:
         deadline = (
             None
             if self._completion_timeout_seconds is None
@@ -222,6 +228,10 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         if completion.task_id != attempt.task_id:
             return failed_result(
                 f"executor returned completion for task {completion.task_id}; expected {attempt.task_id}"
+            )
+        if completion.execution_id != execution_id:
+            return failed_result(
+                f"executor returned completion for execution {completion.execution_id}; expected {execution_id}"
             )
         return completion.result
 
@@ -360,30 +370,56 @@ def run_process_executor_loop(
     cleanup_staging: CleanupStaging,
 ) -> None:
     logger.bind(worker_id=worker_id).info("process executor started")
-    while True:
-        assignment = assignment_queue.get()
-        if isinstance(assignment, StopProcessExecutor):
-            logger.bind(worker_id=worker_id).info("process executor stopping")
-            return
-        if not isinstance(assignment, ProcessTaskAssignment):
-            logger.bind(worker_id=worker_id, assignment_type=type(assignment).__name__).error(
-                "process executor received invalid assignment"
-            )
-            continue
+    shutdown_requested = False
 
-        attempt = assignment.attempt
-        result = execute_polled_task(
-            task=task,
-            attempt=attempt,
-            workspace_root=workspace_root,
-            download_workspace=download_workspace,
-            load_current_attempt=load_current_attempt,
-            stage_workspace=stage_workspace,
-            publish_workspace=publish_workspace,
-            cleanup_staging=cleanup_staging,
-            owner_worker_id=worker_id,
-        )
-        completion_queue.put(ProcessTaskCompletion(task_id=attempt.task_id, result=result))
+    def request_shutdown(signum: int, frame: FrameType | None) -> None:
+        del signum, frame
+        nonlocal shutdown_requested
+        shutdown_requested = True
+
+    previous_int = signal.signal(signal.SIGINT, request_shutdown)
+    previous_term = signal.signal(signal.SIGTERM, request_shutdown)
+    try:
+        while not shutdown_requested:
+            try:
+                try:
+                    assignment = assignment_queue.get(timeout=0.1)
+                except TypeError:
+                    assignment = assignment_queue.get()
+            except Empty:
+                continue
+            if isinstance(assignment, StopProcessExecutor):
+                logger.bind(worker_id=worker_id).info("process executor stopping")
+                return
+            if not isinstance(assignment, ProcessTaskAssignment):
+                logger.bind(worker_id=worker_id, assignment_type=type(assignment).__name__).error(
+                    "process executor received invalid assignment"
+                )
+                continue
+
+            attempt = assignment.attempt
+            result = execute_polled_task(
+                task=task,
+                attempt=attempt,
+                workspace_root=workspace_root,
+                download_workspace=download_workspace,
+                load_current_attempt=load_current_attempt,
+                stage_workspace=stage_workspace,
+                publish_workspace=publish_workspace,
+                cleanup_staging=cleanup_staging,
+                owner_worker_id=worker_id,
+                execution_id=assignment.execution_id,
+            )
+            completion_queue.put(
+                ProcessTaskCompletion(
+                    task_id=attempt.task_id,
+                    execution_id=assignment.execution_id,
+                    result=result,
+                )
+            )
+    finally:
+        signal.signal(signal.SIGINT, previous_int)
+        signal.signal(signal.SIGTERM, previous_term)
 
 
 def load_current_attempt_via_broker(
@@ -454,6 +490,7 @@ def execute_polled_task(
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
     owner_worker_id: str | None = None,
+    execution_id: str | None = None,
 ) -> RuntimeTaskResult:
     if task.has_workspace:
         return run_workspace_task_attempt(
@@ -467,6 +504,7 @@ def execute_polled_task(
             publish_workspace=publish_workspace,
             cleanup_staging=cleanup_staging,
             owner_worker_id=owner_worker_id,
+            execution_id=execution_id,
         )
     return run_workspace_free_task_attempt(task, attempt.input_data)
 

@@ -47,6 +47,7 @@ class Attempt:
     task_def_name: str = "features.build"
     task_id: str = "9b4c"
     retry_count: int = 2
+    execution_id: str = "exec-1"
 
 
 @task(

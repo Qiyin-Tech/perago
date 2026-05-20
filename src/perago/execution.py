@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
 from pydantic import BaseModel
@@ -80,6 +81,15 @@ class StagedWorkspace:
     commit: str
 
 
+@dataclass(frozen=True)
+class TaskExecutionContext:
+    attempt: object
+    execution_id: str
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.attempt, name)
+
+
 def run_workspace_task_attempt(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
@@ -92,6 +102,7 @@ def run_workspace_task_attempt(
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
     owner_worker_id: str | None = None,
+    execution_id: str | None = None,
 ) -> RuntimeTaskResult:
     """
     Run one workspace task attempt.
@@ -183,19 +194,23 @@ def run_workspace_task_attempt(
 
     workspace_dir: Path | None = None
     staged: StagedWorkspace | None = None
+    execution = TaskExecutionContext(
+        attempt=attempt,
+        execution_id=execution_id or getattr(attempt, "execution_id", uuid4().hex),
+    )
     owner = new_workspace_owner(owner_worker_id or os.environ.get("PERAGO_WORKER_ID", f"pid-{os.getpid()}"))
     register_active_workspace_owner(owner)
     try:
         if set(input_data) != {"workspace", "params"}:
             raise TaskInputError("workspace task input must contain only workspace and params")
         workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
-        workspace_dir = prepare_attempt_workspace(workspace_root, attempt, owner)
+        workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
         download_workspace(workspace_input, workspace, workspace_dir)
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
-        staged = stage_workspace(workspace_dir, workspace_input, workspace, attempt)
+        staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
-        published_ref = publish_workspace(staged, workspace_input, workspace, attempt)
+        published_ref = publish_workspace(staged, workspace_input, workspace, execution)
         output_workspace = workspace_input.published_output(published_ref)
         return completed_result(
             {
