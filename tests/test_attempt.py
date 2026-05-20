@@ -37,3 +37,10 @@ def test_current_attempt_snapshot_passes_for_matching_in_progress_attempt() -> N
 def test_current_attempt_snapshot_rejects_stale_attempts(fresh) -> None:
     with pytest.raises(StaleAttemptError, match="task-9b4c"):
         assert_current_attempt_snapshot(CURRENT_ATTEMPT, fresh)
+
+
+def test_current_attempt_snapshot_reports_missing_required_attribute() -> None:
+    incomplete = object()
+
+    with pytest.raises(AttributeError, match="task is missing required attribute status"):
+        assert_current_attempt_snapshot(CURRENT_ATTEMPT, incomplete)
