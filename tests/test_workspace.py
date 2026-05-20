@@ -11,6 +11,7 @@ from perago.workspace import (
     cleanup_attempt_workspace_safely,
     prepare_attempt_workspace,
     sweep_abandoned_attempt_workspaces,
+    workspace_local_path,
     workspace_object_path,
     workspace_object_prefix,
     workspace_upload_files,
@@ -39,6 +40,22 @@ def test_workspace_object_path_maps_local_paths_under_workspace_prefix() -> None
 
 def test_workspace_object_path_keeps_root_prefix_at_repository_root() -> None:
     assert workspace_object_path(WorkspaceSpec(prefix="/"), "manifest.json") == "manifest.json"
+
+
+def test_workspace_local_path_maps_object_paths_under_prefix() -> None:
+    spec = WorkspaceSpec(prefix="audio/render")
+
+    assert workspace_local_path(spec, "audio/render/raw/input.wav") == Path("raw/input.wav")
+    assert workspace_local_path(spec, "other/raw/input.wav") is None
+
+
+def test_workspace_local_path_keeps_root_prefix_at_repository_root() -> None:
+    assert workspace_local_path(WorkspaceSpec(prefix="/"), "manifest.json") == Path("manifest.json")
+
+
+def test_workspace_local_path_skips_attempt_marker() -> None:
+    assert workspace_local_path(WorkspaceSpec(prefix="/"), ATTEMPT_WORKSPACE_MARKER) is None
+    assert workspace_local_path(WorkspaceSpec(prefix="/audio/render"), f"audio/render/{ATTEMPT_WORKSPACE_MARKER}") is None
 
 
 def test_workspace_object_path_rejects_paths_that_escape_workspace_root() -> None:

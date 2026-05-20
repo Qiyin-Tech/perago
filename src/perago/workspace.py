@@ -37,6 +37,21 @@ def workspace_object_path(workspace_spec: WorkspaceSpec, workspace_path: str | P
     return f"{prefix}/{local_path}"
 
 
+def workspace_local_path(workspace_spec: WorkspaceSpec, object_path: str | PathLike[str]) -> Path | None:
+    remote_path = _canonical_workspace_path(object_path)
+    prefix = workspace_object_prefix(workspace_spec)
+    if prefix:
+        prefix_with_separator = f"{prefix}/"
+        if not remote_path.startswith(prefix_with_separator):
+            return None
+        remote_path = remote_path.removeprefix(prefix_with_separator)
+
+    local_path = Path(remote_path)
+    if local_path.name == ATTEMPT_WORKSPACE_MARKER:
+        return None
+    return local_path
+
+
 def attempt_workspace_dir(workspace_root: Path, task: object) -> Path:
     return (
         workspace_root

@@ -55,7 +55,7 @@ from perago.result import (
 )
 from perago.supervisor import WorkerChildSpec, restart_backoff_seconds, worker_child_specs
 from perago.worker_runtime import WorkerRuntime, prepare_worker_runtime
-from perago.workspace import WorkspaceUploadFile, workspace_upload_files
+from perago.workspace import WorkspaceUploadFile, workspace_local_path, workspace_upload_files
 
 __all__ = [
     "ExecutionLimits",
@@ -110,6 +110,7 @@ __all__ = [
     "task",
     "terminal_failed_result",
     "worker_child_specs",
+    "workspace_local_path",
     "workspace_upload_files",
     "write_taskdef",
 ]
