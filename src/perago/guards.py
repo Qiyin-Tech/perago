@@ -48,10 +48,72 @@ class _WorkspaceGuardrail(BaseModel):
 
 
 def require_file(path: str | PathLike[str]) -> _WorkspaceGuardrail:
+    """Require one workspace-relative file to exist.
+
+    ``require_file`` creates a guardrail object for ``WorkspaceSpec.pre`` or
+    ``WorkspaceSpec.post``. Paths are interpreted inside the task's workspace
+    prefix and must use portable POSIX-style relative syntax.
+
+    Parameters
+    ----------
+    path : str or os.PathLike[str]
+        Workspace-relative file path. Absolute paths, ``..`` segments,
+        backslash-separated strings, and drive-qualified paths are rejected.
+
+    Returns
+    -------
+    Workspace guardrail
+        Guardrail consumed by :class:`perago.WorkspaceSpec`.
+
+    Raises
+    ------
+    TaskDefinitionError
+        If ``path`` is empty or is not a valid workspace-relative path.
+
+    See Also
+    --------
+    require_dir : Require one directory.
+    require_glob : Require files matching a glob.
+    forbid_glob : Reject files matching a glob.
+
+    Examples
+    --------
+    >>> WorkspaceSpec(prefix="/", pre=[require_file("input/data.csv")])
+    WorkspaceSpec(...)
+    """
     return _WorkspaceGuardrail(kind="require_file", path=_canonical_workspace_path(path))
 
 
 def require_dir(path: str | PathLike[str]) -> _WorkspaceGuardrail:
+    """Require one workspace-relative directory to exist.
+
+    Parameters
+    ----------
+    path : str or os.PathLike[str]
+        Workspace-relative directory path using ``/`` separators.
+
+    Returns
+    -------
+    Workspace guardrail
+        Guardrail consumed by :class:`perago.WorkspaceSpec`.
+
+    Raises
+    ------
+    TaskDefinitionError
+        If ``path`` is empty, absolute, contains ``..``, or uses unsupported
+        separators.
+
+    See Also
+    --------
+    require_file : Require one file.
+    require_glob : Require files matching a glob.
+    forbid_glob : Reject files matching a glob.
+
+    Examples
+    --------
+    >>> WorkspaceSpec(prefix="audio/render", pre=[require_dir("raw")])
+    WorkspaceSpec(...)
+    """
     return _WorkspaceGuardrail(kind="require_dir", path=_canonical_workspace_path(path))
 
 
@@ -61,6 +123,43 @@ def require_glob(
     min_count: int = 1,
     max_count: int | None = None,
 ) -> _WorkspaceGuardrail:
+    """Require a bounded number of workspace files matching a glob pattern.
+
+    The pattern is evaluated with :meth:`pathlib.Path.glob` inside the local
+    attempt workspace when guardrails run. The default lower bound requires at
+    least one match.
+
+    Parameters
+    ----------
+    pattern : str or os.PathLike[str]
+        Workspace-relative glob pattern using ``/`` separators.
+    min_count : int, default=1
+        Minimum number of matches required for the guardrail to pass.
+    max_count : int or None, default=None
+        Maximum number of matches allowed. ``None`` disables the upper bound.
+
+    Returns
+    -------
+    Workspace guardrail
+        Guardrail consumed by :class:`perago.WorkspaceSpec`.
+
+    Raises
+    ------
+    TaskDefinitionError
+        If ``pattern`` is not workspace-relative, count bounds are invalid, or
+        ``min_count`` is greater than ``max_count``.
+
+    See Also
+    --------
+    require_file : Require one file.
+    require_dir : Require one directory.
+    forbid_glob : Reject files matching a glob.
+
+    Examples
+    --------
+    >>> WorkspaceSpec(pre=[require_glob("raw/**/*.parquet", min_count=1)])
+    WorkspaceSpec(...)
+    """
     return _WorkspaceGuardrail(
         kind="require_glob",
         path=_canonical_workspace_path(pattern),
@@ -70,10 +169,69 @@ def require_glob(
 
 
 def forbid_glob(pattern: str | PathLike[str]) -> _WorkspaceGuardrail:
+    """Reject workspace files matching a glob pattern.
+
+    Parameters
+    ----------
+    pattern : str or os.PathLike[str]
+        Workspace-relative glob pattern using ``/`` separators.
+
+    Returns
+    -------
+    Workspace guardrail
+        Guardrail consumed by :class:`perago.WorkspaceSpec`.
+
+    Raises
+    ------
+    TaskDefinitionError
+        If ``pattern`` is empty or is not a valid workspace-relative path.
+
+    See Also
+    --------
+    require_file : Require one file.
+    require_dir : Require one directory.
+    require_glob : Require files matching a glob.
+
+    Examples
+    --------
+    >>> WorkspaceSpec(post=[forbid_glob("tmp/**")])
+    WorkspaceSpec(...)
+    """
     return _WorkspaceGuardrail(kind="forbid_glob", path=_canonical_workspace_path(pattern))
 
 
 def check_guardrails(root: Path, guardrails: list[_WorkspaceGuardrail], phase: str) -> None:
+    """Evaluate workspace guardrails against a local attempt workspace.
+
+    This function is used by the runtime before and after a workspace task body
+    executes. ``phase`` is included in error messages so callers can map pre and
+    post failures to the correct runtime result classification.
+
+    Parameters
+    ----------
+    root : pathlib.Path
+        Local attempt workspace directory to inspect.
+    guardrails : list of workspace guardrails
+        Guardrails produced by :func:`require_file`, :func:`require_dir`,
+        :func:`require_glob`, or :func:`forbid_glob`.
+    phase : str
+        Human-readable phase label, usually ``"pre"`` or ``"post"``.
+
+    Returns
+    -------
+    None
+        The function returns ``None`` when all guardrails pass.
+
+    Raises
+    ------
+    GuardrailViolation
+        If a required file or directory is missing, a required glob has too few
+        or too many matches, or a forbidden glob has any matches.
+
+    Examples
+    --------
+    >>> check_guardrails(workspace_dir, [require_file("input/data.csv")], "pre")
+    """
     for guardrail in guardrails:
         if guardrail.kind == "require_file":
             candidate = root / guardrail.path
