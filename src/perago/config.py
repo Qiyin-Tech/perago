@@ -20,12 +20,91 @@ LOG_SIZE_UNITS = {
 
 
 class ConductorConfig(BaseModel):
+    """
+    Worker-local Conductor connection settings.
+
+    ``ConductorConfig`` is loaded from process environment variables and local
+    ``.env`` files by :func:`load_runtime_config`. It is runtime-only
+    configuration: the server URL is not written into generated TaskDefs and is
+    not passed through Conductor task input.
+
+    Parameters
+    ----------
+    server_url : str
+        Conductor API endpoint read from ``CONDUCTOR_SERVER_URL``. Surrounding
+        whitespace is stripped during environment parsing, empty values are
+        treated as not configured, and the placeholder value ``"replace-me"``
+        is rejected before model construction.
+
+    See Also
+    --------
+    load_runtime_config : Load this model from worker environment settings.
+    RuntimeConfig : Full runtime configuration containing this model.
+
+    Notes
+    -----
+    The model is frozen and rejects unknown fields. ``perago check`` and
+    ``perago extract`` can run without this config, but ``perago start`` requires
+    it before starting worker child processes.
+
+    Examples
+    --------
+    >>> ConductorConfig(server_url="http://localhost:8080/api")
+    ConductorConfig(...)
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     server_url: str
 
 
 class LakeFSConfig(BaseModel):
+    """
+    Worker-local LakeFS connection settings.
+
+    ``LakeFSConfig`` is assembled from the LakeFS environment variables used by
+    the worker runtime. The values stay local to the worker process and are not
+    serialized into Conductor task input, task output, or generated TaskDefs.
+
+    Parameters
+    ----------
+    endpoint_url : str
+        LakeFS endpoint read from ``LAKECTL_SERVER_ENDPOINT_URL``.
+    access_key_id : str
+        LakeFS access key id read from
+        ``LAKECTL_CREDENTIALS_ACCESS_KEY_ID``.
+    secret_access_key : str
+        LakeFS secret access key read from
+        ``LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY``.
+
+    Raises
+    ------
+    RuntimeConfigError
+        Raised by :func:`load_runtime_config` when only part of the LakeFS
+        environment variable set is present or when a value is still
+        ``"replace-me"``.
+
+    See Also
+    --------
+    load_runtime_config : Load this model from worker environment settings.
+    RuntimeConfig : Full runtime configuration containing this model.
+
+    Notes
+    -----
+    The model is frozen and rejects unknown fields. The three LakeFS variables
+    must be configured together for ``perago start``; ``perago check`` and
+    ``perago extract`` may omit all three.
+
+    Examples
+    --------
+    >>> LakeFSConfig(
+    ...     endpoint_url="http://localhost:8000",
+    ...     access_key_id="key",
+    ...     secret_access_key="secret",
+    ... )
+    LakeFSConfig(...)
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     endpoint_url: str
@@ -34,6 +113,62 @@ class LakeFSConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
+    """
+    Complete worker-local runtime configuration.
+
+    ``RuntimeConfig`` describes local workspace storage, worker logging,
+    process identity, and optional Conductor and LakeFS connection settings. It
+    is loaded before task module import by the CLI and stays outside the task
+    author contract.
+
+    Parameters
+    ----------
+    workspace_root : pathlib.Path
+        Root directory for attempt-local workspaces. Defaults to
+        ``<tempdir>/perago/workspaces`` when ``PERAGO_WORKSPACE_ROOT`` is not
+        configured.
+    log_root : pathlib.Path
+        Root directory for worker JSONL logs. Defaults to
+        ``<tempdir>/perago/logs`` when ``PERAGO_LOG_ROOT`` is not configured.
+    log_file_max_size : int
+        Log rotation threshold in bytes, parsed from
+        ``PERAGO_LOG_FILE_MAX_SIZE``. The default is ``100MB``.
+    log_retention : datetime.timedelta
+        Log retention period parsed from ``PERAGO_LOG_RETENTION``. The default
+        is ``30d``.
+    worker_id_prefix : str
+        ASCII alphanumeric prefix used by the supervisor to generate child
+        ``PERAGO_WORKER_ID`` values.
+    conductor : ConductorConfig or None, default=None
+        Optional Conductor connection config. ``perago start`` requires it.
+    lakefs : LakeFSConfig or None, default=None
+        Optional LakeFS connection config. ``perago start`` requires it.
+
+    See Also
+    --------
+    load_runtime_config : Build a runtime config from ``.env`` and process
+        environment values.
+    WorkerRuntime : Prepared runtime values for a running worker process.
+
+    Notes
+    -----
+    The model is frozen and rejects unknown fields. None of these values are
+    embedded in generated Conductor TaskDefs or task payloads.
+
+    Examples
+    --------
+    >>> from datetime import timedelta
+    >>> from pathlib import Path
+    >>> RuntimeConfig(
+    ...     workspace_root=Path("/tmp/perago/workspaces"),
+    ...     log_root=Path("/tmp/perago/logs"),
+    ...     log_file_max_size=104857600,
+    ...     log_retention=timedelta(days=30),
+    ...     worker_id_prefix="appworkersfeaturesbuild",
+    ... )
+    RuntimeConfig(...)
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     workspace_root: Path
@@ -52,6 +187,65 @@ def load_runtime_config(
     process_env: dict[str, str] | None = None,
     probe_roots: bool = True,
 ) -> RuntimeConfig:
+    """
+    Load worker-local runtime configuration.
+
+    ``load_runtime_config`` reads a simple ``.env`` file from ``cwd`` and then
+    overlays process environment variables. It parses Perago local directory
+    settings, worker identity settings, and optional Conductor and LakeFS
+    connection settings into a frozen :class:`RuntimeConfig`.
+
+    Parameters
+    ----------
+    module_target : str
+        Python module import path for the single task module. It is used to
+        derive the default worker id prefix when
+        ``PERAGO_WORKER_ID_PREFIX`` is not configured.
+    cwd : pathlib.Path or None, default=None
+        Directory used to locate ``.env``. ``None`` uses the current working
+        directory.
+    process_env : dict of str to str or None, default=None
+        Environment mapping that overrides ``.env`` values. ``None`` reads
+        :data:`os.environ`; an empty dictionary intentionally prevents reading
+        the real process environment.
+    probe_roots : bool, default=True
+        Whether to create and remove temporary probe files under the resolved
+        workspace and log roots to verify that both directories are writable.
+
+    Returns
+    -------
+    RuntimeConfig
+        Parsed runtime configuration for CLI commands and worker processes.
+
+    Raises
+    ------
+    RuntimeConfigError
+        If a configured value is malformed, a required LakeFS variable is
+        missing from a partial LakeFS configuration, a connection placeholder is
+        still set to ``"replace-me"``, or a probed root directory is not
+        writable.
+
+    See Also
+    --------
+    RuntimeConfig : Parsed configuration returned by this loader.
+    prepare_worker_runtime : Prepare runtime identity and logging for a worker
+        process.
+
+    Notes
+    -----
+    ``perago check`` and ``perago extract`` use this loader but do not require
+    Conductor or LakeFS config to be present. ``perago start`` performs
+    additional checks after loading and requires both external service configs.
+
+    Examples
+    --------
+    >>> load_runtime_config(
+    ...     "app.workers.features_build",
+    ...     process_env={"PERAGO_WORKER_ID_PREFIX": "featuresBuild"},
+    ...     probe_roots=False,
+    ... )
+    RuntimeConfig(...)
+    """
     base = cwd or Path.cwd()
     current_env = dict(os.environ) if process_env is None else process_env
     env = load_runtime_env(current_env, read_dotenv(base / ".env"))
