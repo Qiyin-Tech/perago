@@ -1,6 +1,7 @@
 from perago import (
     PostGuardrailViolation,
     PreGuardrailViolation,
+    PublishFenceError,
     completed_result,
     failed_result,
     result_for_exception,
@@ -40,3 +41,12 @@ def test_result_for_exception_classifies_guardrail_failures_by_phase() -> None:
     assert result_for_exception(PreGuardrailViolation("missing input")).status == "FAILED_WITH_TERMINAL_ERROR"
     assert result_for_exception(PostGuardrailViolation("missing output")).status == "FAILED"
     assert result_for_exception(RuntimeError("transient")).status == "FAILED"
+
+
+def test_result_for_exception_fails_closed_on_publish_fence_errors() -> None:
+    result = result_for_exception(PublishFenceError("main advanced from old to new"))
+
+    assert result.conductor_payload() == {
+        "status": "FAILED",
+        "reasonForIncompletion": "main advanced from old to new",
+    }
