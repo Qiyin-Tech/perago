@@ -54,6 +54,7 @@ from perago.result import (
     terminal_failed_result,
 )
 from perago.supervisor import WorkerChildSpec, restart_backoff_seconds, worker_child_specs
+from perago.worker_runtime import WorkerRuntime, prepare_worker_runtime
 
 __all__ = [
     "ExecutionLimits",
@@ -73,6 +74,7 @@ __all__ = [
     "TaskInputError",
     "TimeoutPolicy",
     "WorkerChildSpec",
+    "WorkerRuntime",
     "WorkspaceInput",
     "WorkspacePublicationPlan",
     "WorkspaceSpec",
@@ -94,6 +96,7 @@ __all__ = [
     "logical_task_key",
     "metadata_value",
     "perago_metadata",
+    "prepare_worker_runtime",
     "require_dir",
     "require_file",
     "require_glob",
