@@ -63,6 +63,13 @@ def test_rejects_task_parameter_defaults() -> None:
         load_module_task("app.workers.bad_default_param")
 
 
+def test_rejects_variadic_or_keyword_only_task_signatures() -> None:
+    with pytest.raises(TaskDefinitionError, match="must not use"):
+        load_module_task("app.workers.bad_variadic_signature")
+    with pytest.raises(TaskDefinitionError, match="must not use"):
+        load_module_task("app.workers.bad_keyword_only_signature")
+
+
 def test_rejects_missing_task_contract_annotations() -> None:
     with pytest.raises(TaskDefinitionError, match="params must be annotated"):
         load_module_task("app.workers.bad_missing_params_annotation")

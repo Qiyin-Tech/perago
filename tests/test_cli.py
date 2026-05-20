@@ -130,6 +130,22 @@ def test_check_cli_reports_task_parameter_defaults(monkeypatch, tmp_path) -> Non
     assert "task function parameters must not declare defaults" in result.output
 
 
+def test_check_cli_reports_unsupported_task_signature_kinds(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.bad_variadic_signature"])
+
+    assert result.exit_code == 1
+    assert "task function must not use" in result.output
+
+    result = runner.invoke(app, ["check", "app.workers.bad_keyword_only_signature"])
+
+    assert result.exit_code == 1
+    assert "task function must not use" in result.output
+
+
 def test_check_cli_reports_missing_task_contract_annotations(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
