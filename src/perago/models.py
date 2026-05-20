@@ -125,6 +125,13 @@ class WorkspaceRef(BaseModel):
     ref_type: Literal["commit"]
     ref: str = Field(min_length=1)
 
+    @field_validator("repository", "branch", "ref")
+    @classmethod
+    def validate_non_blank_ref_fields(cls, value: str) -> str:
+        if not value.strip():
+            raise TaskDefinitionError("workspace repository, branch, and ref must not be blank")
+        return value
+
 
 class WorkspaceInput(WorkspaceRef):
     def published_output(self, ref: str) -> WorkspaceOutput:

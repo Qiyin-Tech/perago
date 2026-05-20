@@ -36,3 +36,9 @@ def test_workspace_input_builds_published_output_ref() -> None:
 def test_workspace_contract_models_reject_extra_fields() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         WorkspaceOutput.model_validate({**WORKSPACE_REF, "prefix": "/audio/render"})
+
+
+@pytest.mark.parametrize("field", ["repository", "branch", "ref"])
+def test_workspace_contract_models_reject_blank_ref_fields(field: str) -> None:
+    with pytest.raises(ValidationError, match="must not be blank"):
+        WorkspaceInput.model_validate({**WORKSPACE_REF, field: "   "})
