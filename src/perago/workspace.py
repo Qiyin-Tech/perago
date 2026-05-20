@@ -23,6 +23,12 @@ class WorkspaceUploadFile:
     object_path: str
 
 
+@dataclass(frozen=True)
+class WorkspaceDownloadFile:
+    object_path: str
+    local_path: Path
+
+
 def workspace_object_prefix(workspace_spec: WorkspaceSpec) -> str:
     if workspace_spec.prefix == "/":
         return ""
@@ -88,6 +94,25 @@ def workspace_upload_files(workspace_dir: Path, workspace_spec: WorkspaceSpec) -
             WorkspaceUploadFile(
                 local_path=local_path,
                 object_path=workspace_object_path(workspace_spec, relative_path),
+            )
+        )
+    return files
+
+
+def workspace_download_files(
+    workspace_dir: Path,
+    workspace_spec: WorkspaceSpec,
+    object_paths: list[str],
+) -> list[WorkspaceDownloadFile]:
+    files: list[WorkspaceDownloadFile] = []
+    for object_path in sorted(object_paths):
+        local_path = workspace_local_path(workspace_spec, object_path)
+        if local_path is None:
+            continue
+        files.append(
+            WorkspaceDownloadFile(
+                object_path=object_path,
+                local_path=workspace_dir / local_path,
             )
         )
     return files

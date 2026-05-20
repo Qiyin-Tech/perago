@@ -11,6 +11,7 @@ from perago.workspace import (
     cleanup_attempt_workspace_safely,
     prepare_attempt_workspace,
     sweep_abandoned_attempt_workspaces,
+    workspace_download_files,
     workspace_local_path,
     workspace_object_path,
     workspace_object_prefix,
@@ -105,6 +106,24 @@ def test_workspace_upload_files_map_local_files_under_prefix_and_skip_marker(tmp
     assert [file.object_path for file in files] == [
         "audio/render/features/out.parquet",
         "audio/render/raw/input.wav",
+    ]
+
+
+def test_workspace_download_files_filter_to_prefix_and_skip_marker(tmp_path) -> None:
+    files = workspace_download_files(
+        tmp_path / "workspace",
+        WorkspaceSpec(prefix="/audio/render"),
+        [
+            "audio/render/raw/input.wav",
+            "audio/render/.perago-attempt.json",
+            "audio/other/input.wav",
+            "audio/render/features/out.parquet",
+        ],
+    )
+
+    assert [(file.object_path, file.local_path.relative_to(tmp_path / "workspace")) for file in files] == [
+        ("audio/render/features/out.parquet", Path("features/out.parquet")),
+        ("audio/render/raw/input.wav", Path("raw/input.wav")),
     ]
 
 
