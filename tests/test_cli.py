@@ -57,3 +57,16 @@ def test_extract_cli_writes_taskdef(monkeypatch, tmp_path) -> None:
 
     assert result.exit_code == 0
     assert (tmp_path / "generated" / "taskdefs" / "metadata.validate.json").exists()
+
+
+def test_start_cli_reports_planned_worker_ids_without_starting_services(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PERAGO_WORKER_ID_PREFIX", "prodAFeaturesBuild")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.features_build", "-j", "2"])
+
+    assert result.exit_code == 1
+    assert "reserved for the Conductor/LakeFS worker integration phase" in result.output
+    assert "worker_processes=2" in result.output
+    assert "worker_ids=prodAFeaturesBuild0001,prodAFeaturesBuild0002" in result.output

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from perago.config import load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
+from perago.supervisor import worker_child_specs
 from perago.task import load_module_task
 from perago.taskdef import write_taskdef
 
@@ -45,12 +46,18 @@ def start(module_target: str, j: int = typer.Option(1, "-j", min=1)) -> None:
     """Validate startup inputs; worker polling is implemented with service integration."""
     try:
         load_module_task(module_target)
-        load_runtime_config(module_target)
+        config = load_runtime_config(module_target)
+        workers = worker_child_specs(
+            base_env={"PERAGO_WORKER_ID_PREFIX": config.worker_id_prefix},
+            module_target=module_target,
+            process_count=j,
+        )
     except (TaskDefinitionError, RuntimeConfigError, ValidationError) as exc:
         _fail(str(exc))
     _fail(
         "perago start is reserved for the Conductor/LakeFS worker integration phase; "
-        f"validated module={module_target} worker_processes={j}"
+        f"validated module={module_target} worker_processes={j} "
+        f"worker_ids={','.join(worker.worker_id for worker in workers)}"
     )
 
 
