@@ -10,6 +10,8 @@ from perago.guards import _WorkspaceGuardrail
 
 
 class RetryPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     count: int = Field(default=3, ge=0, le=10)
     logic: Literal["FIXED", "EXPONENTIAL_BACKOFF", "LINEAR_BACKOFF"] = "FIXED"
     delay_seconds: int = Field(default=60, ge=0)
@@ -18,6 +20,8 @@ class RetryPolicy(BaseModel):
 
 
 class TimeoutPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     policy: Literal["RETRY", "TIME_OUT_WF", "ALERT_ONLY"] = "TIME_OUT_WF"
     seconds: int = Field(default=0, ge=0)
     response_seconds: int = Field(default=600, ge=0)
@@ -26,6 +30,8 @@ class TimeoutPolicy(BaseModel):
 
 
 class ExecutionLimits(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     concurrent_exec_limit: int | None = Field(default=None, ge=0)
     rate_limit_frequency_in_seconds: int | None = Field(default=None, ge=0)
     rate_limit_per_frequency: int | None = Field(default=None, ge=0)
@@ -42,6 +48,8 @@ class ExecutionLimits(BaseModel):
 
 
 class TaskControls(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     retry: RetryPolicy = Field(default_factory=RetryPolicy)
     timeout: TimeoutPolicy = Field(default_factory=TimeoutPolicy)
     limits: ExecutionLimits = Field(default_factory=ExecutionLimits)

@@ -73,6 +73,18 @@ def test_check_cli_reports_task_controls_validation_errors(monkeypatch, tmp_path
     assert "rate_limit_frequency_in_seconds and rate_limit_per_frequency" in result.output
 
 
+def test_check_cli_rejects_unknown_task_control_fields(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.bad_control_extra"])
+
+    assert result.exit_code == 1
+    assert "retry_count" in result.output
+    assert "Extra inputs are not permitted" in result.output
+
+
 def test_check_cli_reports_schema_generation_errors(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
