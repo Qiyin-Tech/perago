@@ -165,6 +165,22 @@ def test_workspace_free_invocation_validates_params_model() -> None:
         )
 
 
+def test_workspace_task_body_requires_ref_type(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    workspace_input = dict(WORKSPACE_INPUT)
+    workspace_input.pop("ref_type")
+
+    with pytest.raises(ValidationError):
+        invoke_workspace_task_body(
+            task,
+            {
+                "workspace": workspace_input,
+                "params": {"feature_set": "default", "min_rows": 100},
+            },
+            tmp_path,
+        )
+
+
 def test_workspace_free_invocation_rejects_workspace_tasks() -> None:
     task = load_module_task("app.workers.features_build")
 

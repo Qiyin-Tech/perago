@@ -76,7 +76,7 @@ class WorkspaceInput(BaseModel):
 
     repository: str = Field(min_length=1)
     branch: str = Field(min_length=1)
-    ref_type: Literal["commit"] = "commit"
+    ref_type: Literal["commit"]
     ref: str = Field(min_length=1)
 
 

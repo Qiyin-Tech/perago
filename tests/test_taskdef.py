@@ -15,6 +15,10 @@ def test_builds_workspace_taskdef() -> None:
     assert taskdef["outputKeys"] == ["workspace", "result"]
     assert "inputTemplate" not in taskdef
     assert taskdef["inputSchema"]["data"]["additionalProperties"] is False
+    workspace_input = taskdef["inputSchema"]["data"]["properties"]["workspace"]
+    assert workspace_input["required"] == ["repository", "branch", "ref_type", "ref"]
+    workspace_output = taskdef["outputSchema"]["data"]["properties"]["workspace"]
+    assert workspace_output["required"] == ["repository", "branch", "ref_type", "ref"]
 
 
 def test_builds_workspace_free_taskdef() -> None:
