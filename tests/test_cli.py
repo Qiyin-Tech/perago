@@ -134,3 +134,14 @@ def test_start_cli_reports_planned_worker_ids_without_starting_services(monkeypa
     assert "reserved for the Conductor/LakeFS worker integration phase" in result.output
     assert "worker_processes=2" in result.output
     assert "worker_ids=prodAFeaturesBuild0001,prodAFeaturesBuild0002" in result.output
+
+
+def test_start_cli_reports_schema_generation_errors(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.bad_schema"])
+
+    assert result.exit_code == 1
+    assert "Cannot generate a JsonSchema" in result.output

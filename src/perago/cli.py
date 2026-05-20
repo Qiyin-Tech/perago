@@ -48,13 +48,14 @@ def start(module_target: str, j: int = typer.Option(1, "-j", min=1)) -> None:
     """Validate startup inputs; worker polling is implemented with service integration."""
     try:
         config = load_runtime_config(module_target)
-        load_module_task(module_target)
+        task = load_module_task(module_target)
+        build_taskdef(task)
         workers = worker_child_specs(
             base_env={"PERAGO_WORKER_ID_PREFIX": config.worker_id_prefix},
             module_target=module_target,
             process_count=j,
         )
-    except (TaskDefinitionError, RuntimeConfigError, ValidationError) as exc:
+    except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
         _fail(str(exc))
     _fail(
         "perago start is reserved for the Conductor/LakeFS worker integration phase; "
