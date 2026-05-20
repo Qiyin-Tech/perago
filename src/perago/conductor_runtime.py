@@ -62,6 +62,11 @@ class ProcessTaskCompletion:
     result: RuntimeTaskResult
 
 
+@dataclass(frozen=True)
+class StopProcessExecutor:
+    pass
+
+
 class ConductorRuntimeClient(Protocol):
     def taskdef_exists(self, task_name: str) -> bool: ...
 
@@ -264,6 +269,45 @@ def run_conductor_thread_runner(
         runner.stop()
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
+
+
+def run_process_executor_loop(
+    *,
+    task: TaskDefinition,
+    worker_id: str,
+    workspace_root: Any,
+    assignment_queue: Any,
+    completion_queue: Any,
+    load_current_attempt: LoadCurrentAttempt,
+    download_workspace: DownloadWorkspace,
+    stage_workspace: StageWorkspace,
+    publish_workspace: PublishWorkspace,
+    cleanup_staging: CleanupStaging,
+) -> None:
+    logger.bind(worker_id=worker_id).info("process executor started")
+    while True:
+        assignment = assignment_queue.get()
+        if isinstance(assignment, StopProcessExecutor):
+            logger.bind(worker_id=worker_id).info("process executor stopping")
+            return
+        if not isinstance(assignment, ProcessTaskAssignment):
+            logger.bind(worker_id=worker_id, assignment_type=type(assignment).__name__).error(
+                "process executor received invalid assignment"
+            )
+            continue
+
+        attempt = assignment.attempt
+        result = execute_polled_task(
+            task=task,
+            attempt=attempt,
+            workspace_root=workspace_root,
+            download_workspace=download_workspace,
+            load_current_attempt=load_current_attempt,
+            stage_workspace=stage_workspace,
+            publish_workspace=publish_workspace,
+            cleanup_staging=cleanup_staging,
+        )
+        completion_queue.put(ProcessTaskCompletion(task_id=attempt.task_id, result=result))
 
 
 def conductor_task_to_attempt(task: object) -> ConductorTaskAttempt:

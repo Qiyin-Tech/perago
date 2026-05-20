@@ -132,6 +132,7 @@ Acceptance criteria:
   - [x] Attempt snapshot carries SDK `response_timeout_seconds`, so the later broker/runner adapters can hand lease timeout data to SDK lease tracking and logs.
   - [x] Thread runner foundation: `PeragoThreadWorker` adapts Perago task execution to SDK `WorkerInterface`, configures `TaskRunner(thread_count=N, lease_extend_enabled=True)`, and maps `RuntimeTaskResult` back to SDK `TaskResult`.
   - [x] Process dispatch worker foundation: `PeragoProcessDispatchWorker` adapts SDK `Task` polling to broker assignment/completion queues, preserves SDK worker flags, and maps executor `RuntimeTaskResult` completions back to SDK `TaskResult`.
+  - [x] Process executor loop foundation: `run_process_executor_loop()` consumes broker assignments, executes Perago task runtime locally, and returns `ProcessTaskCompletion` without polling or updating Conductor from the executor.
   - [ ] SDK broker/runner adapters and process/thread execution mode implementations.
 
   ## Assumptions

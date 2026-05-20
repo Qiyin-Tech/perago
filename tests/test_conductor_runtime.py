@@ -7,7 +7,9 @@ from perago.conductor_runtime import (
     PeragoThreadWorker,
     ProcessTaskAssignment,
     ProcessTaskCompletion,
+    StopProcessExecutor,
     conductor_task_to_attempt,
+    run_process_executor_loop,
     run_conductor_thread_runner,
     runtime_result_to_sdk_task_result,
     run_worker_poll_loop,
@@ -268,6 +270,49 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "executor returned completion for task other-task; expected task-9b4c"
+
+
+def test_process_executor_loop_executes_assignment_and_returns_completion() -> None:
+    class FakeAssignmentQueue:
+        def __init__(self) -> None:
+            self.items = [
+                ProcessTaskAssignment(attempt=_attempt()),
+                StopProcessExecutor(),
+            ]
+
+        def get(self):
+            return self.items.pop(0)
+
+    class FakeCompletionQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    completion_queue = FakeCompletionQueue()
+
+    run_process_executor_loop(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadata0001",
+        workspace_root="unused",
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=completion_queue,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+    )
+
+    assert len(completion_queue.items) == 1
+    completion = completion_queue.items[0]
+    assert isinstance(completion, ProcessTaskCompletion)
+    assert completion.task_id == "task-9b4c"
+    assert completion.result.conductor_payload() == {
+        "status": "COMPLETED",
+        "output": {"result": {"valid": True, "reason": None}},
+    }
 
 
 def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
