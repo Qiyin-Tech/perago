@@ -91,6 +91,9 @@ def test_rejects_missing_required_task_metadata() -> None:
         def missing_name(params: Params) -> Output:
             return Output(value=params.value)
 
+    with pytest.raises(TaskDefinitionError, match="path separators"):
+        load_module_task("app.workers.bad_task_name_path")
+
     with pytest.raises(TaskDefinitionError, match="owner_email is required"):
 
         @task(name="metadata.validate", owner_email="")

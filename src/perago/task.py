@@ -147,6 +147,8 @@ def _build_task_definition(
 def _validate_required_metadata(*, name: str, owner_email: str) -> None:
     if not name.strip():
         raise TaskDefinitionError("task name is required")
+    if "/" in name or "\\" in name:
+        raise TaskDefinitionError("task name must not contain path separators")
     if not owner_email.strip():
         raise TaskDefinitionError("owner_email is required")
 

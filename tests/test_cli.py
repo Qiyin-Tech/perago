@@ -39,6 +39,18 @@ def test_check_cli_reports_pydantic_task_definition_errors(monkeypatch, tmp_path
     assert "WorkspaceSpec.prefix must stay inside the repository" in result.output
 
 
+def test_extract_cli_rejects_path_like_task_names(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["extract", "app.workers.bad_task_name_path", "--out", str(tmp_path / "generated")])
+
+    assert result.exit_code == 1
+    assert "task name must not contain path separators" in result.output
+    assert not (tmp_path / "bad.name.json").exists()
+
+
 def test_check_cli_reads_runtime_config_before_importing_task(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PERAGO_WORKER_ID_PREFIX", "bad-prefix")
