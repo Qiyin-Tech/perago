@@ -1,7 +1,89 @@
+from datetime import timedelta
+
 import pytest
 
-from perago.config import child_environment, resolve_worker_id
+from perago.config import (
+    child_environment,
+    load_runtime_config,
+    load_runtime_env,
+    parse_log_file_max_size,
+    parse_log_retention,
+    read_dotenv,
+    resolve_worker_id,
+)
 from perago.errors import RuntimeConfigError
+
+
+def test_read_dotenv_and_process_env_precedence(tmp_path) -> None:
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(
+        "\n".join(
+            [
+                "# local development",
+                "PERAGO_WORKSPACE_ROOT='/tmp/from-dotenv'",
+                'PERAGO_LOG_ROOT="/tmp/logs-from-dotenv"',
+                "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
+                "IGNORED_LINE",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    env = load_runtime_env(
+        {"PERAGO_WORKER_ID_PREFIX": "processPrefix"},
+        read_dotenv(dotenv),
+    )
+
+    assert env["PERAGO_WORKSPACE_ROOT"] == "/tmp/from-dotenv"
+    assert env["PERAGO_LOG_ROOT"] == "/tmp/logs-from-dotenv"
+    assert env["PERAGO_WORKER_ID_PREFIX"] == "processPrefix"
+
+
+def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                f"PERAGO_WORKSPACE_ROOT={tmp_path / 'workspaces'}",
+                f"PERAGO_LOG_ROOT={tmp_path / 'logs'}",
+                "PERAGO_LOG_FILE_MAX_SIZE=1.5MB",
+                "PERAGO_LOG_RETENTION=7d",
+                "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_runtime_config(
+        "app.workers.features_build",
+        cwd=tmp_path,
+        process_env={},
+        probe_roots=False,
+    )
+
+    assert config.workspace_root == tmp_path / "workspaces"
+    assert config.log_root == tmp_path / "logs"
+    assert config.log_file_max_size == 1_572_864
+    assert config.log_retention == timedelta(days=7)
+    assert config.worker_id_prefix == "dotenvPrefix"
+
+
+def test_parse_log_file_max_size() -> None:
+    assert parse_log_file_max_size(None) == 100 * 1024 * 1024
+    assert parse_log_file_max_size("512KB") == 512 * 1024
+    assert parse_log_file_max_size("1.5 mb") == 1_572_864
+
+    with pytest.raises(RuntimeConfigError, match="PERAGO_LOG_FILE_MAX_SIZE"):
+        parse_log_file_max_size("100")
+    with pytest.raises(RuntimeConfigError, match="greater than zero"):
+        parse_log_file_max_size("0MB")
+
+
+def test_parse_log_retention() -> None:
+    assert parse_log_retention(None) == timedelta(days=30)
+    assert parse_log_retention("7D") == timedelta(days=7)
+
+    with pytest.raises(RuntimeConfigError, match="PERAGO_LOG_RETENTION"):
+        parse_log_retention("0d")
 
 
 def test_child_environment_derives_worker_id_from_module_target() -> None:
