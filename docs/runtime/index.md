@@ -10,4 +10,5 @@ cli
 worker-processes
 logging
 conductor
+lakefs
 ```
