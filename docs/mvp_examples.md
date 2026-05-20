@@ -274,6 +274,8 @@ Fields set to `None` are omitted from the extracted TaskDef JSON.
 
 If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
 
+`TaskControls.response_timeout_seconds` is the single local source used for the generated TaskDef `responseTimeoutSeconds` value.
+
 `workspace` is required for workspace task workers and forbidden for workspace-free task workers.
 `controls.publish_budget` is valid only for workspace task workers.
 
