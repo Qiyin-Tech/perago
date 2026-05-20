@@ -22,6 +22,7 @@ def test_read_dotenv_and_process_env_precedence(tmp_path) -> None:
         "\n".join(
             [
                 "# local development",
+                "export PERAGO_LOG_FILE_MAX_SIZE=512KB",
                 "PERAGO_WORKSPACE_ROOT='/tmp/from-dotenv'",
                 'PERAGO_LOG_ROOT="/tmp/logs-from-dotenv"',
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
@@ -38,6 +39,7 @@ def test_read_dotenv_and_process_env_precedence(tmp_path) -> None:
 
     assert env["PERAGO_WORKSPACE_ROOT"] == "/tmp/from-dotenv"
     assert env["PERAGO_LOG_ROOT"] == "/tmp/logs-from-dotenv"
+    assert env["PERAGO_LOG_FILE_MAX_SIZE"] == "512KB"
     assert env["PERAGO_WORKER_ID_PREFIX"] == "processPrefix"
 
 

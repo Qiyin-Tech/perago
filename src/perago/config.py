@@ -61,6 +61,8 @@ def read_dotenv(path: Path) -> dict[str, str]:
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
+        if line.startswith("export "):
+            line = line.removeprefix("export ").strip()
         key, value = line.split("=", 1)
         values[key.strip()] = _strip_env_value(value.strip())
     return values
