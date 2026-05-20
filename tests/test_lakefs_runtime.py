@@ -275,7 +275,7 @@ def test_lakefs_publish_accepts_same_logical_task_commit_range() -> None:
 
     assert published == "published-commit"
     main_branch = repo.branches["main"]
-    assert main_branch.log_calls == [{"stop_at": "input-commit", "first_parent": True}]
+    assert main_branch.log_calls == [{"first_parent": True}]
     staging_branch = repo.branches[staged.branch]
     assert staging_branch.merges[0]["metadata"]["perago.expected_head"] == "head-2"
     assert staging_branch.merges[0]["metadata"]["perago.supersedes"] == "head-2"
@@ -299,3 +299,32 @@ def test_lakefs_publish_rejects_metadata_incomplete_commit_range() -> None:
         runtime.publish_workspace(staged, workspace, spec, attempt)
 
     assert staged.branch not in repo.branches
+
+
+def test_lakefs_publish_rejects_unreachable_input_ref() -> None:
+    repo = FakeRepo()
+    attempt = Attempt()
+    repo.main_commit_log = [
+        FakeCommit(id="head-2"),
+        FakeCommit(id="head-1"),
+    ]
+    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+
+    with pytest.raises(PublishFenceError, match="no longer contains workspace input ref"):
+        runtime.publish_workspace(staged, workspace, spec, attempt)
+
+
+def test_lakefs_publish_rejects_oversized_commit_range() -> None:
+    repo = FakeRepo()
+    attempt = Attempt()
+    repo.main_commit_log = [FakeCommit(id=f"head-{idx}") for idx in range(2000)] + [FakeCommit(id="input-commit")]
+    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+
+    with pytest.raises(PublishFenceError, match="advanced beyond supported publish range"):
+        runtime.publish_workspace(staged, workspace, spec, attempt)

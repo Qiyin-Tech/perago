@@ -9,6 +9,7 @@ from lakefs import Client, Repository
 from lakefs.exceptions import api_exception_handler
 
 from perago.config import LakeFSConfig
+from perago.errors import PublishFenceError
 from perago.execution import StagedWorkspace
 from perago.metadata import build_workspace_publication_plan, perago_metadata, staging_branch_name
 from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
@@ -17,6 +18,9 @@ from perago.workspace import (
     workspace_download_files,
     workspace_object_prefix,
 )
+
+
+MAX_TARGET_COMMIT_RANGE = 1024
 
 
 class LakeFSWorkspaceRuntime:
@@ -146,9 +150,28 @@ class LakeFSWorkspaceRuntime:
     ) -> Sequence[object]:
         if current_head == workspace_input.ref:
             return []
-        commits = list(target_branch.log(stop_at=workspace_input.ref, first_parent=True))
-        commits = [commit for commit in commits if getattr(commit, "id", None) != workspace_input.ref]
-        return list(reversed(commits))
+
+        commits: list[object] = []
+        reached_input_ref = False
+        for commit in target_branch.log(first_parent=True):
+            commit_id = getattr(commit, "id", None)
+            if commit_id == workspace_input.ref:
+                reached_input_ref = True
+                break
+            commits.append(commit)
+            if len(commits) > MAX_TARGET_COMMIT_RANGE:
+                raise PublishFenceError(
+                    f"{workspace_input.branch} advanced beyond supported publish range "
+                    f"({MAX_TARGET_COMMIT_RANGE} commits)"
+                )
+
+        if not reached_input_ref:
+            raise PublishFenceError(
+                f"{workspace_input.branch} no longer contains workspace input ref {workspace_input.ref}"
+            )
+
+        commits.reverse()
+        return commits
 
     def _repo(self, repository: str) -> Repository:
         return Repository(repository, client=self._client)
