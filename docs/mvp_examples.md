@@ -268,13 +268,14 @@ Perago maps these fields to Conductor TaskDef fields:
 | `controls.limits.concurrent_exec_limit` | `concurrentExecLimit` | no | `None` |
 | `controls.limits.rate_limit_frequency_in_seconds` | `rateLimitFrequencyInSeconds` | no | `None` |
 | `controls.limits.rate_limit_per_frequency` | `rateLimitPerFrequency` | no | `None` |
-| `controls.publish_budget` | derives `responseTimeoutSeconds` | no | `None` |
+| `controls.publish_budget` | derives `responseTimeoutSeconds` | workspace tasks only | `None` |
 
 Fields set to `None` are omitted from the extracted TaskDef JSON.
 
 If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
 
 `workspace` is required for workspace task workers and forbidden for workspace-free task workers.
+`controls.publish_budget` is valid only for workspace task workers.
 
 The two rate limit fields must be configured together. `perago check` fails if only one of `controls.limits.rate_limit_frequency_in_seconds` or `controls.limits.rate_limit_per_frequency` is set.
 
