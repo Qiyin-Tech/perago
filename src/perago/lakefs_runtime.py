@@ -3,14 +3,15 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import lakefs_sdk
 from lakefs import Client, Repository
+from lakefs.exceptions import api_exception_handler
 
 from perago.config import LakeFSConfig
 from perago.execution import StagedWorkspace
 from perago.metadata import build_workspace_publication_plan, perago_metadata, staging_branch_name
 from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
 from perago.workspace import (
-    build_budgeted_workspace_sync_plan,
     build_workspace_sync_plan,
     workspace_download_files,
     workspace_object_prefix,
@@ -71,15 +72,7 @@ class LakeFSWorkspaceRuntime:
             for item in branch.objects(prefix=workspace_object_prefix(workspace_spec))
             if getattr(item, "path_type", "object") == "object"
         ]
-        if self._publish_budget is None:
-            plan = build_workspace_sync_plan(workspace_dir, workspace_spec, existing_paths)
-        else:
-            plan = build_budgeted_workspace_sync_plan(
-                workspace_dir,
-                workspace_spec,
-                existing_paths,
-                self._publish_budget,
-            )
+        plan = build_workspace_sync_plan(workspace_dir, workspace_spec, existing_paths)
 
         for object_path in plan.delete_object_paths:
             branch.object(object_path).delete()
@@ -122,11 +115,22 @@ class LakeFSWorkspaceRuntime:
             commits=[head_commit],
             staging_commit=staged.commit,
         )
-        return repo.branch(staged.branch).merge_into(
-            target_branch,
-            squash_merge=True,
-            metadata=plan.confirm_metadata,
-        )
+        if self._publish_budget is None:
+            return repo.branch(staged.branch).merge_into(
+                target_branch,
+                squash_merge=True,
+                metadata=plan.confirm_metadata,
+            )
+
+        with api_exception_handler():
+            merge_result = self._client.sdk_client.refs_api.merge_into_branch(
+                workspace_input.repository,
+                staged.branch,
+                workspace_input.branch,
+                merge=lakefs_sdk.Merge(squash_merge=True, metadata=plan.confirm_metadata),
+                _request_timeout=self._publish_budget.lakefs_merge_timeout_seconds,
+            )
+        return merge_result.reference
 
     def cleanup_staging(self, staged: StagedWorkspace) -> None:
         # Repository is intentionally not encoded in StagedWorkspace; the callback is bound per attempt below.

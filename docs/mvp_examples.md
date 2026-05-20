@@ -272,7 +272,7 @@ Perago maps these fields to Conductor TaskDef fields:
 
 Fields set to `None` are omitted from the extracted TaskDef JSON.
 
-If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
+If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. At runtime, the same budget provides the LakeFS merge request timeout and the Conductor completion request timeout. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
 
 `TaskControls.response_timeout_seconds` is the single local source used for the generated TaskDef `responseTimeoutSeconds` value.
 
@@ -479,8 +479,6 @@ Perago uses the standard environment variable names consumed by the underlying S
 
 ```bash
 CONDUCTOR_SERVER_URL=http://localhost:8080/api
-CONDUCTOR_AUTH_KEY=...
-CONDUCTOR_AUTH_SECRET=...
 
 LAKECTL_SERVER_ENDPOINT_URL=http://localhost:8000
 LAKECTL_CREDENTIALS_ACCESS_KEY_ID=...
@@ -495,7 +493,7 @@ PERAGO_WORKER_ID_PREFIX=prodAFeaturesBuild
 
 For local development these may be loaded from `.env`. They are worker-local runtime configuration and are not part of Conductor task input or output. Real process environment variables take precedence over `.env`; `.env` only fills missing values. `perago check`, `perago extract`, and `perago start` all read `.env` with the same precedence rule before loading the task module.
 
-Perago parses the connection variables into `ConductorConfig` and `LakeFSConfig` when present. Missing Conductor auth is allowed, but if either `CONDUCTOR_AUTH_KEY` or `CONDUCTOR_AUTH_SECRET` is set, both must be set. LakeFS endpoint, access key, and secret key must be configured together.
+Perago targets Conductor OSS for the MVP and parses only `CONDUCTOR_SERVER_URL` into `ConductorConfig`. It does not parse or validate Conductor auth keys. LakeFS endpoint, access key, and secret key must be configured together.
 
 For `perago start`, `PERAGO_WORKER_ID` is written by the Worker Supervisor rather than by a user's `.env`. A user-provided value is only a fallback for unsupervised or local debugging runs. `PERAGO_WORKER_ID_PREFIX` may be set in `.env`; it is the user-facing knob for avoiding worker id collisions.
 
@@ -1347,12 +1345,9 @@ MVP handling for the attempt crash window:
 
 The publish budget must be derived from real limits and measurements:
 
-- maximum number of objects and bytes changed under `WorkspaceSpec(prefix=...)`;
 - lakeFS merge request timeout and Conductor completion request timeout;
 - observed lakeFS merge latency under expected repository size and object count, using a high percentile plus safety margin;
 - operational limits for worker shutdown grace period and heartbeat interval.
-
-Before staging a workspace publication, Perago checks the local sync plan against `PublishBudget.max_changed_objects` and `PublishBudget.max_changed_bytes`. Object count includes uploads and deletes; byte count covers local upload bytes known before LakeFS staging.
 
 Workspace publication does not follow or upload symbolic links. A symlink under the local workspace is rejected before staging because it can point outside the attempt-local workspace root.
 

@@ -105,8 +105,6 @@ Perago reads `.env` for local development. Real process environment variables ta
 
 ```bash
 CONDUCTOR_SERVER_URL=http://localhost:8080/api
-CONDUCTOR_AUTH_KEY=...
-CONDUCTOR_AUTH_SECRET=...
 
 LAKECTL_SERVER_ENDPOINT_URL=http://localhost:8000
 LAKECTL_CREDENTIALS_ACCESS_KEY_ID=...
@@ -121,7 +119,7 @@ PERAGO_WORKER_ID_PREFIX=prodAFeaturesBuild
 
 Runtime models and config validation use Pydantic. CLI commands use Typer. Runtime logs use loguru JSONL files with UTC+08:00 timestamps.
 
-Conductor and LakeFS connection environment variables are parsed into local runtime config and checked for incomplete credential groups. `perago check` still does not connect to either service.
+Perago targets Conductor OSS for the MVP and only parses `CONDUCTOR_SERVER_URL`; it does not configure Conductor auth keys. LakeFS endpoint, access key, and secret key are parsed together and checked as one credential group. `perago check` still does not connect to either service.
 
 ## Workspace guardrails
 

@@ -4,11 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from perago import PublishBudget, PublishBudgetError, TaskDefinitionError, TaskInputError, WorkspaceSpec
+from perago import TaskDefinitionError, TaskInputError, WorkspaceSpec
 from perago.workspace import (
     ATTEMPT_WORKSPACE_MARKER,
-    assert_workspace_sync_plan_within_budget,
-    build_budgeted_workspace_sync_plan,
     build_workspace_sync_plan,
     cleanup_attempt_workspace,
     cleanup_attempt_workspace_safely,
@@ -221,69 +219,6 @@ def test_workspace_sync_plan_reports_changed_objects_and_upload_bytes(tmp_path) 
     )
 
     assert plan.changed_object_count == 2
-    assert plan.upload_bytes == 4
-
-
-def test_workspace_sync_plan_budget_rejects_object_and_byte_overruns(tmp_path) -> None:
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir()
-    (workspace_dir / "raw").mkdir()
-    (workspace_dir / "raw" / "input.wav").write_bytes(b"abcd")
-    plan = build_workspace_sync_plan(
-        workspace_dir,
-        WorkspaceSpec(prefix="/audio/render"),
-        ["audio/render/old.tmp"],
-    )
-
-    base_budget = {
-        "observed_merge_p99_seconds": 1,
-        "safety_margin_seconds": 1,
-        "lakefs_merge_timeout_seconds": 2,
-        "conductor_completion_timeout_seconds": 1,
-        "worker_shutdown_grace_seconds": 1,
-        "heartbeat_interval_seconds": 1,
-    }
-    with pytest.raises(PublishBudgetError, match="max_changed_objects"):
-        assert_workspace_sync_plan_within_budget(
-            plan,
-            PublishBudget(max_changed_objects=1, max_changed_bytes=4, **base_budget),
-        )
-    with pytest.raises(PublishBudgetError, match="max_changed_bytes"):
-        assert_workspace_sync_plan_within_budget(
-            plan,
-            PublishBudget(max_changed_objects=2, max_changed_bytes=3, **base_budget),
-        )
-
-    assert_workspace_sync_plan_within_budget(
-        plan,
-        PublishBudget(max_changed_objects=2, max_changed_bytes=4, **base_budget),
-    )
-
-
-def test_build_budgeted_workspace_sync_plan_returns_checked_plan(tmp_path) -> None:
-    workspace_dir = tmp_path / "workspace"
-    workspace_dir.mkdir()
-    (workspace_dir / "raw").mkdir()
-    (workspace_dir / "raw" / "input.wav").write_bytes(b"abcd")
-    budget = PublishBudget(
-        max_changed_objects=1,
-        max_changed_bytes=4,
-        observed_merge_p99_seconds=1,
-        safety_margin_seconds=1,
-        lakefs_merge_timeout_seconds=2,
-        conductor_completion_timeout_seconds=1,
-        worker_shutdown_grace_seconds=1,
-        heartbeat_interval_seconds=1,
-    )
-
-    plan = build_budgeted_workspace_sync_plan(
-        workspace_dir,
-        WorkspaceSpec(prefix="/audio/render"),
-        [],
-        budget,
-    )
-
-    assert plan.changed_object_count == 1
     assert plan.upload_bytes == 4
 
 

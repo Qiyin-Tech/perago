@@ -49,8 +49,6 @@ class BudgetOutput(BaseModel):
     controls=TaskControls(
         timeout=TimeoutPolicy(response_seconds=999),
         publish_budget=PublishBudget(
-            max_changed_objects=1000,
-            max_changed_bytes=1024 * 1024 * 1024,
             observed_merge_p99_seconds=20,
             safety_margin_seconds=10,
             lakefs_merge_timeout_seconds=45,
@@ -98,7 +96,7 @@ def test_taskdef_derives_response_timeout_from_publish_budget() -> None:
 
     assert taskdef["responseTimeoutSeconds"] == 100
     assert "publish_budget" not in taskdef
-    assert "max_changed_objects" not in json.dumps(taskdef)
+    assert "lakefs_merge_timeout_seconds" not in json.dumps(taskdef)
 
 
 def test_taskdef_keeps_schema_defaults_without_input_template() -> None:

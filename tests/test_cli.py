@@ -25,8 +25,6 @@ def test_check_cli_reports_connection_config_status_without_secrets(monkeypatch,
         "\n".join(
             [
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
-                "CONDUCTOR_AUTH_KEY=conductor-key",
-                "CONDUCTOR_AUTH_SECRET=conductor-secret",
                 "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
                 "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
@@ -41,7 +39,6 @@ def test_check_cli_reports_connection_config_status_without_secrets(monkeypatch,
     assert result.exit_code == 0
     assert "conductor: configured" in result.output
     assert "lakefs: configured" in result.output
-    assert "conductor-secret" not in result.output
     assert "lakefs-secret" not in result.output
 
 

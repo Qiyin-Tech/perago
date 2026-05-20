@@ -157,9 +157,15 @@ def _worker_process_main(
     if lakefs_config is None:
         raise RuntimeConfigError("LakeFS config is required for perago start")
 
-    conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    publish_budget = task.controls.publish_budget
+    conductor = OrkesConductorRuntimeClient.from_config(
+        conductor_config,
+        task_update_timeout_seconds=(
+            None if publish_budget is None else publish_budget.conductor_completion_timeout_seconds
+        ),
+    )
     lakefs = BoundLakeFSWorkspaceRuntime(
-        LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=task.controls.publish_budget)
+        LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
     )
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(

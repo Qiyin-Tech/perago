@@ -60,16 +60,24 @@ class OrkesConductorRuntimeClient:
         *,
         task_client: OrkesTaskClient,
         metadata_client: OrkesMetadataClient,
+        task_update_timeout_seconds: int | None = None,
     ) -> None:
         self._task_client = task_client
         self._metadata_client = metadata_client
+        self._task_update_timeout_seconds = task_update_timeout_seconds
 
     @classmethod
-    def from_config(cls, config: ConductorConfig) -> OrkesConductorRuntimeClient:
+    def from_config(
+        cls,
+        config: ConductorConfig,
+        *,
+        task_update_timeout_seconds: int | None = None,
+    ) -> OrkesConductorRuntimeClient:
         sdk_config = Configuration(server_api_url=config.server_url)
         return cls(
             task_client=OrkesTaskClient(sdk_config),
             metadata_client=OrkesMetadataClient(sdk_config),
+            task_update_timeout_seconds=task_update_timeout_seconds,
         )
 
     def taskdef_exists(self, task_name: str) -> bool:
@@ -91,7 +99,14 @@ class OrkesConductorRuntimeClient:
         return conductor_task_to_attempt(self._task_client.get_task(task_id))
 
     def update_task(self, attempt: ConductorTaskAttempt, result: RuntimeTaskResult, *, worker_id: str) -> None:
-        self._task_client.update_task(runtime_result_to_sdk_task_result(attempt, result, worker_id=worker_id))
+        task_result = runtime_result_to_sdk_task_result(attempt, result, worker_id=worker_id)
+        if self._task_update_timeout_seconds is None:
+            self._task_client.update_task(task_result)
+            return
+        self._task_client.taskResourceApi.update_task(
+            task_result,
+            _request_timeout=self._task_update_timeout_seconds,
+        )
 
 
 def conductor_task_to_attempt(task: object) -> ConductorTaskAttempt:

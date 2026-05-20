@@ -50,8 +50,6 @@ class ExecutionLimits(BaseModel):
 class PublishBudget(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    max_changed_objects: int = Field(ge=1)
-    max_changed_bytes: int = Field(ge=1)
     observed_merge_p99_seconds: int = Field(ge=0)
     safety_margin_seconds: int = Field(ge=0)
     lakefs_merge_timeout_seconds: int = Field(ge=1)

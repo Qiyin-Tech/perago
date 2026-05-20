@@ -138,8 +138,6 @@ def test_rejects_invalid_task_decorator_option_types() -> None:
 
 def test_rejects_publish_budget_on_workspace_free_tasks() -> None:
     budget = PublishBudget(
-        max_changed_objects=1,
-        max_changed_bytes=1,
         observed_merge_p99_seconds=1,
         safety_margin_seconds=1,
         lakefs_merge_timeout_seconds=2,

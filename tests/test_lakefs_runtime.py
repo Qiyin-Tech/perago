@@ -1,11 +1,12 @@
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from perago.execution import StagedWorkspace
 from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
 from perago.metadata import staging_branch_name
-from perago.models import WorkspaceInput, WorkspaceSpec
+from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
 
 
 @dataclass
@@ -127,10 +128,38 @@ class FakeRepo:
         return self.branches[branch_id]
 
 
+class FakeRefsApi:
+    def __init__(self) -> None:
+        self.merge_calls: list[dict] = []
+
+    def merge_into_branch(self, repository, source_ref, destination_branch, *, merge, _request_timeout):
+        self.merge_calls.append(
+            {
+                "repository": repository,
+                "source_ref": source_ref,
+                "destination_branch": destination_branch,
+                "merge": merge,
+                "_request_timeout": _request_timeout,
+            }
+        )
+        return SimpleNamespace(reference="published-commit")
+
+
+class FakeSdkClient:
+    def __init__(self) -> None:
+        self.refs_api = FakeRefsApi()
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.sdk_client = FakeSdkClient()
+
+
 class FakeRuntime(LakeFSWorkspaceRuntime):
-    def __init__(self, repo: FakeRepo) -> None:
+    def __init__(self, repo: FakeRepo, publish_budget: PublishBudget | None = None) -> None:
         self.repo = repo
-        self._publish_budget = None
+        self._client = FakeClient()
+        self._publish_budget = publish_budget
 
     def _repo(self, repository: str):
         assert repository == "song-000123"
@@ -177,3 +206,31 @@ def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     runtime.cleanup_staging(StagedWorkspace(branch=staged.branch, commit=staged.commit))
 
     assert staging_branch.deleted is True
+
+
+def test_lakefs_publish_uses_merge_request_timeout_from_publish_budget(tmp_path) -> None:
+    repo = FakeRepo()
+    budget = PublishBudget(
+        observed_merge_p99_seconds=20,
+        safety_margin_seconds=10,
+        lakefs_merge_timeout_seconds=45,
+        conductor_completion_timeout_seconds=15,
+        worker_shutdown_grace_seconds=30,
+        heartbeat_interval_seconds=10,
+    )
+    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo, publish_budget=budget))
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    attempt = Attempt()
+
+    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+    published = runtime.publish_workspace(staged, workspace, spec, attempt)
+
+    assert published == "published-commit"
+    merge_call = runtime._runtime._client.sdk_client.refs_api.merge_calls[0]
+    assert merge_call["repository"] == "song-000123"
+    assert merge_call["source_ref"] == staged.branch
+    assert merge_call["destination_branch"] == "main"
+    assert merge_call["_request_timeout"] == 45
+    assert merge_call["merge"].squash_merge is True
+    assert merge_call["merge"].metadata["perago.phase"] == "confirm"

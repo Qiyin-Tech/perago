@@ -2,6 +2,7 @@ from conductor.client.http.models.task import Task
 
 from perago.conductor_runtime import (
     ConductorTaskAttempt,
+    OrkesConductorRuntimeClient,
     conductor_task_to_attempt,
     runtime_result_to_sdk_task_result,
     run_worker_poll_loop,
@@ -79,6 +80,36 @@ def test_runtime_result_to_sdk_task_result_maps_completed_and_failures() -> None
     assert failed.reason_for_incompletion == "bad input"
     assert terminal.status == "FAILED_WITH_TERMINAL_ERROR"
     assert terminal.reason_for_incompletion == "pre guardrail"
+
+
+def test_orkes_conductor_update_task_uses_configured_request_timeout() -> None:
+    class FakeTaskResourceApi:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def update_task(self, task_result, **kwargs):
+            self.calls.append((task_result, kwargs))
+
+    class FakeTaskClient:
+        def __init__(self) -> None:
+            self.taskResourceApi = FakeTaskResourceApi()
+
+        def update_task(self, task_result):
+            raise AssertionError("expected direct taskResourceApi update when timeout is configured")
+
+    task_client = FakeTaskClient()
+    client = OrkesConductorRuntimeClient(
+        task_client=task_client,
+        metadata_client=object(),
+        task_update_timeout_seconds=15,
+    )
+    attempt = _attempt()
+
+    client.update_task(attempt, completed_result({"result": {"valid": True}}), worker_id="worker-1")
+
+    task_result, kwargs = task_client.taskResourceApi.calls[0]
+    assert task_result.task_id == "task-9b4c"
+    assert kwargs == {"_request_timeout": 15}
 
 
 def test_workspace_free_poll_execute_update_flow() -> None:

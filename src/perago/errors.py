@@ -26,9 +26,5 @@ class PublishFenceError(RuntimeError):
     """Raised when a workspace branch cannot be safely advanced by an attempt."""
 
 
-class PublishBudgetError(RuntimeError):
-    """Raised when a workspace publication exceeds its configured operational budget."""
-
-
 class StaleAttemptError(RuntimeError):
     """Raised when a Conductor task snapshot no longer matches the current attempt."""

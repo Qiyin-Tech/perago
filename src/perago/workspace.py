@@ -10,9 +10,9 @@ from typing import Any
 from loguru import logger
 
 from perago._segments import safe_segment
-from perago.errors import PublishBudgetError, TaskInputError
+from perago.errors import TaskInputError
 from perago.guards import _canonical_workspace_path
-from perago.models import PublishBudget, WorkspaceSpec
+from perago.models import WorkspaceSpec
 
 
 ATTEMPT_WORKSPACE_MARKER = ".perago-attempt.json"
@@ -167,30 +167,6 @@ def build_workspace_sync_plan(
             upload_files,
         ),
     )
-
-
-def build_budgeted_workspace_sync_plan(
-    workspace_dir: Path,
-    workspace_spec: WorkspaceSpec,
-    existing_object_paths: list[str],
-    budget: PublishBudget,
-) -> WorkspaceSyncPlan:
-    plan = build_workspace_sync_plan(workspace_dir, workspace_spec, existing_object_paths)
-    assert_workspace_sync_plan_within_budget(plan, budget)
-    return plan
-
-
-def assert_workspace_sync_plan_within_budget(plan: WorkspaceSyncPlan, budget: PublishBudget) -> None:
-    if plan.changed_object_count > budget.max_changed_objects:
-        raise PublishBudgetError(
-            f"workspace publication changes {plan.changed_object_count} objects, "
-            f"exceeding max_changed_objects={budget.max_changed_objects}"
-        )
-    if plan.upload_bytes > budget.max_changed_bytes:
-        raise PublishBudgetError(
-            f"workspace publication uploads {plan.upload_bytes} bytes, "
-            f"exceeding max_changed_bytes={budget.max_changed_bytes}"
-        )
 
 
 def cleanup_attempt_workspace(workspace_dir: Path) -> None:
