@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -180,7 +181,7 @@ class LakeFSWorkspaceRuntime:
 class BoundLakeFSWorkspaceRuntime:
     def __init__(self, runtime: LakeFSWorkspaceRuntime) -> None:
         self._runtime = runtime
-        self._last_workspace_input: WorkspaceInput | None = None
+        self._thread_state = threading.local()
 
     def download_workspace(
         self,
@@ -188,7 +189,7 @@ class BoundLakeFSWorkspaceRuntime:
         workspace_spec: WorkspaceSpec,
         workspace_dir: Path,
     ) -> None:
-        self._last_workspace_input = workspace_input
+        self._thread_state.workspace_input = workspace_input
         self._runtime.download_workspace(workspace_input, workspace_spec, workspace_dir)
 
     def stage_workspace(
@@ -198,7 +199,7 @@ class BoundLakeFSWorkspaceRuntime:
         workspace_spec: WorkspaceSpec,
         attempt: object,
     ) -> StagedWorkspace:
-        self._last_workspace_input = workspace_input
+        self._thread_state.workspace_input = workspace_input
         return self._runtime.stage_workspace(workspace_dir, workspace_input, workspace_spec, attempt)
 
     def publish_workspace(
@@ -208,10 +209,11 @@ class BoundLakeFSWorkspaceRuntime:
         workspace_spec: WorkspaceSpec,
         attempt: object,
     ) -> str:
-        self._last_workspace_input = workspace_input
+        self._thread_state.workspace_input = workspace_input
         return self._runtime.publish_workspace(staged, workspace_input, workspace_spec, attempt)
 
     def cleanup_staging(self, staged: StagedWorkspace) -> None:
-        if self._last_workspace_input is None:
+        workspace_input = getattr(self._thread_state, "workspace_input", None)
+        if workspace_input is None:
             raise RuntimeError("workspace input is not available for staging cleanup")
-        self._runtime._repo(self._last_workspace_input.repository).branch(staged.branch).delete()
+        self._runtime._repo(workspace_input.repository).branch(staged.branch).delete()

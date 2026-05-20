@@ -331,3 +331,42 @@ def test_lakefs_publish_rejects_oversized_commit_range() -> None:
 
     with pytest.raises(PublishFenceError, match="advanced beyond supported publish range"):
         runtime.publish_workspace(staged, workspace, spec, attempt)
+
+
+def test_bound_runtime_cleanup_uses_thread_local_workspace_input() -> None:
+    class RecordingRuntime(LakeFSWorkspaceRuntime):
+        def __init__(self) -> None:
+            self.deleted: list[tuple[str, str]] = []
+
+        def download_workspace(self, workspace_input, workspace_spec, workspace_dir):
+            return None
+
+        def _repo(self, repository: str):
+            runtime = self
+
+            class _Repo:
+                def branch(self, branch_id: str):
+                    class _Branch:
+                        def delete(self_nonlocal) -> None:
+                            runtime.deleted.append((repository, branch_id))
+
+                    return _Branch()
+
+            return _Repo()
+
+    runtime = BoundLakeFSWorkspaceRuntime(RecordingRuntime())
+    branch = "perago-staging-shared"
+
+    workspace_a = WorkspaceInput(repository="repo-a", branch="main", ref_type="commit", ref="a")
+    workspace_b = WorkspaceInput(repository="repo-b", branch="main", ref_type="commit", ref="b")
+
+    def cleanup_for(workspace: WorkspaceInput) -> None:
+        runtime.download_workspace(workspace, WorkspaceSpec(prefix="/"), Path("."))
+        runtime.cleanup_staging(StagedWorkspace(branch=branch, commit="staging"))
+
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(cleanup_for, [workspace_a, workspace_b]))
+
+    assert sorted(runtime._runtime.deleted) == [("repo-a", branch), ("repo-b", branch)]
