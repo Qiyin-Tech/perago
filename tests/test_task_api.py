@@ -56,6 +56,21 @@ def test_rejects_multi_task_module() -> None:
         load_module_task("app.workers.multi_task")
 
 
+def test_rejects_module_without_task() -> None:
+    with pytest.raises(TaskDefinitionError, match="does not declare"):
+        load_module_task("app.workers.no_task")
+
+
+def test_rejects_non_module_targets() -> None:
+    for target in [
+        "app/workers/features_build.py",
+        "app.workers.features_build:build_features",
+        "app\\workers\\features_build.py",
+    ]:
+        with pytest.raises(TaskDefinitionError, match="Python import path"):
+            load_module_task(target)
+
+
 def test_rejects_missing_required_task_metadata() -> None:
     with pytest.raises(TaskDefinitionError, match="task name is required"):
 
