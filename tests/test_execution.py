@@ -31,6 +31,14 @@ class Output(BaseModel):
     value: int
 
 
+class NestedParams(BaseModel):
+    settings: Params
+
+
+class NestedOutput(BaseModel):
+    value: int
+
+
 @dataclass(frozen=True)
 class Attempt:
     status: str = "IN_PROGRESS"
@@ -47,6 +55,11 @@ class Attempt:
 )
 def post_failure_task(workspace: Path, params: Params) -> Output:
     return Output(value=params.value)
+
+
+@task(name="tests.nested_params", owner_email="data@example.com")
+def nested_params_task(params: NestedParams) -> NestedOutput:
+    return NestedOutput(value=params.settings.value)
 
 
 WORKSPACE_INPUT = {
@@ -448,6 +461,23 @@ def test_workspace_free_invocation_rejects_extra_business_params() -> None:
                     "song_id": "song-000123",
                     "min_duration_seconds": 30,
                     "workspace": "not-a-workspace",
+                },
+            },
+        )
+
+
+def test_workspace_free_invocation_rejects_nested_extra_business_params() -> None:
+    task = nested_params_task.__perago_task__
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        invoke_workspace_free_task(
+            task,
+            {
+                "params": {
+                    "settings": {
+                        "value": 1,
+                        "extra": "not-in-schema",
+                    },
                 },
             },
         )
