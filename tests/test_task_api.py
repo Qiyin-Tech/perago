@@ -1,4 +1,4 @@
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePath, PureWindowsPath
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -11,11 +11,14 @@ from perago import (
     TaskControls,
     WorkspaceSpec,
     check_guardrails,
+    forbid_glob,
     load_module_task,
+    require_dir,
     require_file,
     require_glob,
     task,
 )
+from perago.guards import _WorkspaceGuardrail
 
 
 class Params(BaseModel):
@@ -167,6 +170,23 @@ def test_guardrail_path_canonicalization() -> None:
         require_file("../raw/manifest.json")
     with pytest.raises(TaskDefinitionError):
         require_file(r"raw\manifest.json")
+    with pytest.raises(TaskDefinitionError, match="must not be empty"):
+        require_file(Path(""))
+    with pytest.raises(TaskDefinitionError, match="drive-qualified"):
+        require_file(PureWindowsPath("C:/raw/manifest.json"))
+    with pytest.raises(TaskDefinitionError, match="absolute"):
+        require_file(PurePath("/raw/manifest.json"))
+
+
+def test_guardrail_count_bound_validation() -> None:
+    with pytest.raises(ValidationError, match="require_file does not accept count bounds"):
+        _WorkspaceGuardrail(kind="require_file", path="raw/manifest.json", min_count=1)
+    with pytest.raises(ValidationError, match="min_count must be <= max_count"):
+        require_glob("raw/*.parquet", min_count=3, max_count=2)
+
+    guardrail = _WorkspaceGuardrail(kind="require_glob", path="raw/*.parquet", min_count=None)
+
+    assert guardrail.min_count == 1
 
 
 def test_workspace_prefix_validation() -> None:
@@ -183,6 +203,16 @@ def test_guardrail_runtime_checks(tmp_path: Path) -> None:
     (raw / "a.parquet").write_text("ok", encoding="utf-8")
 
     check_guardrails(tmp_path, [require_glob("raw/**/*.parquet", min_count=1)], "pre")
+    check_guardrails(tmp_path, [require_file("raw/a.parquet"), require_dir("raw")], "pre")
+    check_guardrails(tmp_path, [forbid_glob("raw/*.csv")], "post")
 
     with pytest.raises(GuardrailViolation, match="min_count=2"):
         check_guardrails(tmp_path, [require_glob("raw/**/*.parquet", min_count=2)], "pre")
+    with pytest.raises(GuardrailViolation, match="did not find a file"):
+        check_guardrails(tmp_path, [require_file("raw/missing.parquet")], "pre")
+    with pytest.raises(GuardrailViolation, match="did not find a directory"):
+        check_guardrails(tmp_path, [require_dir("raw/missing")], "pre")
+    with pytest.raises(GuardrailViolation, match="matched 1 files"):
+        check_guardrails(tmp_path, [forbid_glob("raw/*.parquet")], "post")
+    with pytest.raises(GuardrailViolation, match="max_count=0"):
+        check_guardrails(tmp_path, [require_glob("raw/*.parquet", min_count=0, max_count=0)], "post")
