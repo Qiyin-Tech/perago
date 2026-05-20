@@ -2,7 +2,7 @@
 
 ## Publish fence commit-range classification
 
-- [ ] Implement the intended publish-fence commit range check, or deliberately narrow the implementation contract.
+- [x] Implement the intended publish-fence commit range check, or deliberately narrow the implementation contract.
 
 Current state: `LakeFSWorkspaceRuntime.publish_workspace()` passes only the target branch head commit into `build_workspace_publication_plan()`. The intended project behavior is to classify target-branch advancement by checking the commit range from the input workspace ref to the current head, and accepting only commits attributable to the same `perago.logical_task_key`.
 
@@ -125,6 +125,17 @@ Acceptance criteria:
   - 文档：
     - 更新 `docs/runtime/worker-processes.md`、`docs/runtime/conductor.md`、`docs/reference/environment-variables.md`。
     - 明确 `process` 默认、`thread` 显式选择、CLI 参数优先于环境变量。
+
+  ## Progress
+
+  - [x] Public interface parsing: `PERAGO_EXECUTION_MODE` is loaded into `RuntimeConfig.execution_mode`, `perago start --execution-mode` overrides it, and `process` remains the default.
+  - [x] Attempt snapshot carries SDK `response_timeout_seconds`, so the later broker/runner adapters can hand lease timeout data to SDK lease tracking and logs.
+  - [x] Thread runner foundation: `PeragoThreadWorker` adapts Perago task execution to SDK `WorkerInterface`, configures `TaskRunner(thread_count=N, lease_extend_enabled=True)`, and maps `RuntimeTaskResult` back to SDK `TaskResult`.
+  - [x] Process dispatch worker foundation: `PeragoProcessDispatchWorker` adapts SDK `Task` polling to broker assignment/completion queues, preserves SDK worker flags, and maps executor `RuntimeTaskResult` completions back to SDK `TaskResult`.
+  - [x] Process executor loop foundation: `run_process_executor_loop()` consumes broker assignments, executes Perago task runtime locally, and returns `ProcessTaskCompletion` without polling or updating Conductor from the executor.
+  - [x] Process broker runner adapter: `run_conductor_process_broker()` wraps `PeragoProcessDispatchWorker` in SDK `TaskRunner(thread_count=N, lease_extend_enabled=True)` and preserves SDK-managed polling, lease extension, and result update.
+  - [x] Process supervisor process tree and IPC queues: `run_worker_supervisor(..., execution_mode="process")` launches 1 broker + N executor processes, shares assignment/completion queues, and stops the runtime set when the broker exits.
+  - [x] Process attempt-fence RPC: workspace attempt-fence reloads now go through executor-to-broker IPC; the broker owns Conductor `get_task`, and executors no longer create a Conductor polling/update/heartbeat client.
 
   ## Assumptions
 

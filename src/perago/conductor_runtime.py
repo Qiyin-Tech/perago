@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import signal
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from queue import Empty
+from types import FrameType
 from typing import Any, Protocol
 
+from conductor.client.automator.task_runner import TaskRunner
 from conductor.client.configuration.configuration import Configuration
+from conductor.client.http.models.task import Task
 from conductor.client.http.models.task_result import TaskResult
 from conductor.client.http.models.task_result_status import TaskResultStatus
 from conductor.client.orkes.orkes_metadata_client import OrkesMetadataClient
 from conductor.client.orkes.orkes_task_client import OrkesTaskClient
+from conductor.client.worker.worker_interface import WorkerInterface
 from loguru import logger
 
 from perago.config import ConductorConfig
@@ -22,12 +28,8 @@ from perago.execution import (
     run_workspace_free_task_attempt,
     run_workspace_task_attempt,
 )
-from perago.result import RuntimeTaskResult
+from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
-
-
-POLL_EMPTY_SLEEP_SECONDS = 1.0
-POLL_ERROR_BACKOFF_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
@@ -42,16 +44,42 @@ class ConductorTaskAttempt:
     status: str
     input_data: Mapping[str, Any]
     retried_task_id: str | None = None
+    response_timeout_seconds: int | None = None
+
+
+@dataclass(frozen=True)
+class ProcessTaskAssignment:
+    attempt: ConductorTaskAttempt
+
+
+@dataclass(frozen=True)
+class ProcessTaskCompletion:
+    task_id: str
+    result: RuntimeTaskResult
+
+
+@dataclass(frozen=True)
+class ProcessAttemptFenceRequest:
+    worker_id: str
+    task_id: str
+
+
+@dataclass(frozen=True)
+class ProcessAttemptFenceResponse:
+    task_id: str
+    attempt: ConductorTaskAttempt | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class StopProcessExecutor:
+    pass
 
 
 class ConductorRuntimeClient(Protocol):
     def taskdef_exists(self, task_name: str) -> bool: ...
 
-    def poll_task(self, task_name: str, *, worker_id: str) -> ConductorTaskAttempt | None: ...
-
     def get_task(self, task_id: str) -> ConductorTaskAttempt: ...
-
-    def update_task(self, attempt: ConductorTaskAttempt, result: RuntimeTaskResult, *, worker_id: str) -> None: ...
 
 
 class OrkesConductorRuntimeClient:
@@ -60,25 +88,17 @@ class OrkesConductorRuntimeClient:
         *,
         task_client: OrkesTaskClient,
         metadata_client: OrkesMetadataClient,
-        task_update_timeout_seconds: int | None = None,
     ) -> None:
         self._task_client = task_client
         self._metadata_client = metadata_client
-        self._task_update_timeout_seconds = task_update_timeout_seconds
 
     @classmethod
     def from_config(
         cls,
         config: ConductorConfig,
-        *,
-        task_update_timeout_seconds: int | None = None,
     ) -> OrkesConductorRuntimeClient:
         sdk_config = Configuration(server_api_url=config.server_url)
-        return cls(
-            task_client=OrkesTaskClient(sdk_config),
-            metadata_client=OrkesMetadataClient(sdk_config),
-            task_update_timeout_seconds=task_update_timeout_seconds,
-        )
+        return cls(task_client=OrkesTaskClient(sdk_config), metadata_client=OrkesMetadataClient(sdk_config))
 
     def taskdef_exists(self, task_name: str) -> bool:
         try:
@@ -89,24 +109,301 @@ class OrkesConductorRuntimeClient:
             raise
         return True
 
-    def poll_task(self, task_name: str, *, worker_id: str) -> ConductorTaskAttempt | None:
-        task = self._task_client.poll_task(task_name, worker_id=worker_id)
-        if task is None or getattr(task, "task_id", None) in {None, ""}:
-            return None
-        return conductor_task_to_attempt(task)
-
     def get_task(self, task_id: str) -> ConductorTaskAttempt:
         return conductor_task_to_attempt(self._task_client.get_task(task_id))
 
-    def update_task(self, attempt: ConductorTaskAttempt, result: RuntimeTaskResult, *, worker_id: str) -> None:
-        task_result = runtime_result_to_sdk_task_result(attempt, result, worker_id=worker_id)
-        if self._task_update_timeout_seconds is None:
-            self._task_client.update_task(task_result)
-            return
-        self._task_client.taskResourceApi.update_task(
-            task_result,
-            _request_timeout=self._task_update_timeout_seconds,
+
+class PeragoThreadWorker(WorkerInterface):
+    def __init__(
+        self,
+        *,
+        task: TaskDefinition,
+        worker_id: str,
+        thread_count: int,
+        client: ConductorRuntimeClient,
+        workspace_root: Any,
+        download_workspace: DownloadWorkspace,
+        stage_workspace: StageWorkspace,
+        publish_workspace: PublishWorkspace,
+        cleanup_staging: CleanupStaging,
+    ) -> None:
+        super().__init__(task.name)
+        self.task = task
+        self.worker_id = worker_id
+        self.thread_count = thread_count
+        self.register_task_def = False
+        self.register_schema = False
+        self.lease_extend_enabled = True
+        self._client = client
+        self._workspace_root = workspace_root
+        self._download_workspace = download_workspace
+        self._stage_workspace = stage_workspace
+        self._publish_workspace = publish_workspace
+        self._cleanup_staging = cleanup_staging
+
+    def get_identity(self) -> str:
+        return self.worker_id
+
+    def execute(self, task: Task) -> TaskResult:
+        attempt = conductor_task_to_attempt(task)
+        result = execute_polled_task(
+            task=self.task,
+            attempt=attempt,
+            workspace_root=self._workspace_root,
+            download_workspace=self._download_workspace,
+            load_current_attempt=lambda current_attempt: self._client.get_task(current_attempt.task_id),
+            stage_workspace=self._stage_workspace,
+            publish_workspace=self._publish_workspace,
+            cleanup_staging=self._cleanup_staging,
         )
+        return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
+
+
+class PeragoProcessDispatchWorker(WorkerInterface):
+    def __init__(
+        self,
+        *,
+        task: TaskDefinition,
+        worker_id: str,
+        thread_count: int,
+        assignment_queue: Any,
+        completion_queue: Any,
+        attempt_fence_request_queue: Any | None = None,
+        attempt_fence_response_queues: Mapping[str, Any] | None = None,
+        client: ConductorRuntimeClient | None = None,
+        completion_timeout_seconds: float | None = None,
+    ) -> None:
+        super().__init__(task.name)
+        self.task = task
+        self.worker_id = worker_id
+        self.thread_count = thread_count
+        self.register_task_def = False
+        self.register_schema = False
+        self.lease_extend_enabled = True
+        self._assignment_queue = assignment_queue
+        self._completion_queue = completion_queue
+        self._attempt_fence_request_queue = attempt_fence_request_queue
+        self._attempt_fence_response_queues = attempt_fence_response_queues or {}
+        self._client = client
+        self._completion_timeout_seconds = completion_timeout_seconds
+
+    def get_identity(self) -> str:
+        return self.worker_id
+
+    def execute(self, task: Task) -> TaskResult:
+        attempt = conductor_task_to_attempt(task)
+        self._assignment_queue.put(ProcessTaskAssignment(attempt=attempt))
+        result = self._wait_for_completion(attempt)
+        return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
+
+    def _wait_for_completion(self, attempt: ConductorTaskAttempt) -> RuntimeTaskResult:
+        deadline = (
+            None
+            if self._completion_timeout_seconds is None
+            else time.monotonic() + self._completion_timeout_seconds
+        )
+        while True:
+            self._drain_attempt_fence_requests()
+            try:
+                if deadline is None:
+                    completion = self._completion_queue.get(timeout=0.1)
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        return failed_result(f"executor did not return result for task {attempt.task_id}")
+                    completion = self._completion_queue.get(timeout=min(0.1, remaining))
+            except Empty:
+                continue
+            break
+
+        if not isinstance(completion, ProcessTaskCompletion):
+            return failed_result(f"executor returned invalid completion for task {attempt.task_id}")
+        if completion.task_id != attempt.task_id:
+            return failed_result(
+                f"executor returned completion for task {completion.task_id}; expected {attempt.task_id}"
+            )
+        return completion.result
+
+    def _drain_attempt_fence_requests(self) -> None:
+        if self._attempt_fence_request_queue is None:
+            return
+        while True:
+            try:
+                request = self._attempt_fence_request_queue.get_nowait()
+            except Empty:
+                return
+            self._handle_attempt_fence_request(request)
+
+    def _handle_attempt_fence_request(self, request: object) -> None:
+        if not isinstance(request, ProcessAttemptFenceRequest):
+            logger.bind(request_type=type(request).__name__).error("broker received invalid attempt-fence request")
+            return
+        response_queue = self._attempt_fence_response_queues.get(request.worker_id)
+        if response_queue is None:
+            logger.bind(worker_id=request.worker_id, task_id=request.task_id).error(
+                "broker has no attempt-fence response queue for worker"
+            )
+            return
+        if self._client is None:
+            response_queue.put(
+                ProcessAttemptFenceResponse(task_id=request.task_id, error="broker has no conductor client")
+            )
+            return
+        try:
+            attempt = self._client.get_task(request.task_id)
+        except Exception as exc:  # noqa: BLE001
+            response_queue.put(ProcessAttemptFenceResponse(task_id=request.task_id, error=str(exc)))
+            return
+        response_queue.put(ProcessAttemptFenceResponse(task_id=request.task_id, attempt=attempt))
+
+
+def run_conductor_thread_runner(
+    *,
+    task: TaskDefinition,
+    worker_id: str,
+    thread_count: int,
+    conductor_config: ConductorConfig,
+    client: ConductorRuntimeClient,
+    workspace_root: Any,
+    download_workspace: DownloadWorkspace,
+    stage_workspace: StageWorkspace,
+    publish_workspace: PublishWorkspace,
+    cleanup_staging: CleanupStaging,
+    runner_cls: type[TaskRunner] = TaskRunner,
+) -> None:
+    worker = PeragoThreadWorker(
+        task=task,
+        worker_id=worker_id,
+        thread_count=thread_count,
+        client=client,
+        workspace_root=workspace_root,
+        download_workspace=download_workspace,
+        stage_workspace=stage_workspace,
+        publish_workspace=publish_workspace,
+        cleanup_staging=cleanup_staging,
+    )
+    runner = runner_cls(
+        worker,
+        configuration=Configuration(server_api_url=conductor_config.server_url),
+    )
+
+    def request_stop(signum: int, frame: FrameType | None) -> None:
+        del signum, frame
+        runner.stop()
+
+    previous_int = signal.signal(signal.SIGINT, request_stop)
+    previous_term = signal.signal(signal.SIGTERM, request_stop)
+    try:
+        runner.run()
+    finally:
+        runner.stop()
+        signal.signal(signal.SIGINT, previous_int)
+        signal.signal(signal.SIGTERM, previous_term)
+
+
+def run_conductor_process_broker(
+    *,
+    task: TaskDefinition,
+    worker_id: str,
+    process_count: int,
+    conductor_config: ConductorConfig,
+    assignment_queue: Any,
+    completion_queue: Any,
+    attempt_fence_request_queue: Any | None = None,
+    attempt_fence_response_queues: Mapping[str, Any] | None = None,
+    client: ConductorRuntimeClient | None = None,
+    completion_timeout_seconds: float | None = None,
+    runner_cls: type[TaskRunner] = TaskRunner,
+) -> None:
+    worker = PeragoProcessDispatchWorker(
+        task=task,
+        worker_id=worker_id,
+        thread_count=process_count,
+        assignment_queue=assignment_queue,
+        completion_queue=completion_queue,
+        attempt_fence_request_queue=attempt_fence_request_queue,
+        attempt_fence_response_queues=attempt_fence_response_queues,
+        client=client,
+        completion_timeout_seconds=completion_timeout_seconds,
+    )
+    runner = runner_cls(
+        worker,
+        configuration=Configuration(server_api_url=conductor_config.server_url),
+    )
+
+    def request_stop(signum: int, frame: FrameType | None) -> None:
+        del signum, frame
+        runner.stop()
+
+    previous_int = signal.signal(signal.SIGINT, request_stop)
+    previous_term = signal.signal(signal.SIGTERM, request_stop)
+    try:
+        runner.run()
+    finally:
+        runner.stop()
+        signal.signal(signal.SIGINT, previous_int)
+        signal.signal(signal.SIGTERM, previous_term)
+
+
+def run_process_executor_loop(
+    *,
+    task: TaskDefinition,
+    worker_id: str,
+    workspace_root: Any,
+    assignment_queue: Any,
+    completion_queue: Any,
+    load_current_attempt: LoadCurrentAttempt,
+    download_workspace: DownloadWorkspace,
+    stage_workspace: StageWorkspace,
+    publish_workspace: PublishWorkspace,
+    cleanup_staging: CleanupStaging,
+) -> None:
+    logger.bind(worker_id=worker_id).info("process executor started")
+    while True:
+        assignment = assignment_queue.get()
+        if isinstance(assignment, StopProcessExecutor):
+            logger.bind(worker_id=worker_id).info("process executor stopping")
+            return
+        if not isinstance(assignment, ProcessTaskAssignment):
+            logger.bind(worker_id=worker_id, assignment_type=type(assignment).__name__).error(
+                "process executor received invalid assignment"
+            )
+            continue
+
+        attempt = assignment.attempt
+        result = execute_polled_task(
+            task=task,
+            attempt=attempt,
+            workspace_root=workspace_root,
+            download_workspace=download_workspace,
+            load_current_attempt=load_current_attempt,
+            stage_workspace=stage_workspace,
+            publish_workspace=publish_workspace,
+            cleanup_staging=cleanup_staging,
+        )
+        completion_queue.put(ProcessTaskCompletion(task_id=attempt.task_id, result=result))
+
+
+def load_current_attempt_via_broker(
+    current_attempt: ConductorTaskAttempt,
+    *,
+    worker_id: str,
+    request_queue: Any,
+    response_queue: Any,
+) -> ConductorTaskAttempt:
+    request_queue.put(ProcessAttemptFenceRequest(worker_id=worker_id, task_id=current_attempt.task_id))
+    response = response_queue.get()
+    if not isinstance(response, ProcessAttemptFenceResponse):
+        raise RuntimeError("broker returned invalid attempt-fence response")
+    if response.task_id != current_attempt.task_id:
+        raise RuntimeError(
+            f"broker returned attempt-fence response for {response.task_id}; expected {current_attempt.task_id}"
+        )
+    if response.error is not None:
+        raise RuntimeError(f"broker failed to reload attempt {current_attempt.task_id}: {response.error}")
+    if response.attempt is None:
+        raise RuntimeError(f"broker returned empty attempt-fence response for {current_attempt.task_id}")
+    return response.attempt
 
 
 def conductor_task_to_attempt(task: object) -> ConductorTaskAttempt:
@@ -121,6 +418,7 @@ def conductor_task_to_attempt(task: object) -> ConductorTaskAttempt:
         status=str(_required_task_attr(task, "status")),
         input_data=_mapping_attr(task, "input_data"),
         retried_task_id=_optional_str(_task_attr(task, "retried_task_id", None)),
+        response_timeout_seconds=_optional_int(_task_attr(task, "response_timeout_seconds", None)),
     )
 
 
@@ -141,51 +439,6 @@ def runtime_result_to_sdk_task_result(
     else:
         task_result.reason_for_incompletion = result.reason_for_incompletion
     return task_result
-
-
-def run_worker_poll_loop(
-    *,
-    task: TaskDefinition,
-    client: ConductorRuntimeClient,
-    worker_id: str,
-    workspace_root: Any,
-    should_stop: Any,
-    download_workspace: DownloadWorkspace,
-    stage_workspace: StageWorkspace,
-    publish_workspace: PublishWorkspace,
-    cleanup_staging: CleanupStaging,
-    poll_empty_sleep_seconds: float = POLL_EMPTY_SLEEP_SECONDS,
-    poll_error_backoff_seconds: float = POLL_ERROR_BACKOFF_SECONDS,
-) -> None:
-    while not should_stop():
-        try:
-            attempt = client.poll_task(task.name, worker_id=worker_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).error("failed to poll Conductor task")
-            _sleep_until_stop(poll_error_backoff_seconds, should_stop)
-            continue
-
-        if attempt is None:
-            _sleep_until_stop(poll_empty_sleep_seconds, should_stop)
-            continue
-
-        result = execute_polled_task(
-            task=task,
-            attempt=attempt,
-            workspace_root=workspace_root,
-            download_workspace=download_workspace,
-            load_current_attempt=lambda current_attempt: client.get_task(current_attempt.task_id),
-            stage_workspace=stage_workspace,
-            publish_workspace=publish_workspace,
-            cleanup_staging=cleanup_staging,
-        )
-        try:
-            client.update_task(attempt, result, worker_id=worker_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.bind(task_id=attempt.task_id, workflow_instance_id=attempt.workflow_instance_id).opt(
-                exception=exc
-            ).error("failed to update Conductor task result")
-            _sleep_until_stop(poll_error_backoff_seconds, should_stop)
 
 
 def execute_polled_task(
@@ -214,12 +467,6 @@ def execute_polled_task(
     return run_workspace_free_task_attempt(task, attempt.input_data)
 
 
-def _sleep_until_stop(seconds: float, should_stop: Any) -> None:
-    deadline = time.monotonic() + seconds
-    while not should_stop() and time.monotonic() < deadline:
-        time.sleep(min(0.1, deadline - time.monotonic()))
-
-
 def _required_task_attr(task: object, name: str) -> Any:
     value = _task_attr(task, name, None)
     if value is None:
@@ -244,6 +491,12 @@ def _optional_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _looks_like_not_found(exc: Exception) -> bool:

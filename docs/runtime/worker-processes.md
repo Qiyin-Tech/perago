@@ -1,26 +1,42 @@
 # Worker Processes
 
-Perago 的 `perago start` 是前台 supervisor 进程。supervisor 不直接执行 task body；它先为单个 task module 生成一组 child process spec，再启动一个或多个 worker child process。每个 child process 拥有稳定的 slot、独立的 `PERAGO_WORKER_ID` 和独立的日志文件。
+Perago 的 `perago start` 是前台 supervisor 进程。supervisor 不直接执行 task body；默认 `process` 模式会为单个 task module 启动一个 Conductor broker process 和 N 个 executor process。每个 executor process 拥有稳定的 slot、独立的 `PERAGO_WORKER_ID` 和独立的日志文件。
 
 这个页面说明本机进程模型。Conductor poll、LakeFS workspace 下载与发布的详细生命周期在后续 runtime 页面展开。
 
 ## 进程模型
 
-`perago start app.workers.features_build -j 2` 会形成以下结构：
+`perago start app.workers.features_build -j 2 --execution-mode process` 会形成以下结构：
 
 ```text
 supervisor process
-├── perago-worker-appworkersfeaturesbuild0001
-└── perago-worker-appworkersfeaturesbuild0002
+├── perago-conductor-broker
+├── perago-executor-0001
+└── perago-executor-0002
 ```
 
-`-j` 是 worker process count，默认 `1`，最小值为 `1`。非法值会在 CLI 参数层或 `worker_child_specs()` 中被拒绝：
+`-j` 在默认 `process` execution mode 下是 executor process count，默认 `1`，最小值为 `1`。非法值会在 CLI 参数层或 `worker_child_specs()` 中被拒绝：
 
 ```text
 worker process count must be at least 1
 ```
 
-Perago 目前的并发单位是独立进程，不是同一进程内的线程池或 asyncio worker pool。每个 child process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor。
+Perago 当前已支持解析 execution mode 公共接口：`perago start --execution-mode ...` 优先于 `PERAGO_EXECUTION_MODE`，再退回默认 `process`。`process` 模式是默认重负载模型；`thread` 模式是显式轻量路径，使用 SDK `TaskRunner(thread_count=N)` 在同一进程内执行 task body。
+
+默认 process 模式的 task body 并发单位仍是独立 executor process，不是同一进程内的线程池或 asyncio worker pool。broker process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor；executor process 只消费 broker 派发的 assignment。
+
+process broker 的 adapter、SDK runner 启动函数和 supervisor 进程树已经落地。`run_conductor_process_broker(...)` 会把 `PeragoProcessDispatchWorker` 包进 SDK `TaskRunner(thread_count=N)`，让 broker 负责 poll、续租和 update result，同时把 task body 执行派发到 executor assignment queue。executor completion 必须带回同一个 `task_id` 的 `RuntimeTaskResult`；broker adapter 会 fail closed 处理无法匹配的 completion。
+
+executor 侧的本地执行循环是 `run_process_executor_loop(...)`。它只消费 broker 派发的 `ProcessTaskAssignment`，执行 Perago task runtime，然后把 `ProcessTaskCompletion` 写回 broker completion queue；它不直接 poll Conductor，也不直接 update result。workspace attempt fence reload 会通过 `ProcessAttemptFenceRequest` 发给 broker，broker 调 Conductor `get_task` 并把 `ProcessAttemptFenceResponse` 返回到该 executor 的 response queue。
+
+显式 `thread` 模式不会创建 executor child process：
+
+```text
+supervisor process
+└── perago runner threads
+```
+
+这个模式使用 `PERAGO_WORKER_ID_PREFIX + "Broker"` 作为 Conductor 可见 worker id。它已经接入 SDK poll、LeaseManager 和 result update；默认 `process` 模式也使用 broker identity 作为 Conductor 可见 worker id。
 
 ## Worker id
 
@@ -38,7 +54,7 @@ PERAGO_WORKER_ID=prodAFeaturesBuild0002
 app.workers.features_build -> appworkersfeaturesbuild
 ```
 
-supervisor 会把每个 child 的 `PERAGO_WORKER_ID` 写入 child environment。child process 启动后，`prepare_worker_runtime()` 会通过 `resolve_worker_id()` 读取这个值，并把它用于 Conductor poll/update、日志路径和运行时日志字段。
+supervisor 会把每个 executor 的 `PERAGO_WORKER_ID` 写入 child environment。executor process 启动后，`prepare_worker_runtime()` 会通过 `resolve_worker_id()` 读取这个值，并把它用于本地日志路径和运行时日志字段。broker process 使用 `PERAGO_WORKER_ID_PREFIX + "Broker"` 作为 Conductor poll/update identity。
 
 不要在常规部署中手动设置 `PERAGO_WORKER_ID`。它是 supervisor 生成的进程身份，不是 task attempt id、workflow id、logical task key 或 LakeFS branch 名。
 
@@ -49,9 +65,9 @@ supervisor 会把每个 child 的 `PERAGO_WORKER_ID` 写入 child environment。
 1. 把 child environment 合并到 `os.environ`。
 2. 导入 single-task module，并解析唯一的 `@task(...)` 定义。
 3. 准备 worker runtime。
-4. 检查 Conductor 和 LakeFS runtime config 已存在。
-5. 绑定 Conductor client 和 LakeFS workspace runtime。
-6. 进入 Conductor poll loop。
+4. 检查 runtime config 已存在。
+5. broker 绑定 Conductor SDK runner 并进入 poll/update loop。
+6. executor 绑定 LakeFS workspace runtime，并进入 assignment queue loop。
 
 准备 worker runtime 会做两件本机工作：
 
@@ -60,7 +76,7 @@ supervisor 会把每个 child 的 `PERAGO_WORKER_ID` 写入 child environment。
 | 清理遗留 attempt workspace | 删除带 Perago attempt marker 的本机 workspace 目录，避免上一次异常退出留下的临时目录污染新 attempt。 |
 | 配置 worker 日志 | 在 `PERAGO_LOG_ROOT/<module_target>/worker_id=<id>/` 下创建 JSONL 日志文件，并应用 size rotation 和 retention 设置。 |
 
-这些动作发生在 child process 内。supervisor 本身只负责派生、监控、重启和停止 child process。
+这些动作发生在 broker 或 executor child process 内。supervisor 本身只负责派生、监控、重启和停止 child process。
 
 ## 外部服务前置条件
 
@@ -73,11 +89,11 @@ supervisor 会把每个 child 的 `PERAGO_WORKER_ID` 写入 child environment。
 | task module 可导入并能生成 TaskDef | 失败时按 task definition 或 schema 错误退出。 |
 | Conductor 已注册同名 TaskDef | 缺失时报 `Conductor TaskDef '<name>' is not registered; run perago extract and register it before start`。 |
 
-child process 内也会再次检查 Conductor 和 LakeFS config。这个重复检查是进程边界内的防护，不能替代启动前的发布流程。
+broker child process 内也会再次检查 Conductor config；executor child process 只检查 LakeFS config，因为默认 process 模式下只有 broker 持有 Conductor client。这个重复检查是进程边界内的防护，不能替代启动前的发布流程。
 
 ## 重启和停止
 
-supervisor 会持续监控每个 child process。如果某个 child 退出且 supervisor 尚未收到停止信号，它会按递增 backoff 重启同一 slot：
+supervisor 会持续监控 broker 和每个 executor process。如果 broker 退出，supervisor 会停止当前 process runtime set；如果某个 executor 退出且 supervisor 尚未收到停止信号，它会按递增 backoff 重启同一 slot：
 
 ```text
 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
@@ -85,7 +101,7 @@ supervisor 会持续监控每个 child process。如果某个 child 退出且 su
 
 重启后，该 slot 的 worker id 不变。例如 slot `2` 退出后，替换进程仍使用 `prodAFeaturesBuild0002`。这让日志目录和 Conductor worker id 按 slot 保持稳定。
 
-收到 `SIGINT` 或 `SIGTERM` 时，supervisor 会设置 stop event，让 poll loop 有机会自然退出。随后停止流程按固定顺序执行：
+收到 `SIGINT` 或 `SIGTERM` 时，supervisor 会向 assignment queue 写入 executor stop sentinel，并停止 broker/executor 进程。随后停止流程按固定顺序执行：
 
 1. 等待 child 自然退出，最多 `10` 秒。
 2. 对仍存活的 child 调用 `terminate()`。
@@ -99,4 +115,4 @@ supervisor 会持续监控每个 child process。如果某个 child 退出且 su
 
 worker process 只对一个 task module 负责。Perago 不支持在同一文件中定义多个 task，再通过命令行参数选择其中一个运行；也不支持 app registry 形状的多 task worker。
 
-worker process count 只增加同一个 task name 的并行 poll 能力。它不会改变 TaskDef、workspace prefix、Pydantic contract 或 publish budget。要运行另一个 task，需要启动另一个 `perago start <module_target>` supervisor。
+process count 只增加同一个 task name 的 executor 并发能力；Conductor poll/update 仍集中在 broker。它不会改变 TaskDef、workspace prefix、Pydantic contract 或 publish budget。要运行另一个 task，需要启动另一个 `perago start <module_target>` supervisor。

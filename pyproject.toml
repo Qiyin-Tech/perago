@@ -13,6 +13,7 @@ dependencies = [
     "loguru>=0.7.3",
     "pydantic>=2.13.4",
     "pytest>=9.0.3",
+    "pytest-cov>=7.0.0",
     "typer>=0.25.1",
 ]
 

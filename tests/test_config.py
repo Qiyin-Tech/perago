@@ -11,6 +11,7 @@ from perago.config import (
     load_runtime_config,
     load_runtime_env,
     parse_conductor_config,
+    parse_execution_mode,
     parse_lakefs_config,
     parse_log_file_max_size,
     parse_log_retention,
@@ -56,6 +57,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "PERAGO_LOG_FILE_MAX_SIZE=1.5MB",
                 "PERAGO_LOG_RETENTION=7d",
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
+                "PERAGO_EXECUTION_MODE=thread",
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
                 "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
@@ -77,6 +79,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.log_file_max_size == 1_572_864
     assert config.log_retention == timedelta(days=7)
     assert config.worker_id_prefix == "dotenvPrefix"
+    assert config.execution_mode == "thread"
     assert config.conductor == ConductorConfig(
         server_url="http://conductor.local/api",
     )
@@ -144,6 +147,16 @@ def test_parse_log_retention() -> None:
 
     with pytest.raises(RuntimeConfigError, match="PERAGO_LOG_RETENTION"):
         parse_log_retention("0d")
+
+
+def test_parse_execution_mode_defaults_and_normalizes() -> None:
+    assert parse_execution_mode(None) == "process"
+    assert parse_execution_mode("") == "process"
+    assert parse_execution_mode(" thread ") == "thread"
+    assert parse_execution_mode("PROCESS") == "process"
+
+    with pytest.raises(RuntimeConfigError, match="PERAGO_EXECUTION_MODE"):
+        parse_execution_mode("fork")
 
 
 def test_parse_connection_configs_are_optional() -> None:

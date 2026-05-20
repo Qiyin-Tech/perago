@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 
 import lakefs_sdk
@@ -107,12 +108,13 @@ class LakeFSWorkspaceRuntime:
         target_branch = repo.branch(workspace_input.branch)
         head_commit = target_branch.get_commit()
         current_head = head_commit.id
+        commits = self._target_commit_range(target_branch, workspace_input, current_head)
         plan = build_workspace_publication_plan(
             task=attempt,
             workspace=workspace_input,
             workspace_spec=workspace_spec,
             current_head=current_head,
-            commits=[head_commit],
+            commits=commits,
             staging_commit=staged.commit,
         )
         if self._publish_budget is None:
@@ -135,6 +137,18 @@ class LakeFSWorkspaceRuntime:
     def cleanup_staging(self, staged: StagedWorkspace) -> None:
         # Repository is intentionally not encoded in StagedWorkspace; the callback is bound per attempt below.
         raise NotImplementedError("cleanup_staging must be bound with workspace input")
+
+    def _target_commit_range(
+        self,
+        target_branch: object,
+        workspace_input: WorkspaceInput,
+        current_head: str,
+    ) -> Sequence[object]:
+        if current_head == workspace_input.ref:
+            return []
+        commits = list(target_branch.log(stop_at=workspace_input.ref, first_parent=True))
+        commits = [commit for commit in commits if getattr(commit, "id", None) != workspace_input.ref]
+        return list(reversed(commits))
 
     def _repo(self, repository: str) -> Repository:
         return Repository(repository, client=self._client)
