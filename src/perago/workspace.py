@@ -10,7 +10,7 @@ from typing import Any
 from loguru import logger
 
 from perago._segments import safe_segment
-from perago.errors import PublishBudgetError
+from perago.errors import PublishBudgetError, TaskInputError
 from perago.guards import _canonical_workspace_path
 from perago.models import PublishBudget, WorkspaceSpec
 
@@ -101,9 +101,13 @@ def prepare_attempt_workspace(workspace_root: Path, task: object) -> Path:
 
 def workspace_upload_files(workspace_dir: Path, workspace_spec: WorkspaceSpec) -> list[WorkspaceUploadFile]:
     files: list[WorkspaceUploadFile] = []
-    for local_path in sorted(path for path in workspace_dir.rglob("*") if path.is_file()):
+    for local_path in sorted(workspace_dir.rglob("*")):
         relative_path = local_path.relative_to(workspace_dir)
         if relative_path.name == ATTEMPT_WORKSPACE_MARKER:
+            continue
+        if local_path.is_symlink():
+            raise TaskInputError(f"workspace publication does not support symlinks: {relative_path.as_posix()}")
+        if not local_path.is_file():
             continue
         files.append(
             WorkspaceUploadFile(

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from perago import PublishBudget, PublishBudgetError, TaskDefinitionError, WorkspaceSpec
+from perago import PublishBudget, PublishBudgetError, TaskDefinitionError, TaskInputError, WorkspaceSpec
 from perago.workspace import (
     ATTEMPT_WORKSPACE_MARKER,
     assert_workspace_sync_plan_within_budget,
@@ -110,6 +110,17 @@ def test_workspace_upload_files_map_local_files_under_prefix_and_skip_marker(tmp
         "audio/render/features/out.parquet",
         "audio/render/raw/input.wav",
     ]
+
+
+def test_workspace_upload_files_reject_symlinks(tmp_path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    (workspace_dir / "escape.txt").symlink_to(outside)
+
+    with pytest.raises(TaskInputError, match="does not support symlinks"):
+        workspace_upload_files(workspace_dir, WorkspaceSpec(prefix="/audio/render"))
 
 
 def test_workspace_download_files_filter_to_prefix_and_skip_marker(tmp_path) -> None:
