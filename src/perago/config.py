@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import re
 import tempfile
-from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from perago.errors import RuntimeConfigError
 
@@ -18,8 +19,9 @@ LOG_SIZE_UNITS = {
 }
 
 
-@dataclass(frozen=True)
-class RuntimeConfig:
+class RuntimeConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     workspace_root: Path
     log_root: Path
     log_file_max_size: int

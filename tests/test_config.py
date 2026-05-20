@@ -1,8 +1,10 @@
 from datetime import timedelta
 
 import pytest
+from pydantic import BaseModel, ValidationError
 
 from perago.config import (
+    RuntimeConfig,
     child_environment,
     load_runtime_config,
     load_runtime_env,
@@ -65,6 +67,20 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.log_file_max_size == 1_572_864
     assert config.log_retention == timedelta(days=7)
     assert config.worker_id_prefix == "dotenvPrefix"
+
+
+def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+    )
+
+    assert isinstance(config, BaseModel)
+    with pytest.raises(ValidationError):
+        config.worker_id_prefix = "other"
 
 
 def test_parse_log_file_max_size() -> None:
