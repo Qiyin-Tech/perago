@@ -79,7 +79,7 @@ def write_taskdef(task: TaskDefinition, out: Path) -> Path:
 def schema_for_model(model: type[BaseModel]) -> dict[str, Any]:
     schema = model.model_json_schema()
     inlined = _inline_refs(schema)
-    inlined.pop("title", None)
+    _strip_titles(inlined)
     _close_object_schemas(inlined)
     return inlined
 
@@ -134,3 +134,13 @@ def _close_object_schemas(schema: Any) -> None:
     elif isinstance(schema, list):
         for value in schema:
             _close_object_schemas(value)
+
+
+def _strip_titles(schema: Any) -> None:
+    if isinstance(schema, dict):
+        schema.pop("title", None)
+        for value in schema.values():
+            _strip_titles(value)
+    elif isinstance(schema, list):
+        for value in schema:
+            _strip_titles(value)

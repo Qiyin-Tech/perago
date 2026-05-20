@@ -133,5 +133,6 @@ def test_schema_for_model_inlines_refs_and_closes_nested_objects() -> None:
 
     assert "$defs" not in schema
     assert "$ref" not in json.dumps(schema)
+    assert "title" not in json.dumps(schema)
     assert schema["additionalProperties"] is False
     assert schema["properties"]["settings"]["additionalProperties"] is False
