@@ -1345,6 +1345,8 @@ The publish budget must be derived from real limits and measurements:
 - observed lakeFS merge latency under expected repository size and object count, using a high percentile plus safety margin;
 - operational limits for worker shutdown grace period and heartbeat interval.
 
+Before staging a workspace publication, Perago checks the local sync plan against `PublishBudget.max_changed_objects` and `PublishBudget.max_changed_bytes`. Object count includes uploads and deletes; byte count covers local upload bytes known before LakeFS staging.
+
 There is no absolute "worst LakeFS publish time" unless Perago imposes these bounds. For the MVP, the project accepts an operational maximum LakeFS merge time as part of the publish budget. That budget is an assumption used to size `responseTimeoutSeconds`, request timeouts, and shutdown grace periods; it is not a distributed-systems proof. A worker process can be paused, killed, or partitioned for an unbounded amount of time, so lease margin is a mitigation, not a proof.
 
 This makes retries idempotent at the workflow level: the latest successful retry produces the Workspace Output, and the target branch remains linear. It does not promise exactly one LakeFS commit per logical task.
