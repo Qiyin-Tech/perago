@@ -6,4 +6,5 @@ Architecture 文档记录 Perago runtime 选择当前事务、fence 和故障恢
 :maxdepth: 1
 
 transaction-model
+publish-fences
 ```
