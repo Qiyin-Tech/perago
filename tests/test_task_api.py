@@ -1,7 +1,7 @@
 from pathlib import Path, PureWindowsPath
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 import perago
 from perago import (
@@ -12,7 +12,16 @@ from perago import (
     load_module_task,
     require_file,
     require_glob,
+    task,
 )
+
+
+class Params(BaseModel):
+    value: int
+
+
+class Output(BaseModel):
+    value: int
 
 
 def test_loads_workspace_task_definition() -> None:
@@ -45,6 +54,20 @@ def test_rejects_bad_signature() -> None:
 def test_rejects_multi_task_module() -> None:
     with pytest.raises(TaskDefinitionError, match="more than one"):
         load_module_task("app.workers.multi_task")
+
+
+def test_rejects_missing_required_task_metadata() -> None:
+    with pytest.raises(TaskDefinitionError, match="task name is required"):
+
+        @task(name=" ", owner_email="data@example.com")
+        def missing_name(params: Params) -> Output:
+            return Output(value=params.value)
+
+    with pytest.raises(TaskDefinitionError, match="owner_email is required"):
+
+        @task(name="metadata.validate", owner_email="")
+        def missing_owner(params: Params) -> Output:
+            return Output(value=params.value)
 
 
 def test_guardrail_path_canonicalization() -> None:

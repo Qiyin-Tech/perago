@@ -96,6 +96,8 @@ def _build_task_definition(
     workspace: WorkspaceSpec | None,
     controls: TaskControls,
 ) -> TaskDefinition:
+    _validate_required_metadata(name=name, owner_email=owner_email)
+
     signature = inspect.signature(fn)
     parameters = list(signature.parameters.values())
     if any(parameter.kind is not inspect.Parameter.POSITIONAL_OR_KEYWORD for parameter in parameters):
@@ -132,6 +134,13 @@ def _build_task_definition(
         params_model=params_model,
         output_model=output_model,
     )
+
+
+def _validate_required_metadata(*, name: str, owner_email: str) -> None:
+    if not name.strip():
+        raise TaskDefinitionError("task name is required")
+    if not owner_email.strip():
+        raise TaskDefinitionError("owner_email is required")
 
 
 def _validate_workspace_signature(
