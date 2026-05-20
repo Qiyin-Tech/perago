@@ -32,10 +32,6 @@ from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
 
 
-POLL_EMPTY_SLEEP_SECONDS = 1.0
-POLL_ERROR_BACKOFF_SECONDS = 5.0
-
-
 @dataclass(frozen=True)
 class ConductorTaskAttempt:
     workflow_instance_id: str
@@ -83,11 +79,7 @@ class StopProcessExecutor:
 class ConductorRuntimeClient(Protocol):
     def taskdef_exists(self, task_name: str) -> bool: ...
 
-    def poll_task(self, task_name: str, *, worker_id: str) -> ConductorTaskAttempt | None: ...
-
     def get_task(self, task_id: str) -> ConductorTaskAttempt: ...
-
-    def update_task(self, attempt: ConductorTaskAttempt, result: RuntimeTaskResult, *, worker_id: str) -> None: ...
 
 
 class OrkesConductorRuntimeClient:
@@ -96,25 +88,17 @@ class OrkesConductorRuntimeClient:
         *,
         task_client: OrkesTaskClient,
         metadata_client: OrkesMetadataClient,
-        task_update_timeout_seconds: int | None = None,
     ) -> None:
         self._task_client = task_client
         self._metadata_client = metadata_client
-        self._task_update_timeout_seconds = task_update_timeout_seconds
 
     @classmethod
     def from_config(
         cls,
         config: ConductorConfig,
-        *,
-        task_update_timeout_seconds: int | None = None,
     ) -> OrkesConductorRuntimeClient:
         sdk_config = Configuration(server_api_url=config.server_url)
-        return cls(
-            task_client=OrkesTaskClient(sdk_config),
-            metadata_client=OrkesMetadataClient(sdk_config),
-            task_update_timeout_seconds=task_update_timeout_seconds,
-        )
+        return cls(task_client=OrkesTaskClient(sdk_config), metadata_client=OrkesMetadataClient(sdk_config))
 
     def taskdef_exists(self, task_name: str) -> bool:
         try:
@@ -125,24 +109,8 @@ class OrkesConductorRuntimeClient:
             raise
         return True
 
-    def poll_task(self, task_name: str, *, worker_id: str) -> ConductorTaskAttempt | None:
-        task = self._task_client.poll_task(task_name, worker_id=worker_id)
-        if task is None or getattr(task, "task_id", None) in {None, ""}:
-            return None
-        return conductor_task_to_attempt(task)
-
     def get_task(self, task_id: str) -> ConductorTaskAttempt:
         return conductor_task_to_attempt(self._task_client.get_task(task_id))
-
-    def update_task(self, attempt: ConductorTaskAttempt, result: RuntimeTaskResult, *, worker_id: str) -> None:
-        task_result = runtime_result_to_sdk_task_result(attempt, result, worker_id=worker_id)
-        if self._task_update_timeout_seconds is None:
-            self._task_client.update_task(task_result)
-            return
-        self._task_client.taskResourceApi.update_task(
-            task_result,
-            _request_timeout=self._task_update_timeout_seconds,
-        )
 
 
 class PeragoThreadWorker(WorkerInterface):
@@ -473,51 +441,6 @@ def runtime_result_to_sdk_task_result(
     return task_result
 
 
-def run_worker_poll_loop(
-    *,
-    task: TaskDefinition,
-    client: ConductorRuntimeClient,
-    worker_id: str,
-    workspace_root: Any,
-    should_stop: Any,
-    download_workspace: DownloadWorkspace,
-    stage_workspace: StageWorkspace,
-    publish_workspace: PublishWorkspace,
-    cleanup_staging: CleanupStaging,
-    poll_empty_sleep_seconds: float = POLL_EMPTY_SLEEP_SECONDS,
-    poll_error_backoff_seconds: float = POLL_ERROR_BACKOFF_SECONDS,
-) -> None:
-    while not should_stop():
-        try:
-            attempt = client.poll_task(task.name, worker_id=worker_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.opt(exception=exc).error("failed to poll Conductor task")
-            _sleep_until_stop(poll_error_backoff_seconds, should_stop)
-            continue
-
-        if attempt is None:
-            _sleep_until_stop(poll_empty_sleep_seconds, should_stop)
-            continue
-
-        result = execute_polled_task(
-            task=task,
-            attempt=attempt,
-            workspace_root=workspace_root,
-            download_workspace=download_workspace,
-            load_current_attempt=lambda current_attempt: client.get_task(current_attempt.task_id),
-            stage_workspace=stage_workspace,
-            publish_workspace=publish_workspace,
-            cleanup_staging=cleanup_staging,
-        )
-        try:
-            client.update_task(attempt, result, worker_id=worker_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.bind(task_id=attempt.task_id, workflow_instance_id=attempt.workflow_instance_id).opt(
-                exception=exc
-            ).error("failed to update Conductor task result")
-            _sleep_until_stop(poll_error_backoff_seconds, should_stop)
-
-
 def execute_polled_task(
     *,
     task: TaskDefinition,
@@ -542,12 +465,6 @@ def execute_polled_task(
             cleanup_staging=cleanup_staging,
         )
     return run_workspace_free_task_attempt(task, attempt.input_data)
-
-
-def _sleep_until_stop(seconds: float, should_stop: Any) -> None:
-    deadline = time.monotonic() + seconds
-    while not should_stop() and time.monotonic() < deadline:
-        time.sleep(min(0.1, deadline - time.monotonic()))
 
 
 def _required_task_attr(task: object, name: str) -> Any:

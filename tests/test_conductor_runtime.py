@@ -16,7 +16,6 @@ from perago.conductor_runtime import (
     run_process_executor_loop,
     run_conductor_thread_runner,
     runtime_result_to_sdk_task_result,
-    run_worker_poll_loop,
 )
 from perago.config import ConductorConfig
 from perago.result import completed_result, failed_result, terminal_failed_result
@@ -494,80 +493,3 @@ def test_run_conductor_process_broker_builds_sdk_runner() -> None:
     assert created["worker"]._assignment_queue is assignment_queue
     assert created["worker"]._completion_queue is completion_queue
 
-
-def test_orkes_conductor_update_task_uses_configured_request_timeout() -> None:
-    class FakeTaskResourceApi:
-        def __init__(self) -> None:
-            self.calls = []
-
-        def update_task(self, task_result, **kwargs):
-            self.calls.append((task_result, kwargs))
-
-    class FakeTaskClient:
-        def __init__(self) -> None:
-            self.taskResourceApi = FakeTaskResourceApi()
-
-        def update_task(self, task_result):
-            raise AssertionError("expected direct taskResourceApi update when timeout is configured")
-
-    task_client = FakeTaskClient()
-    client = OrkesConductorRuntimeClient(
-        task_client=task_client,
-        metadata_client=object(),
-        task_update_timeout_seconds=15,
-    )
-    attempt = _attempt()
-
-    client.update_task(attempt, completed_result({"result": {"valid": True}}), worker_id="worker-1")
-
-    task_result, kwargs = task_client.taskResourceApi.calls[0]
-    assert task_result.task_id == "task-9b4c"
-    assert kwargs == {"_request_timeout": 15}
-
-
-def test_workspace_free_poll_execute_update_flow() -> None:
-    task = load_module_task("app.workers.metadata_validate")
-    attempt = _attempt()
-
-    class FakeConductor:
-        def __init__(self) -> None:
-            self.updated = None
-
-        def taskdef_exists(self, task_name: str) -> bool:
-            del task_name
-            return True
-
-        def poll_task(self, task_name: str, *, worker_id: str):
-            assert task_name == "metadata.validate"
-            assert worker_id == "worker-1"
-            return attempt if self.updated is None else None
-
-        def get_task(self, task_id: str):
-            assert task_id == "task-9b4c"
-            return attempt
-
-        def update_task(self, attempt_arg, result, *, worker_id: str) -> None:
-            assert attempt_arg == attempt
-            assert worker_id == "worker-1"
-            self.updated = result
-
-    conductor = FakeConductor()
-
-    run_worker_poll_loop(
-        task=task,
-        client=conductor,
-        worker_id="worker-1",
-        workspace_root="unused",
-        should_stop=lambda: conductor.updated is not None,
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
-        poll_empty_sleep_seconds=0,
-        poll_error_backoff_seconds=0,
-    )
-
-    assert conductor.updated.conductor_payload() == {
-        "status": "COMPLETED",
-        "output": {"result": {"valid": True, "reason": None}},
-    }
