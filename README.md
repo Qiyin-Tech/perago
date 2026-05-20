@@ -25,7 +25,7 @@ The current implementation target is documented in:
 
 - [MVP examples](docs/mvp_examples.md)
 - [Context glossary](CONTEXT.md)
-- [Architecture decisions](docs/adr/README.md)
+- [Architecture decisions](docs/architecture/adr/index.md)
 - [Conductor TaskDef notes](docs/conductor/task_def.md)
 
 ## Task shape

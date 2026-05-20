@@ -28,6 +28,7 @@ exclude_patterns = [
     "_build",
     "generated/**",
     "adr/**",
+    "architecture/adr/template.md",
     "conductor/**",
     "documentation_development_plan.md",
     "mvp_examples.md",
