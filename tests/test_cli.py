@@ -291,7 +291,7 @@ def test_start_cli_starts_supervisor_after_taskdef_check(monkeypatch, tmp_path) 
     assert started["execution_mode"] == "process"
 
 
-def test_start_cli_rejects_unimplemented_thread_mode_from_env(monkeypatch, tmp_path) -> None:
+def test_start_cli_accepts_thread_mode_from_env(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
         "\n".join(
@@ -305,12 +305,20 @@ def test_start_cli_rejects_unimplemented_thread_mode_from_env(monkeypatch, tmp_p
         ),
         encoding="utf-8",
     )
+    started: dict[str, object] = {}
+
+    class FakeConductor:
+        def taskdef_exists(self, task_name: str) -> bool:
+            return task_name == "features.build"
+
+    monkeypatch.setattr("perago.cli.OrkesConductorRuntimeClient.from_config", lambda config: FakeConductor())
+    monkeypatch.setattr("perago.cli.run_worker_supervisor", lambda **kwargs: started.update(kwargs))
     runner = CliRunner()
 
     result = runner.invoke(app, ["start", "app.workers.features_build"])
 
-    assert result.exit_code == 1
-    assert "thread execution mode is not implemented yet" in result.output
+    assert result.exit_code == 0
+    assert started["execution_mode"] == "thread"
 
 
 def test_start_cli_option_overrides_execution_mode_env(monkeypatch, tmp_path) -> None:

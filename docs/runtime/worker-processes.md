@@ -20,9 +20,18 @@ supervisor process
 worker process count must be at least 1
 ```
 
-Perago 当前已支持解析 execution mode 公共接口：`perago start --execution-mode ...` 优先于 `PERAGO_EXECUTION_MODE`，再退回默认 `process`。`process` 模式是默认重负载模型；`thread` 模式作为显式轻量路径仍在 Conductor Runtime 重构后续步骤中落地。
+Perago 当前已支持解析 execution mode 公共接口：`perago start --execution-mode ...` 优先于 `PERAGO_EXECUTION_MODE`，再退回默认 `process`。`process` 模式是默认重负载模型；`thread` 模式是显式轻量路径，使用 SDK `TaskRunner(thread_count=N)` 在同一进程内执行 task body。
 
 当前已实现的并发单位仍是独立进程，不是同一进程内的线程池或 asyncio worker pool。每个 child process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor。
+
+显式 `thread` 模式不会创建 executor child process：
+
+```text
+supervisor process
+└── perago runner threads
+```
+
+这个模式使用 `PERAGO_WORKER_ID_PREFIX + "Broker"` 作为 Conductor 可见 worker id。它已经接入 SDK poll、LeaseManager 和 result update；默认 `process` 模式的单 broker + N executor process IPC 重构仍是后续工作。
 
 ## Worker id
 

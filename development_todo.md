@@ -130,6 +130,7 @@ Acceptance criteria:
 
   - [x] Public interface parsing: `PERAGO_EXECUTION_MODE` is loaded into `RuntimeConfig.execution_mode`, `perago start --execution-mode` overrides it, and `process` remains the default.
   - [x] Attempt snapshot carries SDK `response_timeout_seconds`, so the later broker/runner adapters can hand lease timeout data to SDK lease tracking and logs.
+  - [x] Thread runner foundation: `PeragoThreadWorker` adapts Perago task execution to SDK `WorkerInterface`, configures `TaskRunner(thread_count=N, lease_extend_enabled=True)`, and maps `RuntimeTaskResult` back to SDK `TaskResult`.
   - [ ] SDK broker/runner adapters and process/thread execution mode implementations.
 
   ## Assumptions

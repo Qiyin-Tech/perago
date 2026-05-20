@@ -28,7 +28,7 @@ perago start app.workers.features_build -j 2 --execution-mode process
 
 ## Poll loop
 
-当前已实现的 `process` runtime 中，每个 worker child process 只 poll 当前 module 中定义的单个 task name，并用 supervisor 注入的 `PERAGO_WORKER_ID` 作为 Conductor worker id。`perago start --execution-mode ...` 与 `PERAGO_EXECUTION_MODE` 的解析已经可用，优先级是 CLI 参数高于环境变量，默认值为 `process`；真正的单 broker + N executor process 调度模型会在后续重构步骤替换这一段 poll loop。
+当前默认 `process` runtime 中，每个 worker child process 只 poll 当前 module 中定义的单个 task name，并用 supervisor 注入的 `PERAGO_WORKER_ID` 作为 Conductor worker id。`perago start --execution-mode ...` 与 `PERAGO_EXECUTION_MODE` 的解析已经可用，优先级是 CLI 参数高于环境变量，默认值为 `process`；真正的单 broker + N executor process 调度模型会在后续重构步骤替换这一段 poll loop。
 
 一次循环的顺序是：
 
@@ -41,6 +41,8 @@ perago start app.workers.features_build -j 2 --execution-mode process
 7. 如果 update 抛出异常，记录 `failed to update Conductor task result`，等待 5 秒后继续 poll。
 
 poll loop 不在内存里排队任务，也不会在一个 Python module 内路由多个 task。并发来自 `perago start -j N` 启动的多个独立 child process。
+
+显式 `thread` runtime 使用 SDK `TaskRunner` 和 `PeragoThreadWorker`。`-j N` 会传给 SDK worker 的 `thread_count`，`lease_extend_enabled=True`，并且 `register_task_def=False`、`register_schema=False`。在这个模式下，SDK thread pool 负责 poll、LeaseManager 追踪和 result update；Perago adapter 只把 SDK `Task` 转成 `ConductorTaskAttempt`，执行现有 task body/workspace 流程，再把 `RuntimeTaskResult` 转回 SDK `TaskResult`。thread mode 的 Conductor 可见 worker id 当前由 `PERAGO_WORKER_ID_PREFIX + "Broker"` 派生。
 
 ## Attempt snapshot
 
@@ -83,7 +85,7 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 
 workspace task 如果配置了 `PublishBudget`，worker child 会把 `conductor_completion_timeout_seconds` 传给 Conductor update 请求。没有 publish budget 时使用 SDK 默认 update 行为。
 
-`ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。当前 poll-loop 实现只保留该字段；LeaseManager 续租会在后续 SDK broker/runner adapter 中由 SDK `TaskRunner` 负责。
+`ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。默认 process poll-loop 仍只保留该字段；显式 thread runtime 已交给 SDK `TaskRunner` 处理 LeaseManager 续租。后续 process broker 模式也会复用 SDK runner 管理租约。
 
 ## 输入输出边界
 

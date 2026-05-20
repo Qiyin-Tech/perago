@@ -62,8 +62,6 @@ def start(
             raise RuntimeConfigError("LakeFS config is required for perago start")
         task = load_module_task(module_target)
         build_taskdef(task)
-        if resolved_execution_mode == "thread":
-            raise RuntimeConfigError("thread execution mode is not implemented yet")
         conductor = OrkesConductorRuntimeClient.from_config(config.conductor)
         if not conductor.taskdef_exists(task.name):
             raise RuntimeConfigError(

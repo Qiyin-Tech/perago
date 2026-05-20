@@ -3,10 +3,13 @@ from conductor.client.http.models.task import Task
 from perago.conductor_runtime import (
     ConductorTaskAttempt,
     OrkesConductorRuntimeClient,
+    PeragoThreadWorker,
     conductor_task_to_attempt,
+    run_conductor_thread_runner,
     runtime_result_to_sdk_task_result,
     run_worker_poll_loop,
 )
+from perago.config import ConductorConfig
 from perago.result import completed_result, failed_result, terminal_failed_result
 from perago.task import load_module_task
 
@@ -99,6 +102,101 @@ def test_runtime_result_to_sdk_task_result_maps_completed_and_failures() -> None
     assert failed.reason_for_incompletion == "bad input"
     assert terminal.status == "FAILED_WITH_TERMINAL_ERROR"
     assert terminal.reason_for_incompletion == "pre guardrail"
+
+
+def test_thread_worker_configures_sdk_worker_contract() -> None:
+    worker = PeragoThreadWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=4,
+        client=object(),
+        workspace_root="unused",
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+    )
+
+    assert worker.get_identity() == "metadataBroker"
+    assert worker.thread_count == 4
+    assert worker.lease_extend_enabled is True
+    assert worker.register_task_def is False
+    assert worker.register_schema is False
+    assert worker.get_task_definition_name() == "metadata.validate"
+
+
+def test_thread_worker_executes_polled_task_and_maps_result() -> None:
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        iteration=1,
+        status="IN_PROGRESS",
+        input_data={
+            "params": {
+                "song_id": "song-000123",
+                "min_duration_seconds": 30,
+            }
+        },
+        response_timeout_seconds=75,
+    )
+    worker = PeragoThreadWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        client=object(),
+        workspace_root="unused",
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+    )
+
+    result = worker.execute(task)
+
+    assert result.workflow_instance_id == "wf-7f3d"
+    assert result.task_id == "task-9b4c"
+    assert result.worker_id == "metadataBroker"
+    assert result.status == "COMPLETED"
+    assert result.output_data == {"result": {"valid": True, "reason": None}}
+
+
+def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
+    created = {}
+
+    class FakeRunner:
+        def __init__(self, worker, *, configuration) -> None:
+            created["worker"] = worker
+            created["configuration"] = configuration
+
+        def run(self) -> None:
+            created["ran"] = True
+
+        def stop(self) -> None:
+            created["stopped"] = True
+
+    run_conductor_thread_runner(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=3,
+        conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
+        client=object(),
+        workspace_root="unused",
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+        runner_cls=FakeRunner,
+    )
+
+    assert created["ran"] is True
+    assert created["stopped"] is True
+    assert created["worker"].thread_count == 3
+    assert created["worker"].lease_extend_enabled is True
+    assert created["worker"].get_identity() == "metadataBroker"
 
 
 def test_orkes_conductor_update_task_uses_configured_request_timeout() -> None:

@@ -8,7 +8,7 @@ from types import FrameType
 
 from loguru import logger
 
-from perago.conductor_runtime import OrkesConductorRuntimeClient, run_worker_poll_loop
+from perago.conductor_runtime import OrkesConductorRuntimeClient, run_conductor_thread_runner, run_worker_poll_loop
 from perago.config import ExecutionMode, RuntimeConfig, child_environment
 from perago.errors import RuntimeConfigError
 from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
@@ -179,8 +179,13 @@ def run_worker_supervisor(
     process_count: int,
     execution_mode: ExecutionMode = "process",
 ) -> None:
+    if process_count < 1:
+        raise RuntimeConfigError("worker process count must be at least 1")
+    if execution_mode == "thread":
+        _thread_runner_main(config=config, module_target=module_target, thread_count=process_count)
+        return
     if execution_mode != "process":
-        raise RuntimeConfigError("thread execution mode is not implemented yet")
+        raise RuntimeConfigError("execution mode must be either 'process' or 'thread'")
     specs = worker_child_specs(
         base_env={"PERAGO_WORKER_ID_PREFIX": config.worker_id_prefix},
         module_target=module_target,
@@ -302,3 +307,49 @@ def _worker_process_main(
         publish_workspace=lakefs.publish_workspace,
         cleanup_staging=lakefs.cleanup_staging,
     )
+
+
+def _thread_runner_main(
+    *,
+    config: RuntimeConfig,
+    module_target: str,
+    thread_count: int,
+) -> None:
+    os.environ.update(_broker_environment(config.worker_id_prefix))
+    task = load_module_task(module_target)
+    runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
+    conductor_config = config.conductor
+    lakefs_config = config.lakefs
+    if conductor_config is None:
+        raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
+    if lakefs_config is None:
+        raise RuntimeConfigError("LakeFS config is required for perago start")
+
+    publish_budget = task.controls.publish_budget
+    conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    lakefs = BoundLakeFSWorkspaceRuntime(
+        LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
+    )
+
+    logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
+        "thread runner started"
+    )
+    run_conductor_thread_runner(
+        task=task,
+        worker_id=runtime.worker_id,
+        thread_count=thread_count,
+        conductor_config=conductor_config,
+        client=conductor,
+        workspace_root=config.workspace_root,
+        download_workspace=lakefs.download_workspace,
+        stage_workspace=lakefs.stage_workspace,
+        publish_workspace=lakefs.publish_workspace,
+        cleanup_staging=lakefs.cleanup_staging,
+    )
+
+
+def _broker_environment(worker_id_prefix: str) -> dict[str, str]:
+    return {
+        "PERAGO_WORKER_ID_PREFIX": worker_id_prefix,
+        "PERAGO_WORKER_ID": f"{worker_id_prefix}Broker",
+    }

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import signal
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import FrameType
 from typing import Any, Protocol
 
+from conductor.client.automator.task_runner import TaskRunner
 from conductor.client.configuration.configuration import Configuration
+from conductor.client.http.models.task import Task
 from conductor.client.http.models.task_result import TaskResult
 from conductor.client.http.models.task_result_status import TaskResultStatus
 from conductor.client.orkes.orkes_metadata_client import OrkesMetadataClient
 from conductor.client.orkes.orkes_task_client import OrkesTaskClient
+from conductor.client.worker.worker_interface import WorkerInterface
 from loguru import logger
 
 from perago.config import ConductorConfig
@@ -108,6 +113,96 @@ class OrkesConductorRuntimeClient:
             task_result,
             _request_timeout=self._task_update_timeout_seconds,
         )
+
+
+class PeragoThreadWorker(WorkerInterface):
+    def __init__(
+        self,
+        *,
+        task: TaskDefinition,
+        worker_id: str,
+        thread_count: int,
+        client: ConductorRuntimeClient,
+        workspace_root: Any,
+        download_workspace: DownloadWorkspace,
+        stage_workspace: StageWorkspace,
+        publish_workspace: PublishWorkspace,
+        cleanup_staging: CleanupStaging,
+    ) -> None:
+        super().__init__(task.name)
+        self.task = task
+        self.worker_id = worker_id
+        self.thread_count = thread_count
+        self.register_task_def = False
+        self.register_schema = False
+        self.lease_extend_enabled = True
+        self._client = client
+        self._workspace_root = workspace_root
+        self._download_workspace = download_workspace
+        self._stage_workspace = stage_workspace
+        self._publish_workspace = publish_workspace
+        self._cleanup_staging = cleanup_staging
+
+    def get_identity(self) -> str:
+        return self.worker_id
+
+    def execute(self, task: Task) -> TaskResult:
+        attempt = conductor_task_to_attempt(task)
+        result = execute_polled_task(
+            task=self.task,
+            attempt=attempt,
+            workspace_root=self._workspace_root,
+            download_workspace=self._download_workspace,
+            load_current_attempt=lambda current_attempt: self._client.get_task(current_attempt.task_id),
+            stage_workspace=self._stage_workspace,
+            publish_workspace=self._publish_workspace,
+            cleanup_staging=self._cleanup_staging,
+        )
+        return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
+
+
+def run_conductor_thread_runner(
+    *,
+    task: TaskDefinition,
+    worker_id: str,
+    thread_count: int,
+    conductor_config: ConductorConfig,
+    client: ConductorRuntimeClient,
+    workspace_root: Any,
+    download_workspace: DownloadWorkspace,
+    stage_workspace: StageWorkspace,
+    publish_workspace: PublishWorkspace,
+    cleanup_staging: CleanupStaging,
+    runner_cls: type[TaskRunner] = TaskRunner,
+) -> None:
+    worker = PeragoThreadWorker(
+        task=task,
+        worker_id=worker_id,
+        thread_count=thread_count,
+        client=client,
+        workspace_root=workspace_root,
+        download_workspace=download_workspace,
+        stage_workspace=stage_workspace,
+        publish_workspace=publish_workspace,
+        cleanup_staging=cleanup_staging,
+    )
+    runner = runner_cls(
+        worker,
+        configuration=Configuration(server_api_url=conductor_config.server_url),
+    )
+
+    def request_stop(signum: int, frame: FrameType | None) -> None:
+        del signum, frame
+        runner.stop()
+
+    previous_int = signal.signal(signal.SIGINT, request_stop)
+    previous_term = signal.signal(signal.SIGTERM, request_stop)
+    try:
+        runner.run()
+    finally:
+        runner.stop()
+        signal.signal(signal.SIGINT, previous_int)
+        signal.signal(signal.SIGTERM, previous_term)
 
 
 def conductor_task_to_attempt(task: object) -> ConductorTaskAttempt:
