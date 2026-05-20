@@ -20,6 +20,7 @@ autosummary_generate = True
 autodoc_member_order = "bysource"
 autodoc_typehints = "description"
 autodoc_typehints_format = "short"
+templates_path = ["_templates"]
 
 html_theme = "pydata_sphinx_theme"
 html_title = "Perago"
