@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import dataclass
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,12 @@ from perago.models import WorkspaceSpec
 
 
 ATTEMPT_WORKSPACE_MARKER = ".perago-attempt.json"
+
+
+@dataclass(frozen=True)
+class WorkspaceUploadFile:
+    local_path: Path
+    object_path: str
 
 
 def workspace_object_prefix(workspace_spec: WorkspaceSpec) -> str:
@@ -54,6 +61,21 @@ def prepare_attempt_workspace(workspace_root: Path, task: object) -> Path:
         encoding="utf-8",
     )
     return workspace_dir
+
+
+def workspace_upload_files(workspace_dir: Path, workspace_spec: WorkspaceSpec) -> list[WorkspaceUploadFile]:
+    files: list[WorkspaceUploadFile] = []
+    for local_path in sorted(path for path in workspace_dir.rglob("*") if path.is_file()):
+        relative_path = local_path.relative_to(workspace_dir)
+        if relative_path.name == ATTEMPT_WORKSPACE_MARKER:
+            continue
+        files.append(
+            WorkspaceUploadFile(
+                local_path=local_path,
+                object_path=workspace_object_path(workspace_spec, relative_path),
+            )
+        )
+    return files
 
 
 def cleanup_attempt_workspace(workspace_dir: Path) -> None:

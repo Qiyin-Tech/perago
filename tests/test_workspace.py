@@ -13,6 +13,7 @@ from perago.workspace import (
     sweep_abandoned_attempt_workspaces,
     workspace_object_path,
     workspace_object_prefix,
+    workspace_upload_files,
 )
 
 
@@ -67,6 +68,27 @@ def test_prepares_and_cleans_attempt_workspace(tmp_path) -> None:
     cleanup_attempt_workspace(workspace_dir)
 
     assert not workspace_dir.exists()
+
+
+def test_workspace_upload_files_map_local_files_under_prefix_and_skip_marker(tmp_path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    (workspace_dir / ATTEMPT_WORKSPACE_MARKER).write_text("{}", encoding="utf-8")
+    (workspace_dir / "raw").mkdir()
+    (workspace_dir / "raw" / "input.wav").write_text("ok", encoding="utf-8")
+    (workspace_dir / "features").mkdir()
+    (workspace_dir / "features" / "out.parquet").write_text("ok", encoding="utf-8")
+
+    files = workspace_upload_files(workspace_dir, WorkspaceSpec(prefix="/audio/render"))
+
+    assert [file.local_path.relative_to(workspace_dir) for file in files] == [
+        Path("features/out.parquet"),
+        Path("raw/input.wav"),
+    ]
+    assert [file.object_path for file in files] == [
+        "audio/render/features/out.parquet",
+        "audio/render/raw/input.wav",
+    ]
 
 
 def test_cleanup_requires_attempt_marker(tmp_path) -> None:
