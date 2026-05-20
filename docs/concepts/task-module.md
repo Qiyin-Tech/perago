@@ -29,7 +29,7 @@ worker process 加载 exactly one task module。`perago start -j` 启动 worker 
 
 ```bash
 perago check app.workers.features_build
-perago extract app.workers.features_build --out generated-taskdefs
+perago extract app.workers.features_build --output generated/features.build.json
 perago start app.workers.features_build -j 4
 ```
 

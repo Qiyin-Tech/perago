@@ -106,6 +106,54 @@ def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
 - Generated: TaskDef schema 和成功输出中的 `result`。
 - Forbidden: 顶层 `workspace` input、`WorkspaceSpec`、`publish_budget`、多个业务参数或 keyword-only contract 参数。
 
+## Workspace task with publish budget
+
+这个正例展示 workspace task 如何声明 publication budget。`PublishBudget` 不会作为业务 input，也不会写入 TaskDef 的独立字段；它会派生 generated `responseTimeoutSeconds`，并在 runtime 中约束 LakeFS merge 和 Conductor completion 的 request timeout。
+
+```python
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from perago import PublishBudget, TaskControls, WorkspaceSpec, task
+
+
+class RenderParams(BaseModel):
+    stem: str
+
+
+class RenderOutput(BaseModel):
+    file_count: int
+
+
+@task(
+    name="audio.render",
+    owner_email="audio@example.com",
+    workspace=WorkspaceSpec(prefix="/audio/render"),
+    controls=TaskControls(
+        publish_budget=PublishBudget(
+            observed_merge_p99_seconds=20,
+            safety_margin_seconds=10,
+            lakefs_merge_timeout_seconds=45,
+            conductor_completion_timeout_seconds=15,
+            worker_shutdown_grace_seconds=30,
+            heartbeat_interval_seconds=10,
+        ),
+    ),
+)
+def render_audio(workspace: Path, params: RenderParams) -> RenderOutput:
+    output_dir = workspace / "rendered"
+    output_dir.mkdir(exist_ok=True)
+    (output_dir / f"{params.stem}.wav").write_bytes(b"")
+    return RenderOutput(file_count=1)
+```
+
+字段边界：
+
+- Required: `PublishBudget` 的六个时间字段都必须显式配置，且 `lakefs_merge_timeout_seconds` 必须覆盖 `observed_merge_p99_seconds + safety_margin_seconds`。
+- Generated: `responseTimeoutSeconds = 45 + 15 + 30 + 10 = 100`。
+- Forbidden: workspace-free task 不能配置 `publish_budget`。
+
 ## 本地验证
 
 对一个 module 做 task-authoring 层面的检查：
