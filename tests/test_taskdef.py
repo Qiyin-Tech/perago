@@ -24,6 +24,15 @@ class NestedParams(BaseModel):
     settings: NestedSettings
 
 
+class ParamsWithDefaults(BaseModel):
+    required_value: int
+    optional_reason: str | None = None
+
+
+class OutputWithDefaults(BaseModel):
+    ok: bool = True
+
+
 class BudgetParams(BaseModel):
     value: int
 
@@ -55,6 +64,12 @@ def budgeted_workspace_task(workspace: Path, params: BudgetParams) -> BudgetOutp
     return BudgetOutput(value=params.value)
 
 
+@task(name="tests.defaults", owner_email="data@example.com")
+def defaults_task(params: ParamsWithDefaults) -> OutputWithDefaults:
+    del params
+    return OutputWithDefaults()
+
+
 def test_builds_workspace_taskdef() -> None:
     taskdef = build_taskdef(load_module_task("app.workers.features_build"))
 
@@ -83,6 +98,17 @@ def test_taskdef_derives_response_timeout_from_publish_budget() -> None:
     assert taskdef["responseTimeoutSeconds"] == 100
     assert "publish_budget" not in taskdef
     assert "max_changed_objects" not in json.dumps(taskdef)
+
+
+def test_taskdef_keeps_schema_defaults_without_input_template() -> None:
+    taskdef = build_taskdef(defaults_task.__perago_task__)
+
+    params_schema = taskdef["inputSchema"]["data"]["properties"]["params"]
+    result_schema = taskdef["outputSchema"]["data"]["properties"]["result"]
+
+    assert "inputTemplate" not in taskdef
+    assert params_schema["properties"]["optional_reason"]["default"] is None
+    assert result_schema["properties"]["ok"]["default"] is True
 
 
 def test_builds_workspace_free_taskdef() -> None:
