@@ -86,6 +86,12 @@ class TaskControls(BaseModel):
     limits: ExecutionLimits = Field(default_factory=ExecutionLimits)
     publish_budget: PublishBudget | None = None
 
+    @property
+    def response_timeout_seconds(self) -> int:
+        if self.publish_budget is not None:
+            return self.publish_budget.response_timeout_seconds
+        return self.timeout.response_seconds
+
 
 class WorkspaceSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
