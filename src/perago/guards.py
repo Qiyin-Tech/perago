@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from os import PathLike, fspath
 from pathlib import Path, PurePath, PureWindowsPath
 from typing import Literal
@@ -10,6 +11,7 @@ from perago.errors import GuardrailViolation, TaskDefinitionError
 
 
 GuardrailKind = Literal["require_file", "require_dir", "require_glob", "forbid_glob"]
+_WINDOWS_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
 
 
 class _WorkspaceGuardrail(BaseModel):
@@ -287,4 +289,7 @@ def _path_parts(value: str | PathLike[str]) -> tuple[str, ...]:
         raise TaskDefinitionError("string guardrail paths must use '/' separators")
     if text.startswith("/"):
         raise TaskDefinitionError("guardrail paths must be relative to WorkspaceSpec(prefix=...)")
-    return tuple(text.split("/"))
+    parts = tuple(text.split("/"))
+    if any(_WINDOWS_DRIVE_PREFIX_RE.match(part) for part in parts):
+        raise TaskDefinitionError("drive-qualified guardrail paths are not allowed")
+    return parts

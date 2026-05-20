@@ -66,6 +66,15 @@ def test_workspace_local_path_skips_attempt_marker() -> None:
     assert workspace_local_path(WorkspaceSpec(prefix="/audio/render"), f"audio/render/{ATTEMPT_WORKSPACE_MARKER}") is None
 
 
+def test_workspace_local_path_rejects_drive_qualified_strings() -> None:
+    spec = WorkspaceSpec(prefix="audio/render")
+
+    with pytest.raises(TaskDefinitionError, match="drive-qualified"):
+        workspace_local_path(spec, "audio/render/C:/Users/Public/payload.py")
+    with pytest.raises(TaskDefinitionError, match="drive-qualified"):
+        workspace_local_path(spec, "audio/render/C:evil/file.txt")
+
+
 def test_workspace_object_path_rejects_paths_that_escape_workspace_root() -> None:
     with pytest.raises(TaskDefinitionError, match="relative"):
         workspace_object_path(WorkspaceSpec(prefix="/"), "../manifest.json")
