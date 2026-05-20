@@ -18,7 +18,8 @@ _REGISTERED_TASKS: dict[str, list["TaskDefinition"]] = {}
 
 @dataclass(frozen=True)
 class TaskDefinition:
-    """Validated contract extracted from a single Perago task module.
+    """
+    Validated contract extracted from a single Perago task module.
 
     A task definition is created by the :func:`task` decorator after Perago
     validates the function signature, Pydantic contract models, workspace
@@ -51,10 +52,21 @@ class TaskDefinition:
     has_workspace : bool
         Whether this task expects an injected attempt-local workspace path.
 
+    See Also
+    --------
+    task : Declare and validate a task definition.
+    load_module_task : Import a module and retrieve its single task definition.
+
     Notes
     -----
     Perago supports one task definition per Python module. Modules that register
     zero or multiple tasks are rejected by :func:`load_module_task`.
+
+    Examples
+    --------
+    >>> definition = load_module_task("app.workers.features_build")
+    >>> definition.name
+    'features.build'
     """
 
     name: str
@@ -81,7 +93,8 @@ def task(
     controls: TaskControls | None = None,
     **unsupported: object,
 ) -> Callable[[Callable[..., BaseModel]], Callable[..., BaseModel]]:
-    """Declare the single Perago task exported by a Python module.
+    """
+    Declare the single Perago task exported by a Python module.
 
     The decorator validates task metadata and the decorated function's type
     hints at import time. A workspace task must have the exact signature
@@ -120,6 +133,12 @@ def task(
         If metadata, controls, workspace declaration, function shape, or type
         hints violate the Perago task contract.
 
+    See Also
+    --------
+    TaskDefinition : Validated task contract created by this decorator.
+    load_module_task : Load the decorated task from a module target.
+    WorkspaceSpec : Declare the workspace prefix and guardrails for workspace tasks.
+
     Examples
     --------
     >>> from pathlib import Path
@@ -157,7 +176,8 @@ def task(
 
 
 def load_module_task(module_target: str) -> TaskDefinition:
-    """Import a module target and return its single Perago task definition.
+    """
+    Import a module target and return its single Perago task definition.
 
     ``load_module_task`` is the shared loader used by ``perago check``,
     ``perago extract``, and worker startup. The target must be a Python import
@@ -180,6 +200,11 @@ def load_module_task(module_target: str) -> TaskDefinition:
     TaskDefinitionError
         If ``module_target`` is not a module import path, cannot provide exactly
         one Perago task, or imports a task with an invalid contract.
+
+    See Also
+    --------
+    task : Decorator that registers the task definition on import.
+    TaskDefinition : Validated contract returned by this loader.
 
     Examples
     --------
