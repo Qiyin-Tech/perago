@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from perago.models import WorkspaceInput
+from perago.models import WorkspaceInput, WorkspaceOutput
 from perago.task import TaskDefinition
 
 
@@ -36,7 +36,7 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
 
     if task.has_workspace:
         input_properties["workspace"] = schema_for_model(WorkspaceInput)
-        output_properties["workspace"] = schema_for_model(WorkspaceInput)
+        output_properties["workspace"] = schema_for_model(WorkspaceOutput)
         input_required.append("workspace")
         output_required.append("workspace")
 

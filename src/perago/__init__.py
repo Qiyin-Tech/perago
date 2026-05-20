@@ -45,6 +45,7 @@ from perago.models import (
     TaskControls,
     TimeoutPolicy,
     WorkspaceInput,
+    WorkspaceOutput,
     WorkspaceSpec,
 )
 from perago.task import TaskDefinition, load_module_task, task
@@ -92,6 +93,7 @@ __all__ = [
     "WorkerChildSpec",
     "WorkerRuntime",
     "WorkspaceInput",
+    "WorkspaceOutput",
     "WorkspacePublicationPlan",
     "WorkspaceSpec",
     "WorkspaceDownloadFile",

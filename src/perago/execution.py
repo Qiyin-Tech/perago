@@ -16,7 +16,7 @@ from perago.errors import (
     TaskInputError,
 )
 from perago.guards import check_guardrails
-from perago.models import WorkspaceInput, WorkspaceSpec
+from perago.models import WorkspaceInput, WorkspaceOutput, WorkspaceSpec
 from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
 from perago.workspace import cleanup_attempt_workspace_safely, prepare_attempt_workspace
@@ -66,7 +66,7 @@ def run_workspace_task_attempt(
         staged = stage_workspace(workspace_dir, workspace_input, workspace, attempt)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
         published_ref = publish_workspace(staged, workspace_input, workspace, attempt)
-        output_workspace = WorkspaceInput.model_validate(
+        output_workspace = WorkspaceOutput.model_validate(
             {
                 **workspace_input.model_dump(mode="json"),
                 "ref_type": "commit",
@@ -151,7 +151,7 @@ def build_workspace_task_output(
     if not task.has_workspace:
         raise TaskInputError("workspace output can only be built for workspace tasks")
     workspace_input = WorkspaceInput.model_validate(input_workspace)
-    workspace_output = WorkspaceInput.model_validate(
+    workspace_output = WorkspaceOutput.model_validate(
         {
             **workspace_input.model_dump(mode="json"),
             "ref_type": "commit",

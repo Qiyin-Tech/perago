@@ -111,13 +111,21 @@ class WorkspaceSpec(BaseModel):
         return "/".join(parts)
 
 
-class WorkspaceInput(BaseModel):
+class WorkspaceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     repository: str = Field(min_length=1)
     branch: str = Field(min_length=1)
     ref_type: Literal["commit"]
     ref: str = Field(min_length=1)
+
+
+class WorkspaceInput(WorkspaceRef):
+    pass
+
+
+class WorkspaceOutput(WorkspaceRef):
+    pass
 
 
 def validate_worker_id_prefix(value: str) -> str:
