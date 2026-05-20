@@ -32,6 +32,7 @@ class Output(BaseModel):
 
 @dataclass(frozen=True)
 class Attempt:
+    status: str = "IN_PROGRESS"
     workflow_instance_id: str = "wf-7f3d"
     task_def_name: str = "features.build"
     task_id: str = "9b4c"
@@ -133,6 +134,7 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         attempt,
         tmp_path,
         download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: current_attempt,
         publish_workspace=publish_workspace,
     )
 
@@ -174,10 +176,42 @@ def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(
         attempt,
         tmp_path,
         download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: current_attempt,
         publish_workspace=publish_workspace,
     )
 
     assert result.status == "FAILED_WITH_TERMINAL_ERROR"
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_checks_attempt_fence_before_publish(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt()
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    def publish_workspace(workspace_dir, workspace_input, workspace_spec) -> str:
+        raise AssertionError("stale attempts must not publish")
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"feature_set": "default", "min_rows": 100},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: Attempt(status="COMPLETED"),
+        publish_workspace=publish_workspace,
+    )
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "9b4c"
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
 
@@ -191,6 +225,7 @@ def test_run_workspace_task_attempt_returns_failed_result_for_bad_input(tmp_path
         attempt,
         tmp_path,
         download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        load_current_attempt=lambda current_attempt: current_attempt,
         publish_workspace=lambda workspace_dir, workspace_input, workspace_spec: "unused",
     )
 

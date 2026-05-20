@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from perago.attempt import assert_current_attempt_snapshot
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
@@ -20,6 +21,7 @@ from perago.workspace import cleanup_attempt_workspace_safely, prepare_attempt_w
 
 
 DownloadWorkspace = Callable[[WorkspaceInput, WorkspaceSpec, Path], None]
+LoadCurrentAttempt = Callable[[object], object]
 PublishWorkspace = Callable[[Path, WorkspaceInput, WorkspaceSpec], str]
 
 
@@ -30,6 +32,7 @@ def run_workspace_task_attempt(
     workspace_root: Path,
     *,
     download_workspace: DownloadWorkspace,
+    load_current_attempt: LoadCurrentAttempt,
     publish_workspace: PublishWorkspace,
 ) -> RuntimeTaskResult:
     if not task.has_workspace:
@@ -46,6 +49,7 @@ def run_workspace_task_attempt(
         workspace_dir = prepare_attempt_workspace(workspace_root, attempt)
         download_workspace(workspace_input, workspace, workspace_dir)
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
+        assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
         published_ref = publish_workspace(workspace_dir, workspace_input, workspace)
         output_workspace = WorkspaceInput.model_validate(
             {
