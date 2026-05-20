@@ -804,6 +804,10 @@ WorkspaceSpec(
 )
 ```
 
+Task authors declare guardrails only through `require_file`, `require_dir`,
+`require_glob`, and `forbid_glob`. The internal guardrail model is not part of
+the public task author API and should not be imported from `perago`.
+
 The guardrail API accepts `str | os.PathLike`. Documentation examples should prefer `/`-separated relative strings, but task code may use `pathlib` to construct paths portably:
 
 ```python

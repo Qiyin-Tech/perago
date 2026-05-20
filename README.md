@@ -8,6 +8,19 @@ The first MVP targets LakeFS as the workspace backend. Task authors write ordina
 
 Early internal package. APIs are still being shaped before `1.0`.
 
+The current development slice implements the parts that do not require a live
+Conductor server or LakeFS server:
+
+- task author API: `@task`, `WorkspaceSpec`, guardrail helper functions, and
+  grouped `TaskControls`;
+- import-time task validation for the single-task module contract;
+- `perago check` diagnostics for task declarations and local runtime config;
+- `perago extract` generation of local Conductor TaskDef JSON.
+
+`perago start`, Conductor polling/completion, LakeFS workspace download, and
+LakeFS publication are integration-phase work and are intentionally not wired
+to external services yet.
+
 The current implementation target is documented in:
 
 - [MVP examples](docs/mvp_examples.md)
@@ -84,7 +97,7 @@ perago start app.workers.features_build -j 4
 
 - `perago check` imports the module, validates the task declaration, validates Perago runtime config from `.env`, and reports CLI diagnostics.
 - `perago extract` emits Conductor TaskDef JSON with embedded input/output schemas.
-- `perago start` starts one or more independent worker processes that poll Conductor directly.
+- `perago start` currently validates startup inputs and exits with a clear diagnostic until the Conductor/LakeFS worker integration is added.
 
 ## Runtime configuration
 
@@ -112,9 +125,12 @@ Runtime models and config validation use Pydantic. CLI commands use Typer. Runti
 
 Workspace guardrails are file-shape checks over the local workspace root exposed by `WorkspaceSpec(prefix=...)`.
 
+- task authors declare guardrails only through `require_file`, `require_dir`, `require_glob`, and `forbid_glob`;
+- the internal guardrail model is not part of the public task author API;
 - pre guardrail failure returns `FAILED_WITH_TERMINAL_ERROR`;
 - post guardrail failure returns retryable `FAILED`;
 - guardrail paths are relative workspace paths;
+- absolute paths, `..` segments, backslash-separated strings, and drive-qualified paths are rejected during module import and `perago check`;
 - invalid guardrail declarations fail import validation and `perago check`.
 
 ## Workspace runtime
