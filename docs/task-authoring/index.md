@@ -8,4 +8,5 @@ Task authoring 文档面向编写 Perago task module 的开发者。这里的页
 :maxdepth: 1
 
 workspace-task
+workspace-free-task
 ```
