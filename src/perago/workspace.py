@@ -2,15 +2,32 @@ from __future__ import annotations
 
 import json
 import shutil
+from os import PathLike
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from perago._segments import safe_segment
+from perago.guards import _canonical_workspace_path
+from perago.models import WorkspaceSpec
 
 
 ATTEMPT_WORKSPACE_MARKER = ".perago-attempt.json"
+
+
+def workspace_object_prefix(workspace_spec: WorkspaceSpec) -> str:
+    if workspace_spec.prefix == "/":
+        return ""
+    return workspace_spec.prefix
+
+
+def workspace_object_path(workspace_spec: WorkspaceSpec, workspace_path: str | PathLike[str]) -> str:
+    local_path = _canonical_workspace_path(workspace_path)
+    prefix = workspace_object_prefix(workspace_spec)
+    if not prefix:
+        return local_path
+    return f"{prefix}/{local_path}"
 
 
 def attempt_workspace_dir(workspace_root: Path, task: object) -> Path:

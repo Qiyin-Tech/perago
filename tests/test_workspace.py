@@ -1,14 +1,18 @@
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
+from perago import TaskDefinitionError, WorkspaceSpec
 from perago.workspace import (
     ATTEMPT_WORKSPACE_MARKER,
     cleanup_attempt_workspace,
     cleanup_attempt_workspace_safely,
     prepare_attempt_workspace,
     sweep_abandoned_attempt_workspaces,
+    workspace_object_path,
+    workspace_object_prefix,
 )
 
 
@@ -18,6 +22,27 @@ class Attempt:
     task_def_name: str
     task_id: str
     retry_count: int
+
+
+def test_workspace_object_prefix_maps_root_prefix_to_empty_object_prefix() -> None:
+    assert workspace_object_prefix(WorkspaceSpec(prefix="/")) == ""
+    assert workspace_object_prefix(WorkspaceSpec(prefix="/audio/render")) == "audio/render"
+
+
+def test_workspace_object_path_maps_local_paths_under_workspace_prefix() -> None:
+    spec = WorkspaceSpec(prefix="audio/render")
+
+    assert workspace_object_path(spec, "raw/input.wav") == "audio/render/raw/input.wav"
+    assert workspace_object_path(spec, Path("stems") / "voice.wav") == "audio/render/stems/voice.wav"
+
+
+def test_workspace_object_path_keeps_root_prefix_at_repository_root() -> None:
+    assert workspace_object_path(WorkspaceSpec(prefix="/"), "manifest.json") == "manifest.json"
+
+
+def test_workspace_object_path_rejects_paths_that_escape_workspace_root() -> None:
+    with pytest.raises(TaskDefinitionError, match="relative"):
+        workspace_object_path(WorkspaceSpec(prefix="/"), "../manifest.json")
 
 
 def test_prepares_and_cleans_attempt_workspace(tmp_path) -> None:
