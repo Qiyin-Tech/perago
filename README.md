@@ -1,45 +1,41 @@
-# perago
+# Perago
 
-`perago` is a typed Python runtime layer for Conductor workers that operate on versioned workspaces.
+[文档站（Read the Docs）](https://perago.readthedocs.io) · [PyPI](https://pypi.org/project/perago/)
 
-The first MVP targets LakeFS as the workspace backend. Task authors write ordinary typed Python functions; Perago owns task definition extraction, validation, worker process startup, workspace download/publish, guardrails, and Conductor completion.
+Perago 是一个面向 Conductor worker 的 typed Python 运行时层，用来在版本化 workspace 上执行任务。它把任务函数签名、Pydantic 输入输出契约、Conductor TaskDef、LakeFS workspace 下载与发布、guardrail 校验和 worker 启动边界收敛到同一套模型里。
 
-## Status
+`README.md` 只保留项目概览、安装和最小入口；完整说明以文档站为准。
 
-Early internal package. APIs are still being shaped before `1.0`.
+## 安装
 
-The current development slice implements:
+要求 Python 3.12 或更新版本。
 
-- task author API: `@task`, `WorkspaceSpec`, guardrail helper functions, and
-  grouped `TaskControls` including explicit publish budgets;
-- import-time task validation for the single-task module contract;
-- `perago check` diagnostics for task declarations and local runtime config;
-- `perago extract` generation of local Conductor TaskDef JSON;
-- `perago start -j` supervisor startup for independent worker processes;
-- Conductor polling/completion, LakeFS workspace download, staging,
-  publication, staging cleanup, and attempt-local workspace cleanup.
+```bash
+uv add perago
+```
 
-`perago check` and `perago extract` do not connect to Conductor or LakeFS.
-`perago start` requires a real Conductor endpoint, complete LakeFS credentials,
-and a pre-registered Conductor TaskDef before worker processes start.
+或：
 
-The current implementation target is documented in:
+```bash
+pip install perago
+```
 
-- [MVP examples](docs/mvp_examples.md)
-- [Context glossary](CONTEXT.md)
-- [Architecture decisions](docs/architecture/adr/index.md)
-- [Conductor TaskDef notes](docs/conductor/task_def.md)
+仓库本地开发使用：
 
-## Task shape
+```bash
+uv sync
+```
 
-Each Python module declares exactly one task worker. The function signature is the source of the business input and output contract.
+## 最小示例
+
+下面是一个最小的 workspace task。任务作者只需要声明 typed params/output、workspace 约束和任务元数据；Perago 负责校验、TaskDef 提取和运行时集成。
 
 ```python
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from perago import WorkspaceSpec, require_dir, require_glob, task
+from perago import WorkspaceSpec, require_glob, task
 
 
 class BuildFeaturesParams(BaseModel):
@@ -54,18 +50,10 @@ class BuildFeaturesOutput(BaseModel):
 
 @task(
     name="features.build",
-    description="Build feature parquet files.",
     owner_email="data@example.com",
     workspace=WorkspaceSpec(
         prefix="/",
-        pre=[
-            require_dir("raw"),
-            require_glob("raw/**/*.parquet", min_count=1),
-        ],
-        post=[
-            require_dir("features"),
-            require_glob("features/**/*.parquet", min_count=1),
-        ],
+        pre=[require_glob("raw/**/*.parquet", min_count=1)],
     ),
 )
 def build_features(
@@ -75,21 +63,11 @@ def build_features(
     return BuildFeaturesOutput(row_count=100, feature_count=24)
 ```
 
-Workspace-free tasks use the same model without `workspace: Path`.
+workspace-free task 使用同一套 decorator 和 typed contract，但不声明 `workspace: Path`，也不声明 `WorkspaceSpec`。
 
-```python
-@task(
-    name="metadata.validate",
-    description="Validate metadata.",
-    owner_email="data@example.com",
-)
-def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
-    return ValidateMetadataOutput(valid=True)
-```
+## 快速入口
 
-## CLI
-
-The `perago` command is a Typer CLI. MVP commands accept a Python module import path, not file paths or `module:app` targets.
+`perago` CLI 的 MVP 入口是单任务 module target：
 
 ```bash
 perago check app.workers.features_build
@@ -97,46 +75,26 @@ perago extract app.workers.features_build --output generated/features.build.json
 perago start app.workers.features_build -j 4
 ```
 
-- `perago check` imports the module, validates the task declaration, validates Perago runtime config from `.env`, and reports CLI diagnostics.
-- `perago extract` emits Conductor TaskDef JSON with embedded input/output schemas.
-- `perago start` validates startup inputs, checks that the TaskDef is registered in Conductor, then starts supervisor-managed worker processes that poll Conductor and publish workspace outputs through LakeFS.
+- `perago check`：导入模块并校验任务声明与本地 runtime config。
+- `perago extract`：生成带嵌入 schema 的 Conductor TaskDef JSON。
+- `perago start`：在真实 Conductor 和 LakeFS 配置下启动 supervisor-managed worker processes。
 
-## Runtime configuration
+## 文档
 
-Perago reads `.env` for local development. Real process environment variables take precedence over `.env`; `.env` only fills missing values.
+- 文档首页：https://perago.readthedocs.io/zh-cn/latest/
+- Getting Started：https://perago.readthedocs.io/zh-cn/latest/getting-started.html
+- Task Authoring：https://perago.readthedocs.io/zh-cn/latest/task-authoring/
+- Runtime：https://perago.readthedocs.io/zh-cn/latest/runtime/
+- API Reference：https://perago.readthedocs.io/zh-cn/latest/api/
+- Architecture：https://perago.readthedocs.io/zh-cn/latest/architecture/
 
-```bash
-CONDUCTOR_SERVER_URL=http://localhost:8080/api
+仓库内的对应内容可从这里继续展开：
 
-LAKECTL_SERVER_ENDPOINT_URL=http://localhost:8000
-LAKECTL_CREDENTIALS_ACCESS_KEY_ID=...
-LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=...
-
-PERAGO_WORKSPACE_ROOT=/var/tmp/perago/workspaces
-PERAGO_LOG_ROOT=/var/tmp/perago/logs
-PERAGO_LOG_FILE_MAX_SIZE=100MB
-PERAGO_LOG_RETENTION=30d
-PERAGO_WORKER_ID_PREFIX=prodAFeaturesBuild
-```
-
-Runtime models and config validation use Pydantic. CLI commands use Typer. Runtime logs use loguru JSONL files with UTC+08:00 timestamps.
-
-Perago targets Conductor OSS for the MVP and only parses `CONDUCTOR_SERVER_URL`; it does not configure Conductor auth keys. LakeFS endpoint, access key, and secret key are parsed together and checked as one credential group. `perago check` still does not connect to either service.
-
-## Workspace guardrails
-
-Workspace guardrails are file-shape checks over the local workspace root exposed by `WorkspaceSpec(prefix=...)`.
-
-- task authors declare guardrails only through `require_file`, `require_dir`, `require_glob`, and `forbid_glob`;
-- the internal guardrail model is not part of the public task author API;
-- pre guardrail failure returns `FAILED_WITH_TERMINAL_ERROR`;
-- post guardrail failure returns retryable `FAILED`;
-- guardrail paths are relative workspace paths;
-- absolute paths, `..` segments, backslash-separated strings, and drive-qualified paths are rejected during module import and `perago check`;
-- invalid guardrail declarations fail import validation and `perago check`.
-
-## Workspace runtime
-
-For workspace tasks, Perago downloads the input workspace ref, runs the function against an attempt-local workspace directory, publishes changes through a staging LakeFS branch, attempts local cleanup, and then reports the task result to Conductor.
-
-Every Conductor Task Attempt gets its own local workspace directory under `PERAGO_WORKSPACE_ROOT`; workspaces are not reused across attempts, task workers, or worker processes.
+- [文档首页](docs/index.md)
+- [Getting Started](docs/getting-started.md)
+- [术语与概念](docs/concepts/index.md)
+- [任务开发](docs/task-authoring/index.md)
+- [运行时说明](docs/runtime/index.md)
+- [参考文档](docs/reference/index.md)
+- [架构与 ADR](docs/architecture/index.md)
+- [API Reference](docs/api/index.rst)

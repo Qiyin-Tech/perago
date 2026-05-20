@@ -1,5 +1,9 @@
 version: 2
 
+# Version activation for tags/branches is managed in the Read the Docs
+# dashboard Automation Rules, not in this file. Keep GitHub integration enabled
+# so `main` builds `latest`, and semver tags (for example `v0.1.0`) can be
+# activated as release docs versions.
 build:
   os: ubuntu-24.04
   tools:

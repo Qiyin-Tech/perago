@@ -1,8 +1,25 @@
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+import tomllib
+
 project = "Perago"
-author = "Perago maintainers"
-release = "0.1.0"
+author = "Yikai Liao"
+
+
+def _resolve_release() -> str:
+    """Resolve the documentation version from installed metadata or pyproject."""
+
+    try:
+        return version("perago")
+    except PackageNotFoundError:
+        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
+        with pyproject.open("rb") as fh:
+            return tomllib.load(fh)["project"]["version"]
+
+
+release = _resolve_release()
 
 extensions = [
     "myst_parser",
