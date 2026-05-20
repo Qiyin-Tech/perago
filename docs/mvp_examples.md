@@ -74,6 +74,7 @@ class BuildFeaturesOutput(BaseModel):
             rate_limit_frequency_in_seconds=None,
             rate_limit_per_frequency=None,
         ),
+        publish_budget=None,
     ),
 )
 def build_features(
@@ -243,7 +244,7 @@ def build_features(
     ...
 ```
 
-`TaskControls`, `RetryPolicy`, `TimeoutPolicy`, and `ExecutionLimits` are Pydantic models. Their validation errors are surfaced through the same import-time task validation and `perago check` diagnostics as task signature errors.
+`TaskControls`, `RetryPolicy`, `TimeoutPolicy`, `ExecutionLimits`, and `PublishBudget` are Pydantic models. Their validation errors are surfaced through the same import-time task validation and `perago check` diagnostics as task signature errors.
 
 Perago maps these fields to Conductor TaskDef fields:
 
@@ -267,8 +268,11 @@ Perago maps these fields to Conductor TaskDef fields:
 | `controls.limits.concurrent_exec_limit` | `concurrentExecLimit` | no | `None` |
 | `controls.limits.rate_limit_frequency_in_seconds` | `rateLimitFrequencyInSeconds` | no | `None` |
 | `controls.limits.rate_limit_per_frequency` | `rateLimitPerFrequency` | no | `None` |
+| `controls.publish_budget` | derives `responseTimeoutSeconds` | no | `None` |
 
 Fields set to `None` are omitted from the extracted TaskDef JSON.
+
+If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
 
 `workspace` is required for workspace task workers and forbidden for workspace-free task workers.
 

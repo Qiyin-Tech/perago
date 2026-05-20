@@ -12,7 +12,7 @@ The current development slice implements the parts that do not require a live
 Conductor server or LakeFS server:
 
 - task author API: `@task`, `WorkspaceSpec`, guardrail helper functions, and
-  grouped `TaskControls`;
+  grouped `TaskControls` including explicit publish budgets;
 - import-time task validation for the single-task module contract;
 - `perago check` diagnostics for task declarations and local runtime config;
 - `perago extract` generation of local Conductor TaskDef JSON.
