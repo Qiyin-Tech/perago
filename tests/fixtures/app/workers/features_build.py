@@ -48,4 +48,7 @@ class BuildFeaturesOutput(BaseModel):
     ),
 )
 def build_features(workspace: Path, params: BuildFeaturesParams) -> BuildFeaturesOutput:
+    features = workspace / "features"
+    features.mkdir(exist_ok=True)
+    (features / f"{params.feature_set}.parquet").write_text("ok", encoding="utf-8")
     return BuildFeaturesOutput(row_count=100, feature_count=24)

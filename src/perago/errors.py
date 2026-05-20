@@ -12,3 +12,11 @@ class TaskInputError(ValueError):
 
 class GuardrailViolation(RuntimeError):
     """Raised when a workspace guardrail check fails."""
+
+
+class PreGuardrailViolation(GuardrailViolation):
+    """Raised when pre guardrails fail before the task function runs."""
+
+
+class PostGuardrailViolation(GuardrailViolation):
+    """Raised when post guardrails fail after the task function returns."""
