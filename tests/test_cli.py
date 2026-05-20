@@ -53,7 +53,10 @@ def test_extract_cli_writes_taskdef(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
     runner = CliRunner()
 
-    result = runner.invoke(app, ["extract", "app.workers.metadata_validate", str(tmp_path / "generated")])
+    result = runner.invoke(
+        app,
+        ["extract", "app.workers.metadata_validate", "--out", str(tmp_path / "generated")],
+    )
 
     assert result.exit_code == 0
     assert (tmp_path / "generated" / "taskdefs" / "metadata.validate.json").exists()

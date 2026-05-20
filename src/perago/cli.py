@@ -30,7 +30,7 @@ def check(module_target: str) -> None:
 
 
 @app.command()
-def extract(module_target: str, out: Path) -> None:
+def extract(module_target: str, out: Path = typer.Option(..., "--out")) -> None:
     """Write generated Conductor TaskDef JSON for one task module."""
     try:
         task = load_module_task(module_target)
