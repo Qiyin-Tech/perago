@@ -182,6 +182,8 @@ class RuntimeConfig(BaseModel):
     log_retention: timedelta
     worker_id_prefix: str
     execution_mode: ExecutionMode = "process"
+    workspace_gc_ttl: timedelta = timedelta(hours=24)
+    workspace_gc_interval: timedelta = timedelta(hours=1)
     conductor: ConductorConfig | None = None
     lakefs: LakeFSConfig | None = None
 
@@ -263,6 +265,16 @@ def load_runtime_config(
         log_retention=parse_log_retention(env.get("PERAGO_LOG_RETENTION")),
         worker_id_prefix=resolve_worker_id_prefix(module_target, env),
         execution_mode=parse_execution_mode(env.get("PERAGO_EXECUTION_MODE")),
+        workspace_gc_ttl=parse_duration(
+            env.get("PERAGO_WORKSPACE_GC_TTL"),
+            default=timedelta(hours=24),
+            name="PERAGO_WORKSPACE_GC_TTL",
+        ),
+        workspace_gc_interval=parse_duration(
+            env.get("PERAGO_WORKSPACE_GC_INTERVAL"),
+            default=timedelta(hours=1),
+            name="PERAGO_WORKSPACE_GC_INTERVAL",
+        ),
         conductor=parse_conductor_config(env),
         lakefs=parse_lakefs_config(env),
     )
@@ -341,6 +353,23 @@ def parse_execution_mode(value: str | None) -> ExecutionMode:
     if mode not in {"process", "thread"}:
         raise RuntimeConfigError("PERAGO_EXECUTION_MODE must be either 'process' or 'thread'")
     return mode
+
+
+def parse_duration(value: str | None, *, default: timedelta, name: str) -> timedelta:
+    if value is None or value.strip() == "":
+        return default
+    match = re.fullmatch(r"([1-9][0-9]*)([smhd])", value.strip(), flags=re.IGNORECASE)
+    if not match:
+        raise RuntimeConfigError(f"{name} must be a positive duration such as '30s', '5m', '1h', or '24h'")
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    if unit == "s":
+        return timedelta(seconds=amount)
+    if unit == "m":
+        return timedelta(minutes=amount)
+    if unit == "h":
+        return timedelta(hours=amount)
+    return timedelta(days=amount)
 
 
 def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:

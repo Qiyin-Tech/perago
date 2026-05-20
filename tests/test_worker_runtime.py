@@ -8,8 +8,8 @@ from perago import RuntimeConfig, prepare_worker_runtime
 from perago.workspace import ATTEMPT_WORKSPACE_MARKER
 
 
-def test_prepare_worker_runtime_sweeps_marked_workspaces_and_configures_logging(tmp_path) -> None:
-    marked = tmp_path / "workspaces" / "wf" / "task" / "task_id=1" / "retry_count=0"
+def test_prepare_worker_runtime_does_not_sweep_marked_workspaces_and_configures_logging(tmp_path) -> None:
+    marked = tmp_path / "workspaces" / "task_id=1"
     marked.mkdir(parents=True)
     (marked / ATTEMPT_WORKSPACE_MARKER).write_text("{}", encoding="utf-8")
     keep = tmp_path / "workspaces" / "keep"
@@ -34,8 +34,8 @@ def test_prepare_worker_runtime_sweeps_marked_workspaces_and_configures_logging(
 
     data = json.loads(runtime.log_file.read_text(encoding="utf-8").splitlines()[0])
     assert runtime.worker_id == "prodAFeaturesBuild0001"
-    assert runtime.swept_workspaces == [marked]
-    assert not marked.exists()
+    assert runtime.swept_workspaces == []
+    assert marked.exists()
     assert keep.exists()
     assert runtime.log_file.parent == tmp_path / "logs" / "app.workers.features_build" / "worker_id=prodAFeaturesBuild0001"
     assert data["record"]["message"] == "runtime-ready"

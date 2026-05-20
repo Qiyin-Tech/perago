@@ -5,7 +5,6 @@ from pathlib import Path
 
 from perago.config import RuntimeConfig, resolve_worker_id
 from perago.runtime_logging import configure_worker_logging
-from perago.workspace import sweep_abandoned_attempt_workspaces
 
 
 @dataclass(frozen=True)
@@ -14,9 +13,9 @@ class WorkerRuntime:
     Prepared identity and logging state for one worker process.
 
     ``WorkerRuntime`` is returned after a child process has resolved its worker
-    id, removed abandoned attempt workspaces, and installed the per-worker
-    JSONL log sink. It is runtime-local state and is not serialized into
-    Conductor task input, task output, or generated TaskDefs.
+    id and installed the per-worker JSONL log sink. It is runtime-local state
+    and is not serialized into Conductor task input, task output, or generated
+    TaskDefs.
 
     Parameters
     ----------
@@ -26,7 +25,8 @@ class WorkerRuntime:
     log_file : pathlib.Path
         JSONL log file configured for this process.
     swept_workspaces : list of pathlib.Path
-        Attempt workspace directories removed before the worker starts polling.
+        Reserved for compatibility; worker startup no longer sweeps global
+        workspace directories.
 
     Attributes
     ----------
@@ -35,7 +35,8 @@ class WorkerRuntime:
     log_file : pathlib.Path
         JSONL log file configured for this process.
     swept_workspaces : list of pathlib.Path
-        Attempt workspace directories removed before the worker starts polling.
+        Reserved for compatibility; worker startup no longer sweeps global
+        workspace directories.
 
     See Also
     --------
@@ -72,9 +73,8 @@ def prepare_worker_runtime(
     Prepare local runtime state for one worker process.
 
     The worker process calls this before polling Conductor. Preparation
-    resolves the worker id, removes marker-protected abandoned attempt
-    workspaces, and configures Loguru to write serialized JSONL logs under the
-    configured log root.
+    resolves the worker id and configures Loguru to write serialized JSONL logs
+    under the configured log root.
 
     Parameters
     ----------
@@ -122,7 +122,7 @@ def prepare_worker_runtime(
     'featuresBuild0001'
     """
     worker_id = resolve_worker_id(module_target, env)
-    swept = sweep_abandoned_attempt_workspaces(config.workspace_root)
+    swept: list[Path] = []
     log_file = configure_worker_logging(
         log_root=config.log_root,
         module_target=module_target,

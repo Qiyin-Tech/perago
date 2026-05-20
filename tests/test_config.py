@@ -11,6 +11,7 @@ from perago.config import (
     load_runtime_config,
     load_runtime_env,
     parse_conductor_config,
+    parse_duration,
     parse_execution_mode,
     parse_lakefs_config,
     parse_log_file_max_size,
@@ -56,6 +57,8 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 f"PERAGO_LOG_ROOT={tmp_path / 'logs'}",
                 "PERAGO_LOG_FILE_MAX_SIZE=1.5MB",
                 "PERAGO_LOG_RETENTION=7d",
+                "PERAGO_WORKSPACE_GC_TTL=30s",
+                "PERAGO_WORKSPACE_GC_INTERVAL=5m",
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
                 "PERAGO_EXECUTION_MODE=thread",
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
@@ -78,6 +81,8 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.log_root == tmp_path / "logs"
     assert config.log_file_max_size == 1_572_864
     assert config.log_retention == timedelta(days=7)
+    assert config.workspace_gc_ttl == timedelta(seconds=30)
+    assert config.workspace_gc_interval == timedelta(minutes=5)
     assert config.worker_id_prefix == "dotenvPrefix"
     assert config.execution_mode == "thread"
     assert config.conductor == ConductorConfig(
@@ -157,6 +162,17 @@ def test_parse_execution_mode_defaults_and_normalizes() -> None:
 
     with pytest.raises(RuntimeConfigError, match="PERAGO_EXECUTION_MODE"):
         parse_execution_mode("fork")
+
+
+def test_parse_duration_defaults_units_and_errors() -> None:
+    assert parse_duration(None, default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(hours=24)
+    assert parse_duration("30s", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(seconds=30)
+    assert parse_duration("5M", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(minutes=5)
+    assert parse_duration("1h", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(hours=1)
+    assert parse_duration("2d", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(days=2)
+
+    with pytest.raises(RuntimeConfigError, match="PERAGO_WORKSPACE_GC_TTL"):
+        parse_duration("0s", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL")
 
 
 def test_parse_connection_configs_are_optional() -> None:

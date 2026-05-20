@@ -728,10 +728,12 @@ def test_execute_polled_task_uses_workspace_attempt_runner(monkeypatch, tmp_path
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        owner_worker_id="featuresBuild0001",
     )
 
     assert result == completed_result({"ok": True})
     assert calls["args"][:4] == (task, attempt.input_data, attempt, tmp_path)
+    assert calls["kwargs"]["owner_worker_id"] == "featuresBuild0001"
 
 
 def test_run_conductor_thread_runner_builds_sdk_runner() -> None:

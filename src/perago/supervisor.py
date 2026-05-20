@@ -3,7 +3,10 @@ from __future__ import annotations
 import multiprocessing
 import os
 import signal
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from types import FrameType
 
 from loguru import logger
@@ -21,6 +24,7 @@ from perago.errors import RuntimeConfigError
 from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
 from perago.task import load_module_task
 from perago.worker_runtime import prepare_worker_runtime
+from perago.workspace import garbage_collect_attempt_workspaces
 
 
 RESTART_BACKOFF_SECONDS = (1, 2, 4, 8, 16)
@@ -189,7 +193,14 @@ def run_worker_supervisor(
     if process_count < 1:
         raise RuntimeConfigError("worker process count must be at least 1")
     if execution_mode == "thread":
-        _thread_runner_main(config=config, module_target=module_target, thread_count=process_count)
+        gc_loop = start_workspace_gc_loop(
+            config=config,
+            active_process_owners=lambda: set(),
+        )
+        try:
+            _thread_runner_main(config=config, module_target=module_target, thread_count=process_count)
+        finally:
+            gc_loop.stop()
         return
     if execution_mode != "process":
         raise RuntimeConfigError("execution mode must be either 'process' or 'thread'")
@@ -215,6 +226,10 @@ def run_worker_supervisor(
         attempt_fence_response_queues=attempt_fence_response_queues,
     )
     executors: dict[int, tuple[WorkerChildSpec, multiprocessing.Process, int]] = {}
+    gc_loop = start_workspace_gc_loop(
+        config=config,
+        active_process_owners=lambda: _active_process_workspace_owners(executors),
+    )
 
     def request_stop(signum: int, frame: FrameType | None) -> None:
         del signum, frame
@@ -267,6 +282,7 @@ def run_worker_supervisor(
             stop.wait(0.5)
     finally:
         stop.set()
+        gc_loop.stop()
         for _ in executors:
             assignment_queue.put(StopProcessExecutor())
         _stop_worker_processes([broker, *[process for _, process, _ in executors.values()]])
@@ -287,6 +303,69 @@ def _stop_worker_processes(processes: list[multiprocessing.Process]) -> None:
             process.kill()
     for process in processes:
         process.join(timeout=5)
+
+
+class WorkspaceGCLoop:
+    def __init__(
+        self,
+        *,
+        config: RuntimeConfig,
+        active_process_owners: Callable[[], set[tuple[str, int]]],
+    ) -> None:
+        self._config = config
+        self._active_process_owners = active_process_owners
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="perago-workspace-gc", daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+
+    def run_once(self) -> list[object]:
+        return garbage_collect_attempt_workspaces(
+            self._config.workspace_root,
+            ttl=self._config.workspace_gc_ttl,
+            active_process_owners=self._active_process_owners(),
+        )
+
+    def _run(self) -> None:
+        interval_seconds = _duration_seconds(self._config.workspace_gc_interval)
+        while not self._stop.is_set():
+            try:
+                removed = self.run_once()
+                if removed:
+                    logger.bind(removed_count=len(removed)).info("garbage-collected abandoned attempt workspaces")
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).error("workspace garbage collection failed")
+            self._stop.wait(interval_seconds)
+
+
+def start_workspace_gc_loop(
+    *,
+    config: RuntimeConfig,
+    active_process_owners: Callable[[], set[tuple[str, int]]],
+) -> WorkspaceGCLoop:
+    loop = WorkspaceGCLoop(config=config, active_process_owners=active_process_owners)
+    loop.start()
+    return loop
+
+
+def _active_process_workspace_owners(
+    executors: dict[int, tuple[WorkerChildSpec, multiprocessing.Process, int]],
+) -> set[tuple[str, int]]:
+    active: set[tuple[str, int]] = set()
+    for spec, process, _ in executors.values():
+        pid = getattr(process, "pid", None)
+        if isinstance(pid, int) and process.is_alive():
+            active.add((spec.worker_id, pid))
+    return active
+
+
+def _duration_seconds(value: timedelta) -> float:
+    return max(value.total_seconds(), 0.001)
 
 
 def _start_broker_process(

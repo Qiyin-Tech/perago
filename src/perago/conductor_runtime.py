@@ -155,6 +155,7 @@ class PeragoThreadWorker(WorkerInterface):
             stage_workspace=self._stage_workspace,
             publish_workspace=self._publish_workspace,
             cleanup_staging=self._cleanup_staging,
+            owner_worker_id=self.worker_id,
         )
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 
@@ -380,6 +381,7 @@ def run_process_executor_loop(
             stage_workspace=stage_workspace,
             publish_workspace=publish_workspace,
             cleanup_staging=cleanup_staging,
+            owner_worker_id=worker_id,
         )
         completion_queue.put(ProcessTaskCompletion(task_id=attempt.task_id, result=result))
 
@@ -451,6 +453,7 @@ def execute_polled_task(
     stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
+    owner_worker_id: str | None = None,
 ) -> RuntimeTaskResult:
     if task.has_workspace:
         return run_workspace_task_attempt(
@@ -463,6 +466,7 @@ def execute_polled_task(
             stage_workspace=stage_workspace,
             publish_workspace=publish_workspace,
             cleanup_staging=cleanup_staging,
+            owner_worker_id=owner_worker_id,
         )
     return run_workspace_free_task_attempt(task, attempt.input_data)
 

@@ -5,6 +5,8 @@ import pytest
 
 from perago import ConductorConfig, LakeFSConfig, RuntimeConfig, RuntimeConfigError, restart_backoff_seconds, worker_child_specs
 from perago.supervisor import (
+    WorkspaceGCLoop,
+    _active_process_workspace_owners,
     _broker_environment,
     _broker_process_main,
     _process_executor_main,
@@ -33,6 +35,15 @@ class FakeProcess:
     def kill(self) -> None:
         self.events.append(("kill", None))
         self.alive = False
+
+
+class FakeExecutorProcess:
+    def __init__(self, *, pid: int | None, alive: bool) -> None:
+        self.pid = pid
+        self.alive = alive
+
+    def is_alive(self) -> bool:
+        return self.alive
 
 
 def test_restart_backoff_sequence_caps_at_maximum() -> None:
@@ -236,6 +247,50 @@ def test_run_worker_supervisor_process_mode_starts_broker_and_executors(monkeypa
         started["broker"]["attempt_fence_response_queues"]["worker0002"],
     ]
     assert len(stopped) == 3
+
+
+def test_active_process_workspace_owners_uses_live_child_worker_id_and_pid() -> None:
+    specs = worker_child_specs(
+        base_env={"PERAGO_WORKER_ID_PREFIX": "worker"},
+        module_target="app.workers.features_build",
+        process_count=3,
+    )
+    executors = {
+        1: (specs[0], FakeExecutorProcess(pid=101, alive=True), 0),
+        2: (specs[1], FakeExecutorProcess(pid=102, alive=False), 0),
+        3: (specs[2], FakeExecutorProcess(pid=None, alive=True), 0),
+    }
+
+    active = _active_process_workspace_owners(executors)  # type: ignore[arg-type]
+
+    assert active == {("worker0001", 101)}
+
+
+def test_workspace_gc_loop_runs_nonblocking_and_stops(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        workspace_gc_interval=timedelta(hours=1),
+    )
+    calls = []
+
+    def fake_gc(workspace_root, *, ttl, active_process_owners):
+        calls.append((workspace_root, ttl, active_process_owners))
+        return []
+
+    monkeypatch.setattr("perago.supervisor.garbage_collect_attempt_workspaces", fake_gc)
+
+    loop = WorkspaceGCLoop(config=config, active_process_owners=lambda: {("worker0001", 101)})
+    removed = loop.run_once()
+    loop.start()
+    loop.stop()
+
+    assert removed == []
+    assert calls[0] == (config.workspace_root, config.workspace_gc_ttl, {("worker0001", 101)})
+    assert len(calls) >= 1
 
 
 def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path) -> None:

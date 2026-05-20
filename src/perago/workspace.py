@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from os import PathLike
 from pathlib import Path
+from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
 
@@ -16,6 +20,8 @@ from perago.models import WorkspaceSpec
 
 
 ATTEMPT_WORKSPACE_MARKER = ".perago-attempt.json"
+_ACTIVE_OWNER_TOKENS: set[str] = set()
+_ACTIVE_OWNER_TOKENS_LOCK = Lock()
 
 
 @dataclass(frozen=True)
@@ -222,17 +228,39 @@ def workspace_local_path(workspace_spec: WorkspaceSpec, object_path: str | PathL
     return local_path
 
 
+@dataclass(frozen=True)
+class WorkspaceOwner:
+    worker_id: str
+    pid: int
+    token: str
+
+
 def attempt_workspace_dir(workspace_root: Path, task: object) -> Path:
-    return (
-        workspace_root
-        / safe_segment(_task_attr(task, "workflow_instance_id"))
-        / safe_segment(_task_attr(task, "task_def_name"))
-        / f"task_id={safe_segment(_task_attr(task, 'task_id'))}"
-        / f"retry_count={safe_segment(_task_attr(task, 'retry_count'))}"
-    )
+    return workspace_root / f"task_id={safe_segment(_task_attr(task, 'task_id'))}"
 
 
-def prepare_attempt_workspace(workspace_root: Path, task: object) -> Path:
+def new_workspace_owner(worker_id: str) -> WorkspaceOwner:
+    return WorkspaceOwner(worker_id=worker_id, pid=os.getpid(), token=uuid4().hex)
+
+
+def register_active_workspace_owner(owner: WorkspaceOwner) -> None:
+    with _ACTIVE_OWNER_TOKENS_LOCK:
+        _ACTIVE_OWNER_TOKENS.add(owner.token)
+
+
+def unregister_active_workspace_owner(owner: WorkspaceOwner) -> None:
+    with _ACTIVE_OWNER_TOKENS_LOCK:
+        _ACTIVE_OWNER_TOKENS.discard(owner.token)
+
+
+def active_workspace_owner_tokens() -> set[str]:
+    with _ACTIVE_OWNER_TOKENS_LOCK:
+        return set(_ACTIVE_OWNER_TOKENS)
+
+
+def prepare_attempt_workspace(workspace_root: Path, task: object, owner: WorkspaceOwner | None = None) -> Path:
+    if owner is None:
+        owner = new_workspace_owner(os.environ.get("PERAGO_WORKER_ID", f"pid-{os.getpid()}"))
     workspace_dir = attempt_workspace_dir(workspace_root, task)
     workspace_dir.mkdir(parents=True, exist_ok=False)
     marker = {
@@ -240,6 +268,10 @@ def prepare_attempt_workspace(workspace_root: Path, task: object) -> Path:
         "task_id": _task_attr(task, "task_id"),
         "retry_count": _task_attr(task, "retry_count"),
         "task_def_name": _task_attr(task, "task_def_name"),
+        "owner_worker_id": owner.worker_id,
+        "owner_pid": owner.pid,
+        "owner_token": owner.token,
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }
     (workspace_dir / ATTEMPT_WORKSPACE_MARKER).write_text(
         json.dumps(marker, sort_keys=True),
@@ -500,7 +532,6 @@ def build_workspace_sync_plan(
 def cleanup_attempt_workspace(workspace_dir: Path) -> None:
     _require_attempt_marker(workspace_dir)
     shutil.rmtree(workspace_dir)
-    _cleanup_empty_attempt_parents(workspace_dir, depth=3)
 
 
 def cleanup_attempt_workspace_safely(workspace_dir: Path, task: object) -> bool:
@@ -518,26 +549,48 @@ def cleanup_attempt_workspace_safely(workspace_dir: Path, task: object) -> bool:
 
 
 def sweep_abandoned_attempt_workspaces(workspace_root: Path) -> list[Path]:
+    return garbage_collect_attempt_workspaces(
+        workspace_root,
+        ttl=timedelta(seconds=0),
+        active_process_owners=set(),
+        active_owner_tokens=active_workspace_owner_tokens(),
+    )
+
+
+def garbage_collect_attempt_workspaces(
+    workspace_root: Path,
+    *,
+    ttl: timedelta,
+    active_process_owners: set[tuple[str, int]] | None = None,
+    active_owner_tokens: set[str] | None = None,
+    now: datetime | None = None,
+) -> list[Path]:
     if not workspace_root.exists():
         return []
 
+    current_time = now or datetime.now(timezone.utc)
+    process_owners = active_process_owners or set()
+    owner_tokens = active_owner_tokens if active_owner_tokens is not None else active_workspace_owner_tokens()
     removed: list[Path] = []
     for marker in sorted(workspace_root.rglob(ATTEMPT_WORKSPACE_MARKER)):
         workspace_dir = marker.parent
         _require_inside(workspace_root, workspace_dir)
+        marker_data = _read_gc_marker(marker)
+        if marker_data is None:
+            continue
+        owner_worker_id = marker_data["owner_worker_id"]
+        owner_pid = marker_data["owner_pid"]
+        owner_token = marker_data["owner_token"]
+        if (owner_worker_id, owner_pid) in process_owners:
+            continue
+        if owner_token in owner_tokens:
+            continue
+        started_at = marker_data["started_at"]
+        if current_time - started_at < ttl:
+            continue
         shutil.rmtree(workspace_dir)
         removed.append(workspace_dir)
     return removed
-
-
-def _cleanup_empty_attempt_parents(workspace_dir: Path, *, depth: int) -> None:
-    current = workspace_dir.parent
-    for _ in range(depth):
-        try:
-            current.rmdir()
-        except OSError:
-            return
-        current = current.parent
 
 
 def _require_attempt_marker(workspace_dir: Path) -> None:
@@ -555,3 +608,34 @@ def _task_attr(task: object, name: str) -> Any:
         return getattr(task, name)
     except AttributeError as exc:
         raise AttributeError(f"task is missing required attribute {name}") from exc
+
+
+def _read_gc_marker(marker: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+        owner_worker_id = data["owner_worker_id"]
+        owner_pid = data["owner_pid"]
+        owner_token = data["owner_token"]
+        started_at = data["started_at"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError):
+        return None
+    if not isinstance(owner_worker_id, str) or not owner_worker_id:
+        return None
+    if not isinstance(owner_pid, int):
+        return None
+    if not isinstance(owner_token, str) or not owner_token:
+        return None
+    if not isinstance(started_at, str):
+        return None
+    try:
+        parsed_started_at = datetime.fromisoformat(started_at)
+    except ValueError:
+        return None
+    if parsed_started_at.tzinfo is None:
+        parsed_started_at = parsed_started_at.replace(tzinfo=timezone.utc)
+    return {
+        "owner_worker_id": owner_worker_id,
+        "owner_pid": owner_pid,
+        "owner_token": owner_token,
+        "started_at": parsed_started_at,
+    }

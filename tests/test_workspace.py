@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,9 @@ from perago.workspace import (
     build_workspace_sync_plan,
     cleanup_attempt_workspace,
     cleanup_attempt_workspace_safely,
+    garbage_collect_attempt_workspaces,
     prepare_attempt_workspace,
+    WorkspaceOwner,
     sweep_abandoned_attempt_workspaces,
     workspace_delete_object_paths,
     workspace_download_files,
@@ -74,11 +77,17 @@ def test_prepares_and_cleans_attempt_workspace(tmp_path) -> None:
         retry_count=2,
     )
 
-    workspace_dir = prepare_attempt_workspace(tmp_path, task)
+    owner = WorkspaceOwner(worker_id="featuresBuild0001", pid=1234, token="owner-token")
+    workspace_dir = prepare_attempt_workspace(tmp_path, task, owner)
 
     marker = workspace_dir / ATTEMPT_WORKSPACE_MARKER
-    assert workspace_dir == tmp_path / "wf-7f3d" / "features.build" / "task_id=9b4c" / "retry_count=2"
-    assert json.loads(marker.read_text(encoding="utf-8")) == {
+    assert workspace_dir == tmp_path / "task_id=9b4c"
+    marker_data = json.loads(marker.read_text(encoding="utf-8"))
+    assert marker_data.pop("started_at")
+    assert marker_data == {
+        "owner_pid": 1234,
+        "owner_token": "owner-token",
+        "owner_worker_id": "featuresBuild0001",
         "retry_count": 2,
         "task_def_name": "features.build",
         "task_id": "9b4c",
@@ -88,28 +97,21 @@ def test_prepares_and_cleans_attempt_workspace(tmp_path) -> None:
     cleanup_attempt_workspace(workspace_dir)
 
     assert not workspace_dir.exists()
-    assert not (tmp_path / "wf-7f3d" / "features.build" / "task_id=9b4c").exists()
-    assert not (tmp_path / "wf-7f3d" / "features.build").exists()
-    assert not (tmp_path / "wf-7f3d").exists()
     assert tmp_path.exists()
 
 
-def test_cleanup_preserves_non_empty_attempt_parent_dirs(tmp_path) -> None:
+def test_preparing_duplicate_task_workspace_fails_closed(tmp_path) -> None:
     task = Attempt(
         workflow_instance_id="wf-7f3d",
         task_def_name="features.build",
         task_id="9b4c",
         retry_count=2,
     )
-    workspace_dir = prepare_attempt_workspace(tmp_path, task)
-    sibling = workspace_dir.parent / "retry_count=3"
-    sibling.mkdir()
+    owner = WorkspaceOwner(worker_id="featuresBuild0001", pid=1234, token="owner-token")
+    prepare_attempt_workspace(tmp_path, task, owner)
 
-    cleanup_attempt_workspace(workspace_dir)
-
-    assert not workspace_dir.exists()
-    assert sibling.exists()
-    assert workspace_dir.parent.exists()
+    with pytest.raises(FileExistsError):
+        prepare_attempt_workspace(tmp_path, task, owner)
 
 
 def test_workspace_upload_files_map_local_files_under_prefix_and_skip_marker(tmp_path) -> None:
@@ -249,9 +251,23 @@ def test_safe_cleanup_logs_and_preserves_cleanup_failure(tmp_path) -> None:
 
 
 def test_sweep_removes_only_marked_attempt_workspaces(tmp_path) -> None:
-    marked = tmp_path / "wf" / "task" / "task_id=1" / "retry_count=0"
+    marked = tmp_path / "task_id=1"
     marked.mkdir(parents=True)
-    (marked / ATTEMPT_WORKSPACE_MARKER).write_text("{}", encoding="utf-8")
+    (marked / ATTEMPT_WORKSPACE_MARKER).write_text(
+        json.dumps(
+            {
+                "workflow_instance_id": "wf",
+                "task_id": "1",
+                "retry_count": 0,
+                "task_def_name": "task",
+                "owner_worker_id": "worker0001",
+                "owner_pid": 1234,
+                "owner_token": "dead-token",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
     keep = tmp_path / "keep"
     keep.mkdir()
     (keep / "file.txt").write_text("keep", encoding="utf-8")
@@ -261,3 +277,101 @@ def test_sweep_removes_only_marked_attempt_workspaces(tmp_path) -> None:
     assert removed == [marked]
     assert not marked.exists()
     assert keep.exists()
+
+
+def test_gc_keeps_active_owners_and_removes_old_dead_owners(tmp_path) -> None:
+    old_started_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    active_process = _marked_workspace(
+        tmp_path,
+        "active-process",
+        owner_worker_id="worker0001",
+        owner_pid=111,
+        owner_token="process-token",
+        started_at=old_started_at,
+    )
+    active_token = _marked_workspace(
+        tmp_path,
+        "active-token",
+        owner_worker_id="worker0002",
+        owner_pid=222,
+        owner_token="token-live",
+        started_at=old_started_at,
+    )
+    dead = _marked_workspace(
+        tmp_path,
+        "dead",
+        owner_worker_id="worker0003",
+        owner_pid=333,
+        owner_token="token-dead",
+        started_at=old_started_at,
+    )
+    young = _marked_workspace(
+        tmp_path,
+        "young",
+        owner_worker_id="worker0004",
+        owner_pid=444,
+        owner_token="token-young",
+        started_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    removed = garbage_collect_attempt_workspaces(
+        tmp_path,
+        ttl=timedelta(hours=1),
+        active_process_owners={("worker0001", 111)},
+        active_owner_tokens={"token-live"},
+    )
+
+    assert removed == [dead]
+    assert active_process.exists()
+    assert active_token.exists()
+    assert not dead.exists()
+    assert young.exists()
+
+
+def test_gc_skips_legacy_and_bad_markers(tmp_path) -> None:
+    legacy = tmp_path / "task_id=legacy"
+    legacy.mkdir()
+    (legacy / ATTEMPT_WORKSPACE_MARKER).write_text("{}", encoding="utf-8")
+    bad = tmp_path / "task_id=bad"
+    bad.mkdir()
+    (bad / ATTEMPT_WORKSPACE_MARKER).write_text("{bad-json", encoding="utf-8")
+
+    removed = garbage_collect_attempt_workspaces(
+        tmp_path,
+        ttl=timedelta(seconds=0),
+        active_process_owners=set(),
+        active_owner_tokens=set(),
+    )
+
+    assert removed == []
+    assert legacy.exists()
+    assert bad.exists()
+
+
+def _marked_workspace(
+    root: Path,
+    task_id: str,
+    *,
+    owner_worker_id: str,
+    owner_pid: int,
+    owner_token: str,
+    started_at: str,
+) -> Path:
+    workspace = root / f"task_id={task_id}"
+    workspace.mkdir()
+    (workspace / ATTEMPT_WORKSPACE_MARKER).write_text(
+        json.dumps(
+            {
+                "workflow_instance_id": "wf",
+                "task_id": task_id,
+                "retry_count": 0,
+                "task_def_name": "task",
+                "owner_worker_id": owner_worker_id,
+                "owner_pid": owner_pid,
+                "owner_token": owner_token,
+                "started_at": started_at,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return workspace

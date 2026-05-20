@@ -21,6 +21,7 @@ from perago import (
     task,
 )
 from perago.workspace import attempt_workspace_dir
+from perago.workspace import active_workspace_owner_tokens
 
 
 class Params(BaseModel):
@@ -158,6 +159,7 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         stage_workspace=stage_workspace,
         publish_workspace=publish_workspace,
         cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.branch}"),
+        owner_worker_id="featuresBuild0001",
     )
 
     assert result.conductor_payload() == {
@@ -179,6 +181,44 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         "cleanup:perago/staging/wf/build",
     ]
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_registers_owner_token_during_attempt(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt()
+    observed_tokens: list[set[str]] = []
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        observed_tokens.append(active_workspace_owner_tokens())
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"feature_set": "default", "min_rows": 100},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            branch="perago/staging/wf/build",
+            commit="staging-commit",
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: (
+            "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca"
+        ),
+        cleanup_staging=lambda staged: None,
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.status == "COMPLETED"
+    assert len(observed_tokens) == 1
+    assert len(observed_tokens[0]) == 1
+    assert active_workspace_owner_tokens().isdisjoint(observed_tokens[0])
 
 
 def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(tmp_path) -> None:
@@ -207,6 +247,7 @@ def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(
         stage_workspace=stage_workspace,
         publish_workspace=publish_workspace,
         cleanup_staging=lambda staged: None,
+        owner_worker_id="featuresBuild0001",
     )
 
     assert result.status == "FAILED_WITH_TERMINAL_ERROR"
@@ -239,6 +280,7 @@ def test_run_workspace_task_attempt_checks_attempt_fence_before_publish(tmp_path
         stage_workspace=stage_workspace,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        owner_worker_id="featuresBuild0001",
     )
 
     assert result.status == "FAILED"
@@ -274,6 +316,7 @@ def test_run_workspace_task_attempt_cleans_staging_when_second_attempt_fence_fai
         ),
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: calls.append("publish") or "unused",
         cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.branch}"),
+        owner_worker_id="featuresBuild0001",
     )
 
     assert result.status == "FAILED"
@@ -313,6 +356,7 @@ def test_run_workspace_task_attempt_preserves_result_when_staging_cleanup_fails(
             "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca"
         ),
         cleanup_staging=cleanup_staging,
+        owner_worker_id="featuresBuild0001",
     )
 
     assert result.status == "COMPLETED"
@@ -336,6 +380,7 @@ def test_run_workspace_task_attempt_returns_failed_result_for_bad_input(tmp_path
         ),
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        owner_worker_id="featuresBuild0001",
     )
 
     assert result.status == "FAILED"

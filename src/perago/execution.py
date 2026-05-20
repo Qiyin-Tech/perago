@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +20,13 @@ from perago.guards import check_guardrails
 from perago.models import WorkspaceInput, WorkspaceSpec
 from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
-from perago.workspace import cleanup_attempt_workspace_safely, prepare_attempt_workspace
+from perago.workspace import (
+    cleanup_attempt_workspace_safely,
+    new_workspace_owner,
+    prepare_attempt_workspace,
+    register_active_workspace_owner,
+    unregister_active_workspace_owner,
+)
 
 
 DownloadWorkspace = Callable[[WorkspaceInput, WorkspaceSpec, Path], None]
@@ -84,6 +91,7 @@ def run_workspace_task_attempt(
     stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
+    owner_worker_id: str | None = None,
 ) -> RuntimeTaskResult:
     """
     Run one workspace task attempt.
@@ -175,11 +183,13 @@ def run_workspace_task_attempt(
 
     workspace_dir: Path | None = None
     staged: StagedWorkspace | None = None
+    owner = new_workspace_owner(owner_worker_id or os.environ.get("PERAGO_WORKER_ID", f"pid-{os.getpid()}"))
+    register_active_workspace_owner(owner)
     try:
         if set(input_data) != {"workspace", "params"}:
             raise TaskInputError("workspace task input must contain only workspace and params")
         workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
-        workspace_dir = prepare_attempt_workspace(workspace_root, attempt)
+        workspace_dir = prepare_attempt_workspace(workspace_root, attempt, owner)
         download_workspace(workspace_input, workspace, workspace_dir)
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
@@ -200,6 +210,7 @@ def run_workspace_task_attempt(
             _cleanup_staging_safely(staged, cleanup_staging)
         if workspace_dir is not None:
             cleanup_attempt_workspace_safely(workspace_dir, attempt)
+        unregister_active_workspace_owner(owner)
 
 
 def run_workspace_free_task_attempt(
