@@ -11,4 +11,5 @@ workspace-task
 workspace-free-task
 pydantic-contracts
 guardrails
+controls-and-taskdef
 ```
