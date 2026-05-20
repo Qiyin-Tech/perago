@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import multiprocessing
 import os
 import signal
@@ -7,6 +8,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from types import FrameType
 
 from loguru import logger
@@ -30,6 +32,7 @@ from perago.workspace import garbage_collect_workspace_owner, sweep_abandoned_at
 
 RESTART_BACKOFF_SECONDS = (1, 2, 4, 8, 16)
 MAX_RESTART_BACKOFF_SECONDS = 30
+SUPERVISOR_WORKSPACE_LOCK_FILE = ".perago-supervisor.lock"
 
 
 @dataclass(frozen=True)
@@ -193,9 +196,31 @@ def run_worker_supervisor(
 ) -> None:
     if process_count < 1:
         raise RuntimeConfigError("worker process count must be at least 1")
-    removed = sweep_abandoned_attempt_workspaces(config.workspace_root)
-    if removed:
-        logger.bind(removed_count=len(removed)).info("swept abandoned attempt workspaces at startup")
+    if execution_mode not in ("process", "thread"):
+        raise RuntimeConfigError("execution mode must be either 'process' or 'thread'")
+
+    workspace_lock = acquire_supervisor_workspace_lock(config.workspace_root)
+    try:
+        removed = sweep_abandoned_attempt_workspaces(config.workspace_root)
+        if removed:
+            logger.bind(removed_count=len(removed)).info("swept abandoned attempt workspaces at startup")
+        _run_worker_supervisor_locked(
+            config=config,
+            module_target=module_target,
+            process_count=process_count,
+            execution_mode=execution_mode,
+        )
+    finally:
+        workspace_lock.release()
+
+
+def _run_worker_supervisor_locked(
+    *,
+    config: RuntimeConfig,
+    module_target: str,
+    process_count: int,
+    execution_mode: ExecutionMode,
+) -> None:
     if execution_mode == "thread":
         gc_loop = start_workspace_gc_loop(
             config=config,
@@ -206,8 +231,6 @@ def run_worker_supervisor(
         finally:
             gc_loop.stop()
         return
-    if execution_mode != "process":
-        raise RuntimeConfigError("execution mode must be either 'process' or 'thread'")
     specs = worker_child_specs(
         base_env={"PERAGO_WORKER_ID_PREFIX": config.worker_id_prefix},
         module_target=module_target,
@@ -304,6 +327,92 @@ def run_worker_supervisor(
             logger.bind(removed_count=len(final_removed)).info("swept abandoned attempt workspaces after shutdown")
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)
+
+
+@dataclass(frozen=True)
+class SupervisorWorkspaceLock:
+    path: Path
+    supervisor_pid: int
+
+    def release(self) -> None:
+        try:
+            data = _read_supervisor_workspace_lock(self.path)
+        except (OSError, RuntimeConfigError):
+            return
+        if data.get("supervisor_pid") == self.supervisor_pid:
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def acquire_supervisor_workspace_lock(workspace_root: os.PathLike[str]) -> SupervisorWorkspaceLock:
+    root = Path(workspace_root)
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / SUPERVISOR_WORKSPACE_LOCK_FILE
+    supervisor_pid = os.getpid()
+    payload = json.dumps({"supervisor_pid": supervisor_pid}, sort_keys=True) + "\n"
+
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except FileExistsError:
+            try:
+                lock_stat = lock_path.stat()
+            except FileNotFoundError:
+                continue
+            try:
+                data = _read_supervisor_workspace_lock(lock_path)
+            except FileNotFoundError:
+                continue
+            owner_pid = data.get("supervisor_pid")
+            if isinstance(owner_pid, int) and not _pid_is_alive(owner_pid):
+                _unlink_supervisor_workspace_lock_if_same(lock_path, lock_stat)
+                continue
+            raise RuntimeConfigError(
+                f"workspace root {root} is already locked by supervisor pid {owner_pid}; "
+                f"use a different PERAGO_WORKSPACE_ROOT for each supervisor"
+            )
+        with os.fdopen(fd, "w", encoding="utf-8") as file:
+            file.write(payload)
+        return SupervisorWorkspaceLock(path=lock_path, supervisor_pid=supervisor_pid)
+
+
+def _read_supervisor_workspace_lock(path: Path) -> dict[str, object]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RuntimeConfigError(
+            f"workspace root lock {path} is not valid JSON; remove it only if no supervisor is using this root"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeConfigError(f"workspace root lock {path} must contain an object")
+    return data
+
+
+def _unlink_supervisor_workspace_lock_if_same(path: Path, lock_stat: os.stat_result) -> None:
+    try:
+        current_stat = path.stat()
+    except FileNotFoundError:
+        return
+    if (current_stat.st_dev, current_stat.st_ino) != (lock_stat.st_dev, lock_stat.st_ino):
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _pid_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _stop_worker_processes(

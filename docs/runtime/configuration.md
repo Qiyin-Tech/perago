@@ -42,7 +42,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 
 | 变量 | Required | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `PERAGO_WORKSPACE_ROOT` | optional | 平台临时目录下的 `perago/workspaces` | attempt-local workspace 根目录。必须是 worker 主机文件系统路径，不是 LakeFS object path。 |
+| `PERAGO_WORKSPACE_ROOT` | optional | 平台临时目录下的 `perago/workspaces` | attempt-local workspace 根目录。必须是 worker 主机文件系统路径，不是 LakeFS object path。一个 running supervisor 会独占一个 root。 |
 | `PERAGO_LOG_ROOT` | optional | 平台临时目录下的 `perago/logs` | worker JSONL 日志根目录。 |
 | `PERAGO_LOG_FILE_MAX_SIZE` | optional | `100MB` | 单个日志文件 rotation 阈值。接受正数加 `KB`、`MB` 或 `GB`，例如 `512KB`、`100MB`、`1.5GB`。裸数字非法。 |
 | `PERAGO_LOG_RETENTION` | optional | `30d` | 日志保留天数。接受正整数加 `d`，例如 `7d` 或 `30d`。 |
@@ -61,6 +61,8 @@ Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。
 ## 本地目录校验
 
 默认情况下，`load_runtime_config()` 会探测 `PERAGO_WORKSPACE_ROOT` 和 `PERAGO_LOG_ROOT` 是否可创建、可写。探测会在目标根目录下创建临时目录和 `write-test` 文件，再立即删除。
+
+`perago start` 会在 `PERAGO_WORKSPACE_ROOT` 下创建 `.perago-supervisor.lock`，并写入当前 supervisor pid。该锁表达部署边界：一个 supervisor 独占一个 workspace root，不允许两个 supervisor 同时指向同一个 root。如果锁内 pid 仍存活，新的 supervisor 会拒绝启动；如果上次 supervisor 或 host 崩溃留下的 pid 已不存在，启动时会清理旧锁并重新加锁。正常退出时 supervisor 会释放自己持有的锁。
 
 `perago check` 因此可以在不连接 Conductor 或 LakeFS 的情况下验证本机目录配置：
 

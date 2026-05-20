@@ -1,3 +1,5 @@
+import json
+import os
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -5,6 +7,7 @@ import pytest
 
 from perago import ConductorConfig, LakeFSConfig, RuntimeConfig, RuntimeConfigError, restart_backoff_seconds, worker_child_specs
 from perago.supervisor import (
+    SUPERVISOR_WORKSPACE_LOCK_FILE,
     WorkspaceGCLoop,
     _active_process_workspace_owners,
     _broker_environment,
@@ -127,6 +130,109 @@ def test_run_worker_supervisor_uses_thread_runner_without_child_processes(monkey
         "module_target": "app.workers.features_build",
         "thread_count": 3,
     }
+    assert not (config.workspace_root / SUPERVISOR_WORKSPACE_LOCK_FILE).exists()
+
+
+def test_run_worker_supervisor_writes_workspace_lock_while_running(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key="lakefs-secret",
+        ),
+    )
+    observed = {}
+
+    def fake_thread_runner_main(**kwargs) -> None:
+        lock_path = kwargs["config"].workspace_root / SUPERVISOR_WORKSPACE_LOCK_FILE
+        observed["lock"] = json.loads(lock_path.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr("perago.supervisor._thread_runner_main", fake_thread_runner_main)
+
+    run_worker_supervisor(
+        config=config,
+        module_target="app.workers.features_build",
+        process_count=1,
+        execution_mode="thread",
+    )
+
+    assert observed == {"lock": {"supervisor_pid": os.getpid()}}
+    assert not (config.workspace_root / SUPERVISOR_WORKSPACE_LOCK_FILE).exists()
+
+
+def test_run_worker_supervisor_rejects_active_workspace_lock(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key="lakefs-secret",
+        ),
+    )
+    config.workspace_root.mkdir(parents=True)
+    lock_path = config.workspace_root / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text(json.dumps({"supervisor_pid": os.getpid()}), encoding="utf-8")
+    monkeypatch.setattr(
+        "perago.supervisor._thread_runner_main",
+        lambda **kwargs: pytest.fail("locked workspace root must not start supervisor"),
+    )
+
+    with pytest.raises(RuntimeConfigError, match="already locked"):
+        run_worker_supervisor(
+            config=config,
+            module_target="app.workers.features_build",
+            process_count=1,
+            execution_mode="thread",
+        )
+
+
+def test_run_worker_supervisor_replaces_stale_workspace_lock(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key="lakefs-secret",
+        ),
+    )
+    config.workspace_root.mkdir(parents=True)
+    lock_path = config.workspace_root / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text(json.dumps({"supervisor_pid": 987654321}), encoding="utf-8")
+    started = {}
+
+    def fake_kill(pid: int, signal_number: int) -> None:
+        assert signal_number == 0
+        if pid == 987654321:
+            raise ProcessLookupError
+
+    monkeypatch.setattr("perago.supervisor.os.kill", fake_kill)
+    monkeypatch.setattr("perago.supervisor._thread_runner_main", lambda **kwargs: started.update(kwargs))
+
+    run_worker_supervisor(
+        config=config,
+        module_target="app.workers.features_build",
+        process_count=1,
+        execution_mode="thread",
+    )
+
+    assert started["config"] is config
+    assert not lock_path.exists()
 
 
 def test_run_worker_supervisor_rejects_invalid_process_count(tmp_path) -> None:

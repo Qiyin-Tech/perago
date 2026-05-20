@@ -26,7 +26,7 @@ Perago 目前不会把 Conductor auth key、Conductor auth secret 或 LakeFS 配
 
 | 变量 | 状态 | 默认值 | 读取位置 | 校验和说明 |
 | --- | --- | --- | --- | --- |
-| `PERAGO_WORKSPACE_ROOT` | optional | 平台临时目录下的 `perago/workspaces` | `RuntimeConfig.workspace_root` | attempt-local workspace 根目录。默认会探测目录是否可创建、可写。 |
+| `PERAGO_WORKSPACE_ROOT` | optional | 平台临时目录下的 `perago/workspaces` | `RuntimeConfig.workspace_root` | attempt-local workspace 根目录。默认会探测目录是否可创建、可写。`perago start` 会用 `.perago-supervisor.lock` 要求一个 running supervisor 独占一个 root。 |
 | `PERAGO_LOG_ROOT` | optional | 平台临时目录下的 `perago/logs` | `RuntimeConfig.log_root` | worker JSONL 日志根目录。默认会探测目录是否可创建、可写。 |
 | `PERAGO_LOG_FILE_MAX_SIZE` | optional | `100MB` | `RuntimeConfig.log_file_max_size` | 接受正数加 `KB`、`MB` 或 `GB`，大小写不敏感，例如 `512KB`、`100MB`、`1.5GB`。裸数字、`0MB` 和无效单位会被拒绝。 |
 | `PERAGO_LOG_RETENTION` | optional | `30d` | `RuntimeConfig.log_retention` | 接受正整数加 `d`，大小写不敏感，例如 `7d` 或 `30D`。`0d` 和其他单位会被拒绝。 |
@@ -69,6 +69,8 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `perago start` | 是 | 是 | 启动前要求 `CONDUCTOR_SERVER_URL`、三个 LakeFS 变量和已注册 TaskDef。 |
 
 如果只配置了部分 LakeFS 变量，三个命令都会在加载 runtime config 阶段失败；这是为了避免部署环境带着半套连接配置继续运行。
+
+`perago start` 还会在 `PERAGO_WORKSPACE_ROOT` 下创建 `.perago-supervisor.lock`，锁内容包含当前 supervisor pid。已有活 pid 锁时，启动会失败并提示为每个 supervisor 使用不同的 `PERAGO_WORKSPACE_ROOT`；崩溃遗留的死 pid 锁会在启动时被替换。
 
 ## 常见错误文本
 

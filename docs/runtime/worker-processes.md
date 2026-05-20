@@ -69,13 +69,13 @@ supervisor 会把每个 executor 的 `PERAGO_WORKER_ID` 写入 child environment
 5. broker 绑定 Conductor SDK runner 并进入 poll/update loop。
 6. executor 绑定 LakeFS workspace runtime，并进入 assignment queue loop。
 
-启动时 supervisor 会先 sweep 一次上次 supervisor/host crash 遗留的 orphan attempt workspace。随后 supervisor 会启动后台 workspace GC loop，按 `PERAGO_WORKSPACE_GC_INTERVAL` 周期扫描超过 `PERAGO_WORKSPACE_GC_TTL` 且不属于活跃 executor owner 的 attempt workspace。准备 worker runtime 只做本进程身份和日志初始化：
+启动时 supervisor 会先在 `PERAGO_WORKSPACE_ROOT` 下获取 `.perago-supervisor.lock`。锁文件写入当前 supervisor pid，用来禁止两个 supervisor 共享同一个 workspace root；如果已有锁的 pid 还活着，新的 supervisor 会拒绝启动；如果 pid 已不存在，旧锁会被清理。拿到锁后，supervisor 会 sweep 一次上次 supervisor/host crash 遗留的 orphan attempt workspace。随后 supervisor 会启动后台 workspace GC loop，按 `PERAGO_WORKSPACE_GC_INTERVAL` 周期扫描超过 `PERAGO_WORKSPACE_GC_TTL` 且不属于活跃 executor owner 的 attempt workspace。准备 worker runtime 只做本进程身份和日志初始化：
 
 | 步骤 | 结果 |
 | --- | --- |
 | 配置 worker 日志 | 在 `PERAGO_LOG_ROOT/<module_target>/worker_id=<id>/` 下创建 JSONL 日志文件，并应用 size rotation 和 retention 设置。 |
 
-日志初始化发生在 broker 或 executor child process 内。workspace sweep、周期 GC、dead executor targeted GC 和 shutdown 后最终 sweep 由 supervisor 负责。
+日志初始化发生在 broker 或 executor child process 内。workspace root 加锁、workspace sweep、周期 GC、dead executor targeted GC 和 shutdown 后最终 sweep 由 supervisor 负责。supervisor 正常退出时会释放自己持有的 root 锁。
 
 ## 外部服务前置条件
 
