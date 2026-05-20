@@ -15,6 +15,7 @@ from perago.execution import (
     build_workspace_task_output,
     invoke_workspace_free_task,
     invoke_workspace_task_body,
+    run_workspace_task_attempt,
 )
 from perago.guards import (
     check_guardrails,
@@ -90,6 +91,7 @@ __all__ = [
     "require_file",
     "require_glob",
     "result_for_exception",
+    "run_workspace_task_attempt",
     "restart_backoff_seconds",
     "staging_branch_name",
     "task",

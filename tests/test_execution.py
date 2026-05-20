@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -14,8 +15,10 @@ from perago import (
     invoke_workspace_task_body,
     load_module_task,
     require_dir,
+    run_workspace_task_attempt,
     task,
 )
+from perago.workspace import attempt_workspace_dir
 
 
 class Params(BaseModel):
@@ -24,6 +27,14 @@ class Params(BaseModel):
 
 class Output(BaseModel):
     value: int
+
+
+@dataclass(frozen=True)
+class Attempt:
+    workflow_instance_id: str = "wf-7f3d"
+    task_def_name: str = "features.build"
+    task_id: str = "9b4c"
+    retry_count: int = 2
 
 
 @task(
@@ -41,6 +52,10 @@ WORKSPACE_INPUT = {
     "ref_type": "commit",
     "ref": "589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3",
 }
+
+
+def _attempt() -> Attempt:
+    return Attempt()
 
 
 def test_invokes_workspace_task_body_with_guardrails(tmp_path) -> None:
@@ -90,6 +105,79 @@ def test_workspace_task_body_classifies_post_guardrail_failure(tmp_path) -> None
             },
             tmp_path,
         )
+
+
+def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt()
+    calls: list[str] = []
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        calls.append(f"download:{workspace_input.ref}:{workspace_spec.prefix}")
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    def publish_workspace(workspace_dir, workspace_input, workspace_spec) -> str:
+        calls.append(f"publish:{workspace_input.branch}:{workspace_spec.prefix}")
+        assert (workspace_dir / "features" / "default.parquet").is_file()
+        return "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca"
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"feature_set": "default", "min_rows": 100},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        publish_workspace=publish_workspace,
+    )
+
+    assert result.conductor_payload() == {
+        "status": "COMPLETED",
+        "output": {
+            "workspace": {
+                "repository": "song-000123",
+                "branch": "main",
+                "ref_type": "commit",
+                "ref": "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca",
+            },
+            "result": {"row_count": 100, "feature_count": 24},
+        },
+    }
+    assert calls == [
+        "download:589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3:audio/render",
+        "publish:main:audio/render",
+    ]
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt()
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec, workspace_dir
+
+    def publish_workspace(workspace_dir, workspace_input, workspace_spec) -> str:
+        raise AssertionError("pre guardrail failure must not publish")
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"feature_set": "default", "min_rows": 100},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        publish_workspace=publish_workspace,
+    )
+
+    assert result.status == "FAILED_WITH_TERMINAL_ERROR"
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
 
 def test_invokes_workspace_free_task_from_wrapped_params() -> None:

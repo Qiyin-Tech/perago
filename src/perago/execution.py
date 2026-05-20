@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +13,59 @@ from perago.errors import (
     TaskInputError,
 )
 from perago.guards import check_guardrails
-from perago.models import WorkspaceInput
+from perago.models import WorkspaceInput, WorkspaceSpec
+from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
+from perago.workspace import cleanup_attempt_workspace_safely, prepare_attempt_workspace
+
+
+DownloadWorkspace = Callable[[WorkspaceInput, WorkspaceSpec, Path], None]
+PublishWorkspace = Callable[[Path, WorkspaceInput, WorkspaceSpec], str]
+
+
+def run_workspace_task_attempt(
+    task: TaskDefinition,
+    input_data: Mapping[str, Any],
+    attempt: object,
+    workspace_root: Path,
+    *,
+    download_workspace: DownloadWorkspace,
+    publish_workspace: PublishWorkspace,
+) -> RuntimeTaskResult:
+    if not task.has_workspace:
+        raise TaskInputError("run_workspace_task_attempt only supports workspace tasks")
+    if set(input_data) != {"workspace", "params"}:
+        raise TaskInputError("workspace task input must contain only workspace and params")
+
+    workspace = task.workspace
+    if workspace is None:
+        raise TaskInputError("workspace task definition is missing WorkspaceSpec")
+
+    workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
+    workspace_dir: Path | None = None
+    try:
+        workspace_dir = prepare_attempt_workspace(workspace_root, attempt)
+        download_workspace(workspace_input, workspace, workspace_dir)
+        body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
+        published_ref = publish_workspace(workspace_dir, workspace_input, workspace)
+        output_workspace = WorkspaceInput.model_validate(
+            {
+                **workspace_input.model_dump(mode="json"),
+                "ref_type": "commit",
+                "ref": published_ref,
+            }
+        )
+        return completed_result(
+            {
+                "workspace": output_workspace.model_dump(mode="json"),
+                **body_output,
+            }
+        )
+    except Exception as exc:
+        return result_for_exception(exc)
+    finally:
+        if workspace_dir is not None:
+            cleanup_attempt_workspace_safely(workspace_dir, attempt)
 
 
 def invoke_workspace_task_body(
