@@ -42,6 +42,20 @@ class BudgetOutput(BaseModel):
     value: int
 
 
+class ModelWithTitleField(BaseModel):
+    title: str
+    count: int = 1
+
+
+class ResultWithOptionalTitle(BaseModel):
+    title: str | None = None
+
+
+@task(name="tests.title_field", owner_email="data@example.com")
+def title_field_task(params: ModelWithTitleField) -> ResultWithOptionalTitle:
+    return ResultWithOptionalTitle(title=params.title)
+
+
 @task(
     name="tests.publish_budget",
     owner_email="data@example.com",
@@ -132,6 +146,19 @@ def test_write_taskdef_requires_json_file_path(tmp_path) -> None:
     with pytest.raises(ValueError, match="output must be a JSON file path"):
         write_taskdef(load_module_task("app.workers.metadata_validate"), tmp_path / "generated")
 
+
+
+def test_schema_preserves_fields_named_title() -> None:
+    taskdef = build_taskdef(title_field_task.__perago_task__)
+
+    params_schema = taskdef["inputSchema"]["data"]["properties"]["params"]
+    result_schema = taskdef["outputSchema"]["data"]["properties"]["result"]
+
+    assert "title" in params_schema["properties"]
+    assert "title" in params_schema["required"]
+    assert params_schema["additionalProperties"] is False
+    assert "title" in result_schema["properties"]
+    assert result_schema["additionalProperties"] is False
 
 def test_schema_for_model_inlines_refs_and_closes_nested_objects() -> None:
     schema = schema_for_model(NestedParams)
