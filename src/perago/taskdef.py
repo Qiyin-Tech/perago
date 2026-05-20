@@ -29,6 +29,46 @@ CONTROL_FIELD_MAP = {
 
 
 def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
+    """
+    Build the Conductor TaskDef dictionary for one Perago task.
+
+    ``build_taskdef`` is the library equivalent of ``perago extract``. It
+    converts a validated :class:`perago.TaskDefinition` into the JSON-compatible
+    mapping registered with Conductor. The task function signature determines
+    input and output keys, Pydantic models provide JSON Schema, and
+    :class:`perago.TaskControls` provide retry, timeout, response timeout, and
+    execution limit fields.
+
+    Parameters
+    ----------
+    task : TaskDefinition
+        Validated task definition returned by :func:`perago.load_module_task`
+        or attached to a decorated function as ``__perago_task__``.
+
+    Returns
+    -------
+    dict of str to Any
+        JSON-compatible Conductor TaskDef mapping. Workspace tasks contain
+        ``workspace`` and ``params`` input keys and ``workspace`` and
+        ``result`` output keys; workspace-free tasks contain only ``params``
+        and ``result``.
+
+    See Also
+    --------
+    write_taskdef : Write the generated TaskDef mapping to a JSON file.
+
+    Notes
+    -----
+    Workspace guardrails, workspace prefixes, LakeFS connection settings, and
+    publish budget internals are not serialized into the TaskDef. A publish
+    budget only affects the generated ``responseTimeoutSeconds`` value.
+
+    Examples
+    --------
+    >>> task_def = build_taskdef(load_module_task("app.workers.features_build"))
+    >>> task_def["name"]
+    'features.build'
+    """
     input_properties: dict[str, Any] = {}
     output_properties: dict[str, Any] = {}
     input_required: list[str] = []
@@ -70,6 +110,41 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
 
 
 def write_taskdef(task: TaskDefinition, output: Path) -> Path:
+    """
+    Write a generated Conductor TaskDef to a JSON file.
+
+    The parent directory is created when needed, and the file is written with
+    stable indentation so the generated TaskDef can be reviewed before it is
+    registered with Conductor.
+
+    Parameters
+    ----------
+    task : TaskDefinition
+        Validated task definition to serialize.
+    output : pathlib.Path
+        Destination JSON file path. The path must end with ``.json`` and must
+        not point to an existing directory.
+
+    Returns
+    -------
+    pathlib.Path
+        The output path after the JSON file has been written.
+
+    Raises
+    ------
+    ValueError
+        If ``output`` does not end with ``.json`` or points to a directory.
+
+    See Also
+    --------
+    build_taskdef : Build the TaskDef mapping without writing a file.
+
+    Examples
+    --------
+    >>> task_def = load_module_task("app.workers.metadata_validate")
+    >>> write_taskdef(task_def, Path("generated/metadata.validate.json"))
+    PosixPath('generated/metadata.validate.json')
+    """
     if output.suffix != ".json":
         raise ValueError("output must be a JSON file path, for example generated/features.build.json")
     if output.exists() and output.is_dir():
