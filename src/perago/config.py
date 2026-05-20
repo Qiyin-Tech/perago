@@ -19,6 +19,22 @@ LOG_SIZE_UNITS = {
 }
 
 
+class ConductorConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    server_url: str
+    auth_key: str | None = None
+    auth_secret: str | None = None
+
+
+class LakeFSConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    endpoint_url: str
+    access_key_id: str
+    secret_access_key: str
+
+
 class RuntimeConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -27,6 +43,8 @@ class RuntimeConfig(BaseModel):
     log_file_max_size: int
     log_retention: timedelta
     worker_id_prefix: str
+    conductor: ConductorConfig | None = None
+    lakefs: LakeFSConfig | None = None
 
 
 def load_runtime_config(
@@ -46,6 +64,8 @@ def load_runtime_config(
         log_file_max_size=parse_log_file_max_size(env.get("PERAGO_LOG_FILE_MAX_SIZE")),
         log_retention=parse_log_retention(env.get("PERAGO_LOG_RETENTION")),
         worker_id_prefix=resolve_worker_id_prefix(module_target, env),
+        conductor=parse_conductor_config(env),
+        lakefs=parse_lakefs_config(env),
     )
     if probe_roots:
         check_writable_root(config.workspace_root)
@@ -115,6 +135,43 @@ def parse_log_retention(value: str | None) -> timedelta:
     return timedelta(days=int(match.group(1)))
 
 
+def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:
+    server_url = _env_optional(env, "CONDUCTOR_SERVER_URL")
+    auth_key = _env_optional(env, "CONDUCTOR_AUTH_KEY")
+    auth_secret = _env_optional(env, "CONDUCTOR_AUTH_SECRET")
+    if server_url is None and auth_key is None and auth_secret is None:
+        return None
+    if server_url is None:
+        raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required when Conductor auth is configured")
+    if (auth_key is None) != (auth_secret is None):
+        raise RuntimeConfigError("CONDUCTOR_AUTH_KEY and CONDUCTOR_AUTH_SECRET must be configured together")
+    return ConductorConfig(server_url=server_url, auth_key=auth_key, auth_secret=auth_secret)
+
+
+def parse_lakefs_config(env: dict[str, str]) -> LakeFSConfig | None:
+    endpoint_url = _env_optional(env, "LAKECTL_SERVER_ENDPOINT_URL")
+    access_key_id = _env_optional(env, "LAKECTL_CREDENTIALS_ACCESS_KEY_ID")
+    secret_access_key = _env_optional(env, "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY")
+    if endpoint_url is None and access_key_id is None and secret_access_key is None:
+        return None
+    missing = [
+        name
+        for name, value in [
+            ("LAKECTL_SERVER_ENDPOINT_URL", endpoint_url),
+            ("LAKECTL_CREDENTIALS_ACCESS_KEY_ID", access_key_id),
+            ("LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY", secret_access_key),
+        ]
+        if value is None
+    ]
+    if missing:
+        raise RuntimeConfigError(f"LakeFS config is incomplete; missing {', '.join(missing)}")
+    return LakeFSConfig(
+        endpoint_url=endpoint_url,
+        access_key_id=access_key_id,
+        secret_access_key=secret_access_key,
+    )
+
+
 def validate_worker_id_prefix(value: str) -> str:
     if not value:
         raise RuntimeConfigError("PERAGO_WORKER_ID_PREFIX must not be empty")
@@ -158,3 +215,10 @@ def _strip_env_value(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
         return value[1:-1]
     return value
+
+
+def _env_optional(env: dict[str, str], name: str) -> str | None:
+    value = env.get(name)
+    if value is None or value.strip() == "":
+        return None
+    return value.strip()

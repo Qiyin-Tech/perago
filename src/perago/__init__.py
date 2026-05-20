@@ -1,5 +1,5 @@
 from perago.attempt import assert_current_attempt_snapshot
-from perago.config import RuntimeConfig, load_runtime_config
+from perago.config import ConductorConfig, LakeFSConfig, RuntimeConfig, load_runtime_config
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
@@ -74,6 +74,7 @@ from perago.workspace import (
 
 __all__ = [
     "ExecutionLimits",
+    "ConductorConfig",
     "GuardrailViolation",
     "PostGuardrailViolation",
     "PublishBudgetError",
@@ -81,6 +82,7 @@ __all__ = [
     "PreGuardrailViolation",
     "PublishBudget",
     "RetryPolicy",
+    "LakeFSConfig",
     "RuntimeConfig",
     "RuntimeConfigError",
     "RuntimeTaskResult",

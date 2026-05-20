@@ -4,10 +4,14 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from perago.config import (
+    ConductorConfig,
+    LakeFSConfig,
     RuntimeConfig,
     child_environment,
     load_runtime_config,
     load_runtime_env,
+    parse_conductor_config,
+    parse_lakefs_config,
     parse_log_file_max_size,
     parse_log_retention,
     read_dotenv,
@@ -52,6 +56,12 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "PERAGO_LOG_FILE_MAX_SIZE=1.5MB",
                 "PERAGO_LOG_RETENTION=7d",
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
+                "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "CONDUCTOR_AUTH_KEY=conductor-key",
+                "CONDUCTOR_AUTH_SECRET=conductor-secret",
+                "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
+                "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
+                "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
             ]
         ),
         encoding="utf-8",
@@ -69,6 +79,16 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.log_file_max_size == 1_572_864
     assert config.log_retention == timedelta(days=7)
     assert config.worker_id_prefix == "dotenvPrefix"
+    assert config.conductor == ConductorConfig(
+        server_url="http://conductor.local/api",
+        auth_key="conductor-key",
+        auth_secret="conductor-secret",
+    )
+    assert config.lakefs == LakeFSConfig(
+        endpoint_url="http://lakefs.local",
+        access_key_id="lakefs-key",
+        secret_access_key="lakefs-secret",
+    )
 
 
 def test_load_runtime_config_empty_process_env_does_not_read_os_environ(monkeypatch, tmp_path) -> None:
@@ -128,6 +148,30 @@ def test_parse_log_retention() -> None:
 
     with pytest.raises(RuntimeConfigError, match="PERAGO_LOG_RETENTION"):
         parse_log_retention("0d")
+
+
+def test_parse_connection_configs_are_optional_and_validate_partial_env() -> None:
+    assert parse_conductor_config({}) is None
+    assert parse_lakefs_config({}) is None
+
+    assert parse_conductor_config({"CONDUCTOR_SERVER_URL": " http://localhost:8080/api "}) == ConductorConfig(
+        server_url="http://localhost:8080/api"
+    )
+    with pytest.raises(RuntimeConfigError, match="CONDUCTOR_AUTH_KEY"):
+        parse_conductor_config(
+            {
+                "CONDUCTOR_SERVER_URL": "http://localhost:8080/api",
+                "CONDUCTOR_AUTH_KEY": "key",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY"):
+        parse_lakefs_config(
+            {
+                "LAKECTL_SERVER_ENDPOINT_URL": "http://localhost:8000",
+                "LAKECTL_CREDENTIALS_ACCESS_KEY_ID": "key",
+            }
+        )
 
 
 def test_child_environment_derives_worker_id_from_module_target() -> None:
