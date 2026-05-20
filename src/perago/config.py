@@ -37,7 +37,8 @@ def load_runtime_config(
     probe_roots: bool = True,
 ) -> RuntimeConfig:
     base = cwd or Path.cwd()
-    env = load_runtime_env(process_env or dict(os.environ), read_dotenv(base / ".env"))
+    current_env = dict(os.environ) if process_env is None else process_env
+    env = load_runtime_env(current_env, read_dotenv(base / ".env"))
     temp_root = Path(tempfile.gettempdir()) / "perago"
     config = RuntimeConfig(
         workspace_root=Path(env.get("PERAGO_WORKSPACE_ROOT", temp_root / "workspaces")),

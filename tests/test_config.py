@@ -69,6 +69,23 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.worker_id_prefix == "dotenvPrefix"
 
 
+def test_load_runtime_config_empty_process_env_does_not_read_os_environ(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PERAGO_WORKER_ID_PREFIX", "processPrefix")
+    (tmp_path / ".env").write_text(
+        "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
+        encoding="utf-8",
+    )
+
+    config = load_runtime_config(
+        "app.workers.features_build",
+        cwd=tmp_path,
+        process_env={},
+        probe_roots=False,
+    )
+
+    assert config.worker_id_prefix == "dotenvPrefix"
+
+
 def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
     config = RuntimeConfig(
         workspace_root=tmp_path / "workspaces",
