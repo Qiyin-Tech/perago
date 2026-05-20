@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from perago.errors import PublishFenceError
 from perago.models import WorkspaceInput, WorkspaceSpec
 
 
@@ -53,6 +55,44 @@ def perago_metadata(
     if extra:
         data.update(extra)
     return {key: metadata_value(value) for key, value in data.items()}
+
+
+def choose_publish_base(
+    *,
+    workspace: WorkspaceInput | dict[str, Any],
+    current_head: str,
+    commits: Sequence[object],
+    logical_task_key: str,
+) -> tuple[str, str | None]:
+    workspace_input = WorkspaceInput.model_validate(workspace)
+    if current_head == workspace_input.ref:
+        return current_head, None
+
+    if commits and all(
+        _commit_metadata(commit).get("perago.logical_task_key") == logical_task_key
+        for commit in commits
+    ):
+        return current_head, _commit_id(commits[-1])
+
+    raise PublishFenceError(
+        f"{workspace_input.branch} advanced from {workspace_input.ref} to {current_head}"
+    )
+
+
+def _commit_id(commit: object) -> str:
+    if isinstance(commit, Mapping):
+        return str(commit["id"])
+    return str(getattr(commit, "id"))
+
+
+def _commit_metadata(commit: object) -> Mapping[str, str]:
+    if isinstance(commit, Mapping):
+        metadata = commit.get("metadata", {})
+    else:
+        metadata = getattr(commit, "metadata", {})
+    if not isinstance(metadata, Mapping):
+        return {}
+    return metadata
 
 
 def _task_attr(task: object, name: str) -> object:

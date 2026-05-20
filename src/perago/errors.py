@@ -20,3 +20,7 @@ class PreGuardrailViolation(GuardrailViolation):
 
 class PostGuardrailViolation(GuardrailViolation):
     """Raised when post guardrails fail after the task function returns."""
+
+
+class PublishFenceError(RuntimeError):
+    """Raised when a workspace branch cannot be safely advanced by an attempt."""

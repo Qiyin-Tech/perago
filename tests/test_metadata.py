@@ -1,6 +1,15 @@
 from dataclasses import dataclass
 
-from perago import WorkspaceSpec, logical_task_key, metadata_value, perago_metadata
+import pytest
+
+from perago import (
+    PublishFenceError,
+    WorkspaceSpec,
+    choose_publish_base,
+    logical_task_key,
+    metadata_value,
+    perago_metadata,
+)
 
 
 @dataclass(frozen=True)
@@ -67,3 +76,36 @@ def test_perago_metadata_serializes_transaction_identity() -> None:
         "perago.supersedes": "previous-commit",
         "perago.extra": '{"a":1,"b":2}',
     }
+
+
+def test_choose_publish_base_uses_input_ref_when_branch_has_not_advanced() -> None:
+    assert choose_publish_base(
+        workspace=WORKSPACE_INPUT,
+        current_head=WORKSPACE_INPUT["ref"],
+        commits=[],
+        logical_task_key="wf-7f3d:build:2:0:features.build",
+    ) == (WORKSPACE_INPUT["ref"], None)
+
+
+def test_choose_publish_base_accepts_same_logical_task_advancement() -> None:
+    assert choose_publish_base(
+        workspace=WORKSPACE_INPUT,
+        current_head="head-2",
+        commits=[
+            {"id": "head-1", "metadata": {"perago.logical_task_key": "same-key"}},
+            {"id": "head-2", "metadata": {"perago.logical_task_key": "same-key"}},
+        ],
+        logical_task_key="same-key",
+    ) == ("head-2", "head-2")
+
+
+def test_choose_publish_base_rejects_unrelated_branch_advancement() -> None:
+    with pytest.raises(PublishFenceError, match="main advanced"):
+        choose_publish_base(
+            workspace=WORKSPACE_INPUT,
+            current_head="head-2",
+            commits=[
+                {"id": "head-2", "metadata": {"perago.logical_task_key": "other-key"}},
+            ],
+            logical_task_key="same-key",
+        )

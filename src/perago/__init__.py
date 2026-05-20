@@ -2,6 +2,7 @@ from perago.config import RuntimeConfig, load_runtime_config
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
+    PublishFenceError,
     PreGuardrailViolation,
     RuntimeConfigError,
     TaskDefinitionError,
@@ -20,7 +21,7 @@ from perago.guards import (
     require_file,
     require_glob,
 )
-from perago.metadata import logical_task_key, metadata_value, perago_metadata
+from perago.metadata import choose_publish_base, logical_task_key, metadata_value, perago_metadata
 from perago.models import (
     ExecutionLimits,
     RetryPolicy,
@@ -43,6 +44,7 @@ __all__ = [
     "ExecutionLimits",
     "GuardrailViolation",
     "PostGuardrailViolation",
+    "PublishFenceError",
     "PreGuardrailViolation",
     "RetryPolicy",
     "RuntimeConfig",
@@ -59,6 +61,7 @@ __all__ = [
     "build_workspace_free_task_output",
     "build_workspace_task_output",
     "check_guardrails",
+    "choose_publish_base",
     "completed_result",
     "failed_result",
     "forbid_glob",
