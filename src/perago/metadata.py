@@ -69,9 +69,13 @@ def choose_publish_base(
     if current_head == workspace_input.ref:
         return current_head, None
 
-    if commits and all(
-        _commit_metadata(commit).get("perago.logical_task_key") == logical_task_key
-        for commit in commits
+    if (
+        commits
+        and _commit_id(commits[-1]) == current_head
+        and all(
+            _commit_metadata(commit).get("perago.logical_task_key") == logical_task_key
+            for commit in commits
+        )
     ):
         return current_head, _commit_id(commits[-1])
 

@@ -113,6 +113,18 @@ def test_choose_publish_base_rejects_unrelated_branch_advancement() -> None:
         )
 
 
+def test_choose_publish_base_rejects_incomplete_commit_ranges() -> None:
+    with pytest.raises(PublishFenceError, match="main advanced"):
+        choose_publish_base(
+            workspace=WORKSPACE_INPUT,
+            current_head="head-2",
+            commits=[
+                {"id": "head-1", "metadata": {"perago.logical_task_key": "same-key"}},
+            ],
+            logical_task_key="same-key",
+        )
+
+
 def test_staging_branch_name_is_internal_and_attempt_scoped() -> None:
     assert staging_branch_name(Attempt(task_id="task/9b4c", retry_count=3)) == (
         "perago/staging/wf-7f3d/build/seq=2/iteration=0/task_id=task_9b4c/retry=3"
