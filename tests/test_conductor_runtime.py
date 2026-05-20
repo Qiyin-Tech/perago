@@ -1,3 +1,6 @@
+from queue import Empty
+
+import pytest
 from conductor.client.http.models.task import Task
 
 from perago.conductor_runtime import (
@@ -11,6 +14,7 @@ from perago.conductor_runtime import (
     ProcessTaskCompletion,
     StopProcessExecutor,
     conductor_task_to_attempt,
+    execute_polled_task,
     load_current_attempt_via_broker,
     run_conductor_process_broker,
     run_process_executor_loop,
@@ -84,6 +88,94 @@ def test_conductor_task_to_attempt_keeps_missing_response_timeout_optional() -> 
     attempt = conductor_task_to_attempt(task)
 
     assert attempt.response_timeout_seconds is None
+
+
+def test_conductor_task_to_attempt_validates_required_and_mapping_fields() -> None:
+    task = {
+        "workflow_instance_id": "wf-7f3d",
+        "task_id": "task-9b4c",
+        "retry_count": 2,
+        "task_def_name": "features.build",
+        "reference_task_name": "build_features",
+        "seq": 3,
+        "status": "IN_PROGRESS",
+        "input_data": "not-a-mapping",
+    }
+
+    with pytest.raises(TypeError, match="input_data must be a mapping"):
+        conductor_task_to_attempt(task)
+
+    task.pop("task_id")
+    with pytest.raises(AttributeError, match="missing required field task_id"):
+        conductor_task_to_attempt(task)
+
+
+def test_conductor_task_to_attempt_coerces_optional_retry_fields() -> None:
+    task = {
+        "workflow_instance_id": "wf-7f3d",
+        "task_id": "task-9b4c",
+        "retry_count": 2,
+        "task_def_name": "features.build",
+        "reference_task_name": "build_features",
+        "seq": 3,
+        "status": "IN_PROGRESS",
+        "input_data": {"params": {"value": 1}},
+        "retried_task_id": 123,
+        "response_timeout_seconds": "75",
+    }
+
+    attempt = conductor_task_to_attempt(task)
+
+    assert attempt.retried_task_id == "123"
+    assert attempt.response_timeout_seconds == 75
+
+
+def test_orkes_conductor_runtime_client_wraps_metadata_and_task_clients() -> None:
+    class NotFoundByStatus(Exception):
+        status = 404
+
+    class NotFoundByMessage(Exception):
+        pass
+
+    class FakeMetadataClient:
+        def __init__(self) -> None:
+            self.errors = []
+            self.task_names = []
+
+        def get_task_def(self, task_name: str) -> None:
+            self.task_names.append(task_name)
+            if self.errors:
+                raise self.errors.pop(0)
+
+    class FakeTaskClient:
+        def get_task(self, task_id: str):
+            assert task_id == "task-9b4c"
+            return {
+                "workflow_instance_id": "wf-7f3d",
+                "task_id": task_id,
+                "retry_count": 2,
+                "task_def_name": "features.build",
+                "reference_task_name": "build_features",
+                "seq": 3,
+                "status": "IN_PROGRESS",
+                "input_data": {"params": {"value": 1}},
+            }
+
+    metadata_client = FakeMetadataClient()
+    client = OrkesConductorRuntimeClient(task_client=FakeTaskClient(), metadata_client=metadata_client)
+
+    assert client.taskdef_exists("features.build") is True
+    metadata_client.errors.append(NotFoundByStatus())
+    assert client.taskdef_exists("features.missing") is False
+    metadata_client.errors.append(NotFoundByMessage("HTTP 404 not found"))
+    assert client.taskdef_exists("features.also_missing") is False
+    metadata_client.errors.append(RuntimeError("boom"))
+    with pytest.raises(RuntimeError, match="boom"):
+        client.taskdef_exists("features.error")
+
+    attempt = client.get_task("task-9b4c")
+    assert attempt.task_id == "task-9b4c"
+    assert attempt.input_data == {"params": {"value": 1}}
 
 
 def test_runtime_result_to_sdk_task_result_maps_completed_and_failures() -> None:
@@ -277,6 +369,75 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None
     assert result.reason_for_incompletion == "executor returned completion for task other-task; expected task-9b4c"
 
 
+def test_process_dispatch_worker_fails_closed_on_invalid_completion() -> None:
+    class FakeAssignmentQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeCompletionQueue:
+        def get(self, timeout=None):
+            del timeout
+            return object()
+
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=FakeCompletionQueue(),
+    )
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+    )
+
+    result = worker.execute(task)
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "executor returned invalid completion for task task-9b4c"
+
+
+def test_process_dispatch_worker_times_out_waiting_for_completion() -> None:
+    class FakeAssignmentQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeCompletionQueue:
+        def get(self, timeout=None):
+            del timeout
+            raise Empty
+
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=FakeCompletionQueue(),
+        completion_timeout_seconds=0,
+    )
+    task = Task(
+        workflow_instance_id="wf-7f3d",
+        task_id="task-9b4c",
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+    )
+
+    result = worker.execute(task)
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "executor did not return result for task task-9b4c"
+
+
 def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting() -> None:
     fresh_attempt = _attempt()
 
@@ -343,6 +504,60 @@ def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting()
     assert response_queue.items == [ProcessAttemptFenceResponse(task_id="task-9b4c", attempt=fresh_attempt)]
 
 
+def test_process_dispatch_worker_reports_attempt_fence_client_errors() -> None:
+    class FakeResponseQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    response_queue = FakeResponseQueue()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=object(),
+        completion_queue=object(),
+        attempt_fence_response_queues={"metadata0001": response_queue},
+    )
+
+    worker._handle_attempt_fence_request(ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c"))
+
+    assert response_queue.items == [
+        ProcessAttemptFenceResponse(task_id="task-9b4c", error="broker has no conductor client")
+    ]
+
+
+def test_process_dispatch_worker_reports_attempt_fence_reload_errors() -> None:
+    class FakeResponseQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    class FakeClient:
+        def get_task(self, task_id: str):
+            assert task_id == "task-9b4c"
+            raise RuntimeError("conductor unavailable")
+
+    response_queue = FakeResponseQueue()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=object(),
+        completion_queue=object(),
+        attempt_fence_response_queues={"metadata0001": response_queue},
+        client=FakeClient(),
+    )
+
+    worker._handle_attempt_fence_request(ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c"))
+
+    assert response_queue.items == [ProcessAttemptFenceResponse(task_id="task-9b4c", error="conductor unavailable")]
+
+
 def test_load_current_attempt_via_broker_round_trips_request_and_response() -> None:
     current_attempt = _attempt()
     fresh_attempt = ConductorTaskAttempt(
@@ -379,6 +594,33 @@ def test_load_current_attempt_via_broker_round_trips_request_and_response() -> N
 
     assert loaded is fresh_attempt
     assert request_queue.items == [ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c")]
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (object(), "invalid attempt-fence response"),
+        (ProcessAttemptFenceResponse(task_id="other-task", attempt=_attempt()), "response for other-task"),
+        (ProcessAttemptFenceResponse(task_id="task-9b4c", error="conductor failed"), "conductor failed"),
+        (ProcessAttemptFenceResponse(task_id="task-9b4c"), "empty attempt-fence response"),
+    ],
+)
+def test_load_current_attempt_via_broker_rejects_invalid_responses(response, message: str) -> None:
+    class FakeRequestQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeResponseQueue:
+        def get(self):
+            return response
+
+    with pytest.raises(RuntimeError, match=message):
+        load_current_attempt_via_broker(
+            _attempt(),
+            worker_id="metadata0001",
+            request_queue=FakeRequestQueue(),
+            response_queue=FakeResponseQueue(),
+        )
 
 
 def test_process_executor_loop_executes_assignment_and_returns_completion() -> None:
@@ -422,6 +664,74 @@ def test_process_executor_loop_executes_assignment_and_returns_completion() -> N
         "status": "COMPLETED",
         "output": {"result": {"valid": True, "reason": None}},
     }
+
+
+def test_process_executor_loop_ignores_invalid_assignments() -> None:
+    class FakeAssignmentQueue:
+        def __init__(self) -> None:
+            self.items = [
+                object(),
+                StopProcessExecutor(),
+            ]
+
+        def get(self):
+            return self.items.pop(0)
+
+    class FakeCompletionQueue:
+        def __init__(self) -> None:
+            self.items = []
+
+        def put(self, item) -> None:
+            self.items.append(item)
+
+    completion_queue = FakeCompletionQueue()
+
+    run_process_executor_loop(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadata0001",
+        workspace_root="unused",
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=completion_queue,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+    )
+
+    assert completion_queue.items == []
+
+
+def test_execute_polled_task_uses_workspace_attempt_runner(monkeypatch, tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt(
+        {
+            "params": {"song_id": "song-000123"},
+            "workspace": {"repo": "catalog", "branch": "main", "prefix": "songs/song-000123/features"},
+        }
+    )
+    calls = {}
+
+    def fake_run_workspace_task_attempt(*args, **kwargs):
+        calls["args"] = args
+        calls["kwargs"] = kwargs
+        return completed_result({"ok": True})
+
+    monkeypatch.setattr("perago.conductor_runtime.run_workspace_task_attempt", fake_run_workspace_task_attempt)
+
+    result = execute_polled_task(
+        task=task,
+        attempt=attempt,
+        workspace_root=tmp_path,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+    )
+
+    assert result == completed_result({"ok": True})
+    assert calls["args"][:4] == (task, attempt.input_data, attempt, tmp_path)
 
 
 def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
@@ -492,4 +802,3 @@ def test_run_conductor_process_broker_builds_sdk_runner() -> None:
     assert created["worker"].get_identity() == "metadataBroker"
     assert created["worker"]._assignment_queue is assignment_queue
     assert created["worker"]._completion_queue is completion_queue
-

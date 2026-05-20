@@ -1,5 +1,7 @@
 # Perago
 
+[![codecov](https://codecov.io/gh/Qiyin-Tech/perago/graph/badge.svg?token=TO0V8X49OF)](https://codecov.io/gh/Qiyin-Tech/perago) 
+
 [文档站（Read the Docs）](https://perago.readthedocs.io) · [PyPI](https://pypi.org/project/perago/)
 
 Perago 是一个面向 Conductor worker 的 typed Python 运行时层，用来在版本化 workspace 上执行任务。它把任务函数签名、Pydantic 输入输出契约、Conductor TaskDef、LakeFS workspace 下载与发布、guardrail 校验和 worker 启动边界收敛到同一套模型里。
