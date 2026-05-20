@@ -46,6 +46,7 @@ from perago.result import (
     result_for_exception,
     terminal_failed_result,
 )
+from perago.supervisor import WorkerChildSpec, restart_backoff_seconds, worker_child_specs
 
 __all__ = [
     "ExecutionLimits",
@@ -62,6 +63,7 @@ __all__ = [
     "TaskDefinitionError",
     "TaskInputError",
     "TimeoutPolicy",
+    "WorkerChildSpec",
     "WorkspaceInput",
     "WorkspaceSpec",
     "build_taskdef",
@@ -84,8 +86,10 @@ __all__ = [
     "require_file",
     "require_glob",
     "result_for_exception",
+    "restart_backoff_seconds",
     "staging_branch_name",
     "task",
     "terminal_failed_result",
+    "worker_child_specs",
     "write_taskdef",
 ]
