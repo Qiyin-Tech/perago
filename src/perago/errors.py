@@ -6,5 +6,9 @@ class RuntimeConfigError(ValueError):
     """Raised when local runtime configuration is invalid."""
 
 
+class TaskInputError(ValueError):
+    """Raised when Conductor task input does not match the Perago contract."""
+
+
 class GuardrailViolation(RuntimeError):
     """Raised when a workspace guardrail check fails."""

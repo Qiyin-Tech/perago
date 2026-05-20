@@ -1,5 +1,6 @@
 from perago.config import RuntimeConfig, load_runtime_config
-from perago.errors import GuardrailViolation, RuntimeConfigError, TaskDefinitionError
+from perago.errors import GuardrailViolation, RuntimeConfigError, TaskDefinitionError, TaskInputError
+from perago.execution import invoke_workspace_free_task
 from perago.guards import (
     check_guardrails,
     forbid_glob,
@@ -27,12 +28,14 @@ __all__ = [
     "TaskControls",
     "TaskDefinition",
     "TaskDefinitionError",
+    "TaskInputError",
     "TimeoutPolicy",
     "WorkspaceInput",
     "WorkspaceSpec",
     "build_taskdef",
     "check_guardrails",
     "forbid_glob",
+    "invoke_workspace_free_task",
     "load_module_task",
     "load_runtime_config",
     "require_dir",
