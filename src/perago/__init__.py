@@ -15,6 +15,7 @@ from perago.guards import (
     require_file,
     require_glob,
 )
+from perago.metadata import logical_task_key, metadata_value, perago_metadata
 from perago.models import (
     ExecutionLimits,
     RetryPolicy,
@@ -48,6 +49,9 @@ __all__ = [
     "invoke_workspace_task_body",
     "load_module_task",
     "load_runtime_config",
+    "logical_task_key",
+    "metadata_value",
+    "perago_metadata",
     "require_dir",
     "require_file",
     "require_glob",
