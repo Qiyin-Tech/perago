@@ -30,6 +30,10 @@ def test_builds_workspace_taskdef() -> None:
     assert workspace_input["required"] == ["repository", "branch", "ref_type", "ref"]
     workspace_output = taskdef["outputSchema"]["data"]["properties"]["workspace"]
     assert workspace_output["required"] == ["repository", "branch", "ref_type", "ref"]
+    serialized = json.dumps(taskdef)
+    assert "guardrail" not in serialized
+    assert "require_glob" not in serialized
+    assert "forbid_glob" not in serialized
 
 
 def test_builds_workspace_free_taskdef() -> None:
