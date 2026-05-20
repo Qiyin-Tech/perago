@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 from perago import (
     PostGuardrailViolation,
     PreGuardrailViolation,
+    StagedWorkspace,
     TaskInputError,
     WorkspaceSpec,
     build_workspace_free_task_output,
@@ -120,9 +121,15 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         raw.mkdir()
         (raw / "input.parquet").write_text("ok", encoding="utf-8")
 
-    def publish_workspace(workspace_dir, workspace_input, workspace_spec) -> str:
-        calls.append(f"publish:{workspace_input.branch}:{workspace_spec.prefix}")
+    def stage_workspace(workspace_dir, workspace_input, workspace_spec, attempt) -> StagedWorkspace:
+        del attempt
+        calls.append(f"stage:{workspace_input.branch}:{workspace_spec.prefix}")
         assert (workspace_dir / "features" / "default.parquet").is_file()
+        return StagedWorkspace(branch="perago/staging/wf/build", commit="staging-commit")
+
+    def publish_workspace(staged, workspace_input, workspace_spec, attempt) -> str:
+        del workspace_input, workspace_spec, attempt
+        calls.append(f"publish:{staged.branch}:{staged.commit}")
         return "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca"
 
     result = run_workspace_task_attempt(
@@ -135,7 +142,9 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         tmp_path,
         download_workspace=download_workspace,
         load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=stage_workspace,
         publish_workspace=publish_workspace,
+        cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.branch}"),
     )
 
     assert result.conductor_payload() == {
@@ -152,7 +161,9 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
     }
     assert calls == [
         "download:589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3:audio/render",
-        "publish:main:audio/render",
+        "stage:main:audio/render",
+        "publish:perago/staging/wf/build:staging-commit",
+        "cleanup:perago/staging/wf/build",
     ]
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
@@ -164,7 +175,10 @@ def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(
     def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
         del workspace_input, workspace_spec, workspace_dir
 
-    def publish_workspace(workspace_dir, workspace_input, workspace_spec) -> str:
+    def stage_workspace(workspace_dir, workspace_input, workspace_spec, attempt) -> StagedWorkspace:
+        raise AssertionError("pre guardrail failure must not stage")
+
+    def publish_workspace(staged, workspace_input, workspace_spec, attempt) -> str:
         raise AssertionError("pre guardrail failure must not publish")
 
     result = run_workspace_task_attempt(
@@ -177,7 +191,9 @@ def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(
         tmp_path,
         download_workspace=download_workspace,
         load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=stage_workspace,
         publish_workspace=publish_workspace,
+        cleanup_staging=lambda staged: None,
     )
 
     assert result.status == "FAILED_WITH_TERMINAL_ERROR"
@@ -194,7 +210,7 @@ def test_run_workspace_task_attempt_checks_attempt_fence_before_publish(tmp_path
         raw.mkdir()
         (raw / "input.parquet").write_text("ok", encoding="utf-8")
 
-    def publish_workspace(workspace_dir, workspace_input, workspace_spec) -> str:
+    def stage_workspace(workspace_dir, workspace_input, workspace_spec, attempt) -> StagedWorkspace:
         raise AssertionError("stale attempts must not publish")
 
     result = run_workspace_task_attempt(
@@ -207,11 +223,86 @@ def test_run_workspace_task_attempt_checks_attempt_fence_before_publish(tmp_path
         tmp_path,
         download_workspace=download_workspace,
         load_current_attempt=lambda current_attempt: Attempt(status="COMPLETED"),
-        publish_workspace=publish_workspace,
+        stage_workspace=stage_workspace,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
     )
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "9b4c"
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_cleans_staging_when_second_attempt_fence_fails(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt()
+    fresh_attempts = iter([attempt, Attempt(status="COMPLETED")])
+    calls: list[str] = []
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"feature_set": "default", "min_rows": 100},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: next(fresh_attempts),
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            branch="perago/staging/wf/build",
+            commit="staging-commit",
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: calls.append("publish") or "unused",
+        cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.branch}"),
+    )
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "9b4c"
+    assert calls == ["cleanup:perago/staging/wf/build"]
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_preserves_result_when_staging_cleanup_fails(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    attempt = _attempt()
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    def cleanup_staging(staged) -> None:
+        raise RuntimeError(f"delete failed: {staged.branch}")
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"feature_set": "default", "min_rows": 100},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            branch="perago/staging/wf/build",
+            commit="staging-commit",
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: (
+            "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca"
+        ),
+        cleanup_staging=cleanup_staging,
+    )
+
+    assert result.status == "COMPLETED"
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
 
@@ -226,7 +317,12 @@ def test_run_workspace_task_attempt_returns_failed_result_for_bad_input(tmp_path
         tmp_path,
         download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
         load_current_attempt=lambda current_attempt: current_attempt,
-        publish_workspace=lambda workspace_dir, workspace_input, workspace_spec: "unused",
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            branch="unused",
+            commit="unused",
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
     )
 
     assert result.status == "FAILED"

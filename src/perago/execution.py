@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from pydantic import BaseModel
 
 from perago.attempt import assert_current_attempt_snapshot
@@ -22,7 +24,15 @@ from perago.workspace import cleanup_attempt_workspace_safely, prepare_attempt_w
 
 DownloadWorkspace = Callable[[WorkspaceInput, WorkspaceSpec, Path], None]
 LoadCurrentAttempt = Callable[[object], object]
-PublishWorkspace = Callable[[Path, WorkspaceInput, WorkspaceSpec], str]
+StageWorkspace = Callable[[Path, WorkspaceInput, WorkspaceSpec, object], "StagedWorkspace"]
+PublishWorkspace = Callable[["StagedWorkspace", WorkspaceInput, WorkspaceSpec, object], str]
+CleanupStaging = Callable[["StagedWorkspace"], None]
+
+
+@dataclass(frozen=True)
+class StagedWorkspace:
+    branch: str
+    commit: str
 
 
 def run_workspace_task_attempt(
@@ -33,7 +43,9 @@ def run_workspace_task_attempt(
     *,
     download_workspace: DownloadWorkspace,
     load_current_attempt: LoadCurrentAttempt,
+    stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
+    cleanup_staging: CleanupStaging,
 ) -> RuntimeTaskResult:
     if not task.has_workspace:
         raise TaskInputError("run_workspace_task_attempt only supports workspace tasks")
@@ -42,6 +54,7 @@ def run_workspace_task_attempt(
         raise TaskInputError("workspace task definition is missing WorkspaceSpec")
 
     workspace_dir: Path | None = None
+    staged: StagedWorkspace | None = None
     try:
         if set(input_data) != {"workspace", "params"}:
             raise TaskInputError("workspace task input must contain only workspace and params")
@@ -50,7 +63,9 @@ def run_workspace_task_attempt(
         download_workspace(workspace_input, workspace, workspace_dir)
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
-        published_ref = publish_workspace(workspace_dir, workspace_input, workspace)
+        staged = stage_workspace(workspace_dir, workspace_input, workspace, attempt)
+        assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
+        published_ref = publish_workspace(staged, workspace_input, workspace, attempt)
         output_workspace = WorkspaceInput.model_validate(
             {
                 **workspace_input.model_dump(mode="json"),
@@ -67,6 +82,8 @@ def run_workspace_task_attempt(
     except Exception as exc:
         return result_for_exception(exc)
     finally:
+        if staged is not None:
+            _cleanup_staging_safely(staged, cleanup_staging)
         if workspace_dir is not None:
             cleanup_attempt_workspace_safely(workspace_dir, attempt)
 
@@ -158,6 +175,16 @@ def _check_phase_guardrails(
         check_guardrails(workspace_dir, guardrails, phase)
     except GuardrailViolation as exc:
         raise error(str(exc)) from exc
+
+
+def _cleanup_staging_safely(staged: StagedWorkspace, cleanup_staging: CleanupStaging) -> None:
+    try:
+        cleanup_staging(staged)
+    except Exception as exc:  # noqa: BLE001
+        logger.bind(
+            staging_branch=staged.branch,
+            staging_commit=staged.commit,
+        ).opt(exception=exc).error("failed to clean staging workspace")
 
 
 def _validate_result(task: TaskDefinition, raw_result: object) -> BaseModel:

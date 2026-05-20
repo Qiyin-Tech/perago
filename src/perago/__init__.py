@@ -11,6 +11,7 @@ from perago.errors import (
     TaskInputError,
 )
 from perago.execution import (
+    StagedWorkspace,
     build_workspace_free_task_output,
     build_workspace_task_output,
     invoke_workspace_free_task,
@@ -62,6 +63,7 @@ __all__ = [
     "RuntimeConfig",
     "RuntimeConfigError",
     "RuntimeTaskResult",
+    "StagedWorkspace",
     "StaleAttemptError",
     "TaskControls",
     "TaskDefinition",
