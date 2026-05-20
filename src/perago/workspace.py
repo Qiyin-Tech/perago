@@ -169,6 +169,17 @@ def build_workspace_sync_plan(
     )
 
 
+def build_budgeted_workspace_sync_plan(
+    workspace_dir: Path,
+    workspace_spec: WorkspaceSpec,
+    existing_object_paths: list[str],
+    budget: PublishBudget,
+) -> WorkspaceSyncPlan:
+    plan = build_workspace_sync_plan(workspace_dir, workspace_spec, existing_object_paths)
+    assert_workspace_sync_plan_within_budget(plan, budget)
+    return plan
+
+
 def assert_workspace_sync_plan_within_budget(plan: WorkspaceSyncPlan, budget: PublishBudget) -> None:
     if plan.changed_object_count > budget.max_changed_objects:
         raise PublishBudgetError(
