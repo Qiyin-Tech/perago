@@ -23,12 +23,14 @@ class Output(BaseModel):
 
 
 @task(
+    name="features.build",
+    owner_email="data@example.com",
     workspace=WorkspaceSpec(
         prefix="/",
         pre=[require_file("input/data.csv")],
     )
 )
-def build_features(params: Params, workspace: Path) -> Output:
+def build_features(workspace: Path, params: Params) -> Output:
     input_path = workspace / "input" / "data.csv"
     return Output(rows=sum(1 for _ in input_path.open()))
 ```
@@ -49,7 +51,10 @@ class Output(BaseModel):
     doubled: int
 
 
-@task()
+@task(
+    name="numbers.double",
+    owner_email="data@example.com",
+)
 def double(params: Params) -> Output:
     return Output(doubled=params.value * 2)
 ```
