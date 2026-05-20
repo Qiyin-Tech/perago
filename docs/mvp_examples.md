@@ -314,7 +314,7 @@ def check(module_target: str) -> None:
 
 
 @app.command()
-def extract(module_target: str, out: Path) -> None:
+def extract(module_target: str, output: Path) -> None:
     ...
 
 
@@ -325,17 +325,15 @@ def start(module_target: str, j: int = 1) -> None:
 
 ```bash
 perago check app.workers.features_build
-perago extract app.workers.features_build --out generated/
+perago extract app.workers.features_build --output generated/features.build.json
 perago start app.workers.features_build -j 4
 ```
 
-`perago extract` writes a directory of generated files:
+`perago extract` writes one generated Conductor TaskDef JSON file to the explicit output path:
 
 ```text
 generated/
-  taskdefs/
-    features.build.json
-    metadata.validate.json
+  features.build.json
 ```
 
 Schemas are embedded inside the generated task definition JSON. The MVP does not emit standalone schema files.

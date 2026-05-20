@@ -35,13 +35,13 @@ def check(module_target: str) -> None:
 
 
 @app.command()
-def extract(module_target: str, out: Path = typer.Option(..., "--out")) -> None:
+def extract(module_target: str, output: Path = typer.Option(..., "--output", "-o")) -> None:
     """Write generated Conductor TaskDef JSON for one task module."""
     try:
         load_runtime_config(module_target)
         task = load_module_task(module_target)
-        path = write_taskdef(task, out)
-    except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
+        path = write_taskdef(task, output)
+    except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema, ValueError) as exc:
         _fail(str(exc))
     typer.echo(str(path))
 

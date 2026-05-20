@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from pydantic import BaseModel
 
 from perago import (
@@ -121,11 +122,17 @@ def test_builds_workspace_free_taskdef() -> None:
 
 
 def test_writes_taskdef_json(tmp_path) -> None:
-    path = write_taskdef(load_module_task("app.workers.metadata_validate"), tmp_path)
+    output = tmp_path / "generated" / "metadata.validate.json"
+    path = write_taskdef(load_module_task("app.workers.metadata_validate"), output)
 
-    assert path == tmp_path / "taskdefs" / "metadata.validate.json"
+    assert path == output
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["name"] == "metadata.validate"
+
+
+def test_write_taskdef_requires_json_file_path(tmp_path) -> None:
+    with pytest.raises(ValueError, match="output must be a JSON file path"):
+        write_taskdef(load_module_task("app.workers.metadata_validate"), tmp_path / "generated")
 
 
 def test_schema_for_model_inlines_refs_and_closes_nested_objects() -> None:

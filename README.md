@@ -91,7 +91,7 @@ The `perago` command is a Typer CLI. MVP commands accept a Python module import 
 
 ```bash
 perago check app.workers.features_build
-perago extract app.workers.features_build --out generated/
+perago extract app.workers.features_build --output generated/features.build.json
 perago start app.workers.features_build -j 4
 ```
 

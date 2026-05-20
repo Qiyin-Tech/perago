@@ -21,7 +21,7 @@ Use it as the source list for local mock regression tests.
 
 - Symptom: the runner called `build_taskdef()` directly and registered the resulting object.
 - Root cause: tested the lower-level function instead of the public CLI path that users rely on.
-- Fix: `extract_task_def()` now invokes `perago extract scripts.perago_smoke_worker --out <tmp>` and registers the generated JSON.
+- Fix: `extract_task_def()` now invokes `perago extract scripts.perago_smoke_worker --output <tmp>/taskdef.json` and registers the generated JSON.
 - Regression target: local mock should assert the runner uses the CLI extract artifact as the TaskDef source.
 
 ## 4. WorkflowDef had no typed schema

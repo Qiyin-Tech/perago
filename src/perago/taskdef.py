@@ -69,11 +69,14 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
     return data
 
 
-def write_taskdef(task: TaskDefinition, out: Path) -> Path:
-    path = out / "taskdefs" / f"{task.name}.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(build_taskdef(task), indent=2, sort_keys=False) + "\n", encoding="utf-8")
-    return path
+def write_taskdef(task: TaskDefinition, output: Path) -> Path:
+    if output.suffix != ".json":
+        raise ValueError("output must be a JSON file path, for example generated/features.build.json")
+    if output.exists() and output.is_dir():
+        raise ValueError("output must be a JSON file path, not a directory")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(build_taskdef(task), indent=2, sort_keys=False) + "\n", encoding="utf-8")
+    return output
 
 
 def schema_for_model(model: type[BaseModel]) -> dict[str, Any]:

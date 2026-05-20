@@ -148,8 +148,9 @@ def parse_args() -> argparse.Namespace:
 
 def extract_task_def(import_target: str) -> TaskDef:
     with tempfile.TemporaryDirectory(prefix="perago-taskdef-") as temp_dir:
+        taskdef_path = Path(temp_dir) / "taskdef.json"
         completed = subprocess.run(
-            [perago_command(), "extract", import_target, "--out", temp_dir],
+            [perago_command(), "extract", import_target, "--output", str(taskdef_path)],
             cwd=REPO_ROOT,
             env=command_env(),
             text=True,

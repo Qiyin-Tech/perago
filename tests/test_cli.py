@@ -72,11 +72,14 @@ def test_extract_cli_rejects_path_like_task_names(monkeypatch, tmp_path) -> None
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
     runner = CliRunner()
 
-    result = runner.invoke(app, ["extract", "app.workers.bad_task_name_path", "--out", str(tmp_path / "generated")])
+    result = runner.invoke(
+        app,
+        ["extract", "app.workers.bad_task_name_path", "--output", str(tmp_path / "generated" / "bad.name.json")],
+    )
 
     assert result.exit_code == 1
     assert "task name must not contain path separators" in result.output
-    assert not (tmp_path / "bad.name.json").exists()
+    assert not (tmp_path / "generated" / "bad.name.json").exists()
 
 
 def test_check_cli_reads_runtime_config_before_importing_task(monkeypatch, tmp_path) -> None:
@@ -219,13 +222,41 @@ def test_extract_cli_writes_taskdef(monkeypatch, tmp_path) -> None:
 
     result = runner.invoke(
         app,
-        ["extract", "app.workers.metadata_validate", "--out", str(tmp_path / "generated")],
+        ["extract", "app.workers.metadata_validate", "--output", str(tmp_path / "generated" / "metadata.validate.json")],
     )
 
     assert result.exit_code == 0
-    assert (tmp_path / "generated" / "taskdefs" / "metadata.validate.json").exists()
+    assert (tmp_path / "generated" / "metadata.validate.json").exists()
     generated_files = sorted(path.relative_to(tmp_path / "generated") for path in (tmp_path / "generated").rglob("*") if path.is_file())
-    assert generated_files == [pathlib.Path("taskdefs/metadata.validate.json")]
+    assert generated_files == [pathlib.Path("metadata.validate.json")]
+
+
+def test_extract_cli_accepts_short_output_option(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["extract", "app.workers.metadata_validate", "-o", str(tmp_path / "generated" / "taskdef.json")],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "generated" / "taskdef.json").exists()
+
+
+def test_extract_cli_rejects_directory_like_output(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        ["extract", "app.workers.metadata_validate", "-o", str(tmp_path / "generated")],
+    )
+
+    assert result.exit_code == 1
+    assert "output must be a JSON file path" in result.output
 
 
 def test_start_cli_starts_supervisor_after_taskdef_check(monkeypatch, tmp_path) -> None:
