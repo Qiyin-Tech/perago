@@ -3,9 +3,12 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from perago.execution import StagedWorkspace
+from perago.errors import PublishFenceError
 from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
-from perago.metadata import staging_branch_name
+from perago.metadata import logical_task_key, staging_branch_name
 from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
 
 
@@ -74,13 +77,21 @@ class FakeRef:
 
 
 class FakeBranch(FakeRef):
-    def __init__(self, branch_id: str, store: dict[str, bytes], deleted: list[str]) -> None:
+    def __init__(
+        self,
+        branch_id: str,
+        store: dict[str, bytes],
+        deleted: list[str],
+        commit_log: list[FakeCommit] | None = None,
+    ) -> None:
         super().__init__(store, deleted)
         self.id = branch_id
         self.created_from = None
         self.deleted = False
         self.commits: list[FakeCommit] = []
         self.merges: list[dict] = []
+        self.commit_log = commit_log or [FakeCommit(id="input-commit")]
+        self.log_calls: list[dict] = []
 
     def create(self, source_reference: str, exist_ok: bool = False):
         assert exist_ok is True
@@ -94,7 +105,15 @@ class FakeBranch(FakeRef):
         return commit
 
     def get_commit(self):
-        return FakeCommit(id="input-commit")
+        return self.commit_log[0]
+
+    def log(self, **kwargs):
+        self.log_calls.append(kwargs)
+        stop_at = kwargs.get("stop_at")
+        for commit in self.commit_log:
+            if commit.id == stop_at:
+                break
+            yield commit
 
     def merge_into(self, destination_branch, **kwargs):
         self.merges.append({"destination": destination_branch.id, **kwargs})
@@ -116,6 +135,7 @@ class FakeRepo:
         }
         self.deleted: list[str] = []
         self.branches: dict[str, FakeBranch] = {}
+        self.main_commit_log = [FakeCommit(id="input-commit")]
 
     def ref(self, ref_id: str):
         assert ref_id == "input-commit"
@@ -124,7 +144,8 @@ class FakeRepo:
     def branch(self, branch_id: str):
         if branch_id not in self.branches:
             store = self.staging_store if branch_id.startswith("perago-staging-") else {}
-            self.branches[branch_id] = FakeBranch(branch_id, store, self.deleted)
+            commit_log = self.main_commit_log if branch_id == "main" else None
+            self.branches[branch_id] = FakeBranch(branch_id, store, self.deleted, commit_log=commit_log)
         return self.branches[branch_id]
 
 
@@ -234,3 +255,47 @@ def test_lakefs_publish_uses_merge_request_timeout_from_publish_budget(tmp_path)
     assert merge_call["_request_timeout"] == 45
     assert merge_call["merge"].squash_merge is True
     assert merge_call["merge"].metadata["perago.phase"] == "confirm"
+
+
+def test_lakefs_publish_accepts_same_logical_task_commit_range() -> None:
+    repo = FakeRepo()
+    attempt = Attempt()
+    key = logical_task_key(attempt)
+    repo.main_commit_log = [
+        FakeCommit(id="head-2", metadata={"perago.logical_task_key": key}),
+        FakeCommit(id="head-1", metadata={"perago.logical_task_key": key}),
+        FakeCommit(id="input-commit"),
+    ]
+    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+
+    published = runtime.publish_workspace(staged, workspace, spec, attempt)
+
+    assert published == "published-commit"
+    main_branch = repo.branches["main"]
+    assert main_branch.log_calls == [{"stop_at": "input-commit", "first_parent": True}]
+    staging_branch = repo.branches[staged.branch]
+    assert staging_branch.merges[0]["metadata"]["perago.expected_head"] == "head-2"
+    assert staging_branch.merges[0]["metadata"]["perago.supersedes"] == "head-2"
+
+
+def test_lakefs_publish_rejects_metadata_incomplete_commit_range() -> None:
+    repo = FakeRepo()
+    attempt = Attempt()
+    key = logical_task_key(attempt)
+    repo.main_commit_log = [
+        FakeCommit(id="head-2", metadata={"perago.logical_task_key": key}),
+        FakeCommit(id="head-1"),
+        FakeCommit(id="input-commit"),
+    ]
+    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+
+    with pytest.raises(PublishFenceError, match="main advanced"):
+        runtime.publish_workspace(staged, workspace, spec, attempt)
+
+    assert staged.branch not in repo.branches

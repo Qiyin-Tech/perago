@@ -39,7 +39,7 @@ Attempt fence 是 client-side 检查。它依赖 Conductor 当前 attempt 查询
 
 ## Publish fence
 
-Publish fence 由 `choose_publish_base(...)` 执行。它比较 input `workspace.ref`、target branch 当前 head，以及从 input ref 到 current head 的 commit metadata。
+Publish fence 由 `choose_publish_base(...)` 执行。runtime 会先读取 target branch 从 current head 回溯到 input `workspace.ref` 的 first-parent commit range，再比较 input ref、current head 和这段 range 的 commit metadata。
 
 MVP 接受两种状态：
 
@@ -49,6 +49,8 @@ MVP 接受两种状态：
 | current head 只包含同一 `perago.logical_task_key` 的 confirm commits | 允许继续发布，并把 current head 记录为被覆盖的同一 logical task commit。 | current head |
 
 其他状态都会触发 `PublishFenceError`，错误文本形如 `<branch> advanced from <input-ref> to <current-head>`。这表示 target branch 已经被其他 workflow step、其他 workflow instance、人工写入或 metadata 不完整的 commit 推进；runtime fail closed，不发布 workspace output。
+
+runtime 不只检查 current head。若 current head metadata 匹配但 range 中较早的 commit metadata 缺失或属于其他 logical task，publish fence 仍会拒绝发布。这样可以避免把无法完整归因的 branch advancement 误分类为同一 logical task retry。
 
 `perago.logical_task_key` 不包含 Conductor `task_id`，因此同一个 workflow step 的 retry attempts 会共享它。`perago.task_id` 和 `perago.staging_commit` 仍会写入 confirm metadata，用于排查单次 attempt 或识别已经发生的 publish。
 

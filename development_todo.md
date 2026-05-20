@@ -2,7 +2,7 @@
 
 ## Publish fence commit-range classification
 
-- [ ] Implement the intended publish-fence commit range check, or deliberately narrow the implementation contract.
+- [x] Implement the intended publish-fence commit range check, or deliberately narrow the implementation contract.
 
 Current state: `LakeFSWorkspaceRuntime.publish_workspace()` passes only the target branch head commit into `build_workspace_publication_plan()`. The intended project behavior is to classify target-branch advancement by checking the commit range from the input workspace ref to the current head, and accepting only commits attributable to the same `perago.logical_task_key`.
 

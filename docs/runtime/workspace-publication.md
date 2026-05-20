@@ -99,6 +99,8 @@ publish fence 决定当前 attempt 是否还能推进目标 branch。当前 MVP 
 | 目标 branch head 仍等于 input `workspace.ref` | 直接以 input ref 作为 publish base。 |
 | 目标 branch 只被同一个 `perago.logical_task_key` 的提交推进 | 允许从 current head 继续发布，并记录 `perago.supersedes`。 |
 
+runtime 判断第二种状态时，会从目标 branch 当前 head 沿 first-parent history 读取到 input `workspace.ref` 为止的 commit range，并把这段 range 交给 publish fence 分类。只检查 current head 的 metadata 不足以证明中间提交也属于同一个 logical task；如果这段 range 中任何 commit 缺少 `perago.logical_task_key` 或 key 不匹配，runtime 都会 fail closed。
+
 其他 branch advancement 会触发 `PublishFenceError`，attempt 返回 `FAILED`。Perago 不会发布 workspace output，也不会把失败 attempt 的本机 workspace 作为下一次 retry 的输入。
 
 这个 fence 是 client-side soft fence。它能在 merge 前发现 branch 已被其他 workflow step 或非 Perago 写入推进，但它不是 LakeFS server-side compare-and-swap，也不是 exactly-once publication 证明。
