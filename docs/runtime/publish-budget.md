@@ -1,0 +1,160 @@
+# Publish Budget
+
+`PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只适用于 workspace task，用来让 Conductor 的 `responseTimeoutSeconds` 覆盖 LakeFS merge、Conductor completion update、worker shutdown grace 和 heartbeat slack。
+
+这个页面面向运行时维护者和需要给 workspace task 配置发布预算的任务作者。TaskDef 字段映射见 `../task-authoring/controls-and-taskdef.md`；LakeFS 发布顺序见 `workspace-publication.md`。
+
+## 何时需要配置
+
+默认 `TaskControls(timeout=TimeoutPolicy(response_seconds=600))` 只表达 Conductor response timeout。对短任务或没有真实 LakeFS publication 压力的任务，这通常足够。
+
+当 workspace task 会修改大量 object、LakeFS merge latency 已经有观测值，或 worker shutdown 与 Conductor result update 需要明确留量时，配置 `publish_budget`：
+
+```python
+from pathlib import Path
+
+from pydantic import BaseModel, Field
+
+from perago import PublishBudget, TaskControls, WorkspaceSpec, task
+
+
+class BuildFeaturesParams(BaseModel):
+    feature_set: str
+
+
+class BuildFeaturesOutput(BaseModel):
+    row_count: int = Field(ge=0)
+
+
+@task(
+    name="features.build",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(prefix="/audio/render"),
+    controls=TaskControls(
+        publish_budget=PublishBudget(
+            observed_merge_p99_seconds=20,
+            safety_margin_seconds=10,
+            lakefs_merge_timeout_seconds=45,
+            conductor_completion_timeout_seconds=15,
+            worker_shutdown_grace_seconds=30,
+            heartbeat_interval_seconds=10,
+        ),
+    ),
+)
+def build_features(workspace: Path, params: BuildFeaturesParams) -> BuildFeaturesOutput:
+    ...
+```
+
+Required/optional/generated 字段边界：
+
+- required: `PublishBudget` 的 6 个字段都必须显式提供。
+- optional: `TaskControls.publish_budget` 可以省略；省略时使用 `TimeoutPolicy.response_seconds`。
+- conditional: `publish_budget` 只允许配置在带 `WorkspaceSpec(...)` 的 workspace task 上。
+- generated: `responseTimeoutSeconds` 由 `PublishBudget.response_timeout_seconds` 派生并写入 TaskDef。
+- forbidden: 不能把 `publish_budget` 配在 workspace-free task 上；不能在 `PublishBudget` 里声明未知字段或 exactly-once 语义。
+
+## 字段语义
+
+| 字段 | 约束 | 说明 |
+| --- | --- | --- |
+| `observed_merge_p99_seconds` | `>= 0` | 目标 workload 下已观测到的 LakeFS merge 高分位延迟。 |
+| `safety_margin_seconds` | `>= 0` | 覆盖观测抖动、网络抖动和小幅数据量增长的安全余量。 |
+| `lakefs_merge_timeout_seconds` | `>= 1` | 传给 LakeFS merge SDK request 的 timeout。必须覆盖观测 p99 加安全余量。 |
+| `conductor_completion_timeout_seconds` | `>= 1` | worker 向 Conductor 回写最终 task result 的 request timeout。 |
+| `worker_shutdown_grace_seconds` | `>= 1` | publication 后预留给 worker 停止、清理和进程退出的时间。 |
+| `heartbeat_interval_seconds` | `>= 1` | 预留给 Conductor response timeout/heartbeat 机制的 slack。 |
+
+`PublishBudget` 是 frozen Pydantic model，并拒绝额外字段。配置错误会在模块导入、`perago check` 或 `perago extract` 阶段暴露为 validation error。
+
+## Response Timeout 计算
+
+`PublishBudget.response_timeout_seconds` 的公式是：
+
+```text
+lakefs_merge_timeout_seconds
++ conductor_completion_timeout_seconds
++ worker_shutdown_grace_seconds
++ heartbeat_interval_seconds
+```
+
+上面的示例会生成：
+
+```text
+45 + 15 + 30 + 10 = 100
+```
+
+因此 `perago extract` 写出的 TaskDef 会包含：
+
+```json
+{
+  "responseTimeoutSeconds": 100
+}
+```
+
+如果同时配置了 `TimeoutPolicy(response_seconds=999)` 和 `publish_budget`，`publish_budget` 优先。`PublishBudget` 本身不会写入 TaskDef JSON，也不会出现在 Conductor input/output 中。
+
+## Runtime 使用位置
+
+`PublishBudget` 同时影响 TaskDef 和 worker runtime：
+
+| 位置 | 使用字段 | 行为 |
+| --- | --- | --- |
+| TaskDef generation | `response_timeout_seconds` | 生成 Conductor `responseTimeoutSeconds`。 |
+| LakeFS publish | `lakefs_merge_timeout_seconds` | 作为 merge request timeout 传给 LakeFS SDK。 |
+| Conductor result update | `conductor_completion_timeout_seconds` | 作为 task completion update request timeout 传给 Conductor client。 |
+
+`observed_merge_p99_seconds` 和 `safety_margin_seconds` 不直接传给外部系统。它们只用于校验 `lakefs_merge_timeout_seconds` 是否覆盖 `observed_merge_p99_seconds + safety_margin_seconds`。
+
+## 配置流程
+
+1. 在接近真实数据量的 workspace task 上观测 LakeFS merge latency。
+2. 选取稳定窗口内的 p99 或更保守分位，填入 `observed_merge_p99_seconds`。
+3. 根据网络、object 数量增长和 LakeFS 负载变化选择 `safety_margin_seconds`。
+4. 设置 `lakefs_merge_timeout_seconds >= observed_merge_p99_seconds + safety_margin_seconds`。
+5. 为 Conductor completion update 和 worker shutdown 分别设置明确预算。
+6. 运行 `perago check` 验证 task definition，再运行 `perago extract` 检查生成的 `responseTimeoutSeconds`。
+
+不要把 `lakefs_merge_timeout_seconds` 设成远小于观测值的探测性 timeout。merge timeout 或连接错误后，runtime 不能假设 publish 一定没有发生；需要先用 commit metadata 判断是否已经存在匹配的 publication。
+
+## 常见拒绝形状
+
+merge timeout 小于观测值加安全余量会失败：
+
+```python
+PublishBudget(
+    observed_merge_p99_seconds=20,
+    safety_margin_seconds=10,
+    lakefs_merge_timeout_seconds=29,
+    conductor_completion_timeout_seconds=15,
+    worker_shutdown_grace_seconds=30,
+    heartbeat_interval_seconds=10,
+)
+```
+
+workspace-free task 配置 `publish_budget` 会失败：
+
+```python
+@task(
+    name="metadata.validate",
+    owner_email="data@example.com",
+    controls=TaskControls(publish_budget=budget),
+)
+def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
+    ...
+```
+
+额外字段会失败：
+
+```python
+PublishBudget(
+    observed_merge_p99_seconds=20,
+    safety_margin_seconds=10,
+    lakefs_merge_timeout_seconds=45,
+    conductor_completion_timeout_seconds=15,
+    worker_shutdown_grace_seconds=30,
+    heartbeat_interval_seconds=10,
+    exact_once=True,
+)
+```
+
+`PublishBudget` 是运维时间预算，不是 exactly-once publication 证明。Perago MVP 的恢复边界仍然是 attempt fence、publish fence、metadata classification 和 fail closed。

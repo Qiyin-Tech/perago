@@ -8,24 +8,26 @@ The first MVP targets LakeFS as the workspace backend. Task authors write ordina
 
 Early internal package. APIs are still being shaped before `1.0`.
 
-The current development slice implements the parts that do not require a live
-Conductor server or LakeFS server:
+The current development slice implements:
 
 - task author API: `@task`, `WorkspaceSpec`, guardrail helper functions, and
   grouped `TaskControls` including explicit publish budgets;
 - import-time task validation for the single-task module contract;
 - `perago check` diagnostics for task declarations and local runtime config;
-- `perago extract` generation of local Conductor TaskDef JSON.
+- `perago extract` generation of local Conductor TaskDef JSON;
+- `perago start -j` supervisor startup for independent worker processes;
+- Conductor polling/completion, LakeFS workspace download, staging,
+  publication, staging cleanup, and attempt-local workspace cleanup.
 
-`perago start`, Conductor polling/completion, LakeFS workspace download, and
-LakeFS publication are integration-phase work and are intentionally not wired
-to external services yet.
+`perago check` and `perago extract` do not connect to Conductor or LakeFS.
+`perago start` requires a real Conductor endpoint, complete LakeFS credentials,
+and a pre-registered Conductor TaskDef before worker processes start.
 
 The current implementation target is documented in:
 
 - [MVP examples](docs/mvp_examples.md)
 - [Context glossary](CONTEXT.md)
-- [Architecture decisions](docs/adr/README.md)
+- [Architecture decisions](docs/architecture/adr/index.md)
 - [Conductor TaskDef notes](docs/conductor/task_def.md)
 
 ## Task shape
@@ -97,7 +99,7 @@ perago start app.workers.features_build -j 4
 
 - `perago check` imports the module, validates the task declaration, validates Perago runtime config from `.env`, and reports CLI diagnostics.
 - `perago extract` emits Conductor TaskDef JSON with embedded input/output schemas.
-- `perago start` currently validates startup inputs and exits with a clear diagnostic until the Conductor/LakeFS worker integration is added.
+- `perago start` validates startup inputs, checks that the TaskDef is registered in Conductor, then starts supervisor-managed worker processes that poll Conductor and publish workspace outputs through LakeFS.
 
 ## Runtime configuration
 

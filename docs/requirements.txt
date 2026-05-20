@@ -1,0 +1,7 @@
+sphinx>=8
+numpydoc>=1.10
+pydata-sphinx-theme>=0.18
+myst-parser
+sphinx-copybutton
+sphinx-design
+autodoc-pydantic>=2

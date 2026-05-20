@@ -22,15 +22,89 @@ MAX_RESTART_BACKOFF_SECONDS = 30
 
 @dataclass(frozen=True)
 class WorkerChildSpec:
+    """
+    Supervisor launch specification for one worker child slot.
+
+    ``WorkerChildSpec`` carries the per-child environment derived by the
+    supervisor before a multiprocessing child is started. The slot number is
+    stable across restarts, so a restarted child keeps the same worker id.
+
+    Parameters
+    ----------
+    slot : int
+        One-based supervisor slot assigned to the worker child.
+    env : dict of str to str
+        Environment mapping passed to the child process. It includes
+        ``PERAGO_WORKER_ID_PREFIX`` and ``PERAGO_WORKER_ID``.
+
+    Attributes
+    ----------
+    slot : int
+        One-based supervisor slot assigned to the worker child.
+    env : dict of str to str
+        Environment mapping passed to the child process.
+    worker_id : str
+        Worker id read from ``env["PERAGO_WORKER_ID"]``.
+
+    See Also
+    --------
+    worker_child_specs : Build child specifications for ``perago start -j``.
+    restart_backoff_seconds : Delay used when a child exits and is restarted.
+
+    Notes
+    -----
+    The dataclass is frozen, but the ``env`` mapping itself is a regular
+    dictionary supplied by the caller.
+
+    Examples
+    --------
+    >>> spec = WorkerChildSpec(slot=1, env={"PERAGO_WORKER_ID": "features0001"})
+    >>> spec.worker_id
+    'features0001'
+    """
+
     slot: int
     env: dict[str, str]
 
     @property
     def worker_id(self) -> str:
+        """Return the worker id assigned to this child slot."""
         return self.env["PERAGO_WORKER_ID"]
 
 
 def restart_backoff_seconds(restart_count: int) -> int:
+    """
+    Return the supervisor restart delay for a child process.
+
+    The sequence is intentionally short and bounded so a crashing child backs
+    off without permanently stopping the supervisor. Counts beyond the explicit
+    sequence use the maximum delay.
+
+    Parameters
+    ----------
+    restart_count : int
+        Zero-based number of previous restarts for the child slot.
+
+    Returns
+    -------
+    int
+        Delay in seconds before the supervisor starts the replacement process.
+
+    Raises
+    ------
+    ValueError
+        If ``restart_count`` is negative.
+
+    See Also
+    --------
+    worker_child_specs : Build stable child slots that reuse this backoff.
+    WorkerChildSpec : Per-slot child specification restarted by the supervisor.
+
+    Examples
+    --------
+    >>> [restart_backoff_seconds(index) for index in range(7)]
+    [1, 2, 4, 8, 16, 30, 30]
+    """
     if restart_count < 0:
         raise ValueError("restart_count must be >= 0")
     if restart_count < len(RESTART_BACKOFF_SECONDS):
@@ -44,6 +118,49 @@ def worker_child_specs(
     module_target: str,
     process_count: int,
 ) -> list[WorkerChildSpec]:
+    """
+    Build stable worker child specifications for a supervisor run.
+
+    The supervisor uses these specs for ``perago start -j``. Each child receives
+    a one-based slot and a deterministic ``PERAGO_WORKER_ID`` derived from the
+    configured prefix or, when no prefix is configured, from ``module_target``.
+
+    Parameters
+    ----------
+    base_env : dict of str to str
+        Base environment copied into every child. ``PERAGO_WORKER_ID_PREFIX`` is
+        honored when present.
+    module_target : str
+        Python import path of the single task module served by all child
+        workers.
+    process_count : int
+        Number of worker child specs to create. Must be at least one.
+
+    Returns
+    -------
+    list of WorkerChildSpec
+        Child launch specs ordered by ascending slot.
+
+    Raises
+    ------
+    RuntimeConfigError
+        If ``process_count`` is less than one or if the worker id prefix is
+        invalid.
+
+    See Also
+    --------
+    WorkerChildSpec : Value object returned for each child slot.
+    restart_backoff_seconds : Restart delay used after a child exits.
+
+    Examples
+    --------
+    >>> [spec.worker_id for spec in worker_child_specs(
+    ...     base_env={"PERAGO_WORKER_ID_PREFIX": "featuresBuild"},
+    ...     module_target="app.workers.features_build",
+    ...     process_count=2,
+    ... )]
+    ['featuresBuild0001', 'featuresBuild0002']
+    """
     if process_count < 1:
         raise RuntimeConfigError("worker process count must be at least 1")
     return [
