@@ -112,7 +112,7 @@ def invoke_workspace_task_body(
         raise TaskInputError("workspace task input must contain only workspace and params")
 
     WorkspaceInput.model_validate(input_data["workspace"])
-    params = task.params_model.model_validate(input_data["params"])
+    params = task.params_model.model_validate(input_data["params"], extra="forbid")
     workspace = task.workspace
     if workspace is None:
         raise TaskInputError("workspace task definition is missing WorkspaceSpec")
@@ -130,7 +130,7 @@ def invoke_workspace_free_task(task: TaskDefinition, input_data: Mapping[str, An
     if set(input_data) != {"params"}:
         raise TaskInputError("workspace-free task input must contain only params")
 
-    params = task.params_model.model_validate(input_data["params"])
+    params = task.params_model.model_validate(input_data["params"], extra="forbid")
     raw_result = task.fn(params)
     return build_workspace_free_task_output(task, raw_result)
 
@@ -189,5 +189,5 @@ def _cleanup_staging_safely(staged: StagedWorkspace, cleanup_staging: CleanupSta
 
 def _validate_result(task: TaskDefinition, raw_result: object) -> BaseModel:
     if isinstance(raw_result, BaseModel):
-        return task.output_model.model_validate(raw_result.model_dump())
-    return task.output_model.model_validate(raw_result)
+        return task.output_model.model_validate(raw_result.model_dump(), extra="forbid")
+    return task.output_model.model_validate(raw_result, extra="forbid")

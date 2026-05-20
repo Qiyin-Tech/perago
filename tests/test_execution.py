@@ -437,6 +437,50 @@ def test_workspace_free_invocation_validates_params_model() -> None:
         )
 
 
+def test_workspace_free_invocation_rejects_extra_business_params() -> None:
+    task = load_module_task("app.workers.metadata_validate")
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        invoke_workspace_free_task(
+            task,
+            {
+                "params": {
+                    "song_id": "song-000123",
+                    "min_duration_seconds": 30,
+                    "workspace": "not-a-workspace",
+                },
+            },
+        )
+
+
+def test_workspace_task_body_rejects_extra_business_params(tmp_path) -> None:
+    task = load_module_task("app.workers.features_build")
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        invoke_workspace_task_body(
+            task,
+            {
+                "workspace": WORKSPACE_INPUT,
+                "params": {
+                    "feature_set": "default",
+                    "min_rows": 100,
+                    "workspace": "not-a-workspace",
+                },
+            },
+            tmp_path,
+        )
+
+
+def test_workspace_free_output_rejects_extra_business_result_fields() -> None:
+    task = load_module_task("app.workers.metadata_validate")
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        build_workspace_free_task_output(task, {"valid": True, "extra": "ignored-by-default"})
+
+
 def test_workspace_task_body_requires_ref_type(tmp_path) -> None:
     task = load_module_task("app.workers.features_build")
     workspace_input = dict(WORKSPACE_INPUT)
