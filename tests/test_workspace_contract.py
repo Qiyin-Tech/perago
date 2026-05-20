@@ -21,6 +21,18 @@ def test_workspace_input_and_output_are_distinct_contract_models() -> None:
     assert workspace_output.model_dump(mode="json") == WORKSPACE_REF
 
 
+def test_workspace_input_builds_published_output_ref() -> None:
+    workspace_input = WorkspaceInput.model_validate(WORKSPACE_REF)
+
+    output = workspace_input.published_output("published-ref")
+
+    assert type(output) is WorkspaceOutput
+    assert output.model_dump(mode="json") == {
+        **WORKSPACE_REF,
+        "ref": "published-ref",
+    }
+
+
 def test_workspace_contract_models_reject_extra_fields() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         WorkspaceOutput.model_validate({**WORKSPACE_REF, "prefix": "/audio/render"})

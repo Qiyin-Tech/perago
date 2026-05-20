@@ -121,7 +121,14 @@ class WorkspaceRef(BaseModel):
 
 
 class WorkspaceInput(WorkspaceRef):
-    pass
+    def published_output(self, ref: str) -> WorkspaceOutput:
+        return WorkspaceOutput.model_validate(
+            {
+                **self.model_dump(mode="json"),
+                "ref_type": "commit",
+                "ref": ref,
+            }
+        )
 
 
 class WorkspaceOutput(WorkspaceRef):
