@@ -9,4 +9,5 @@ configuration
 cli
 worker-processes
 logging
+conductor
 ```
