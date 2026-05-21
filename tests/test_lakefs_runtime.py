@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 
 from perago.execution import StagedWorkspace
 from perago.errors import PublishFenceError
-from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
+from perago.lakefs_runtime import LakeFSWorkspaceRuntime
 from perago.metadata import logical_task_key, staging_branch_name
 from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
 
@@ -189,13 +190,21 @@ class FakeRuntime(LakeFSWorkspaceRuntime):
         return self.repo
 
 
+class MultiRepoRuntime(LakeFSWorkspaceRuntime):
+    def __init__(self, repos: dict[str, FakeRepo]) -> None:
+        self.repos = repos
+
+    def _repo(self, repository: str):
+        return self.repos[repository]
+
+
 def _workspace_input() -> WorkspaceInput:
     return WorkspaceInput(repository="song-000123", branch="main", ref_type="commit", ref="input-commit")
 
 
 def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     repo = FakeRepo()
-    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    runtime = FakeRuntime(repo)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
     attempt = Attempt()
@@ -210,6 +219,7 @@ def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     (tmp_path / "features" / "out.txt").write_bytes(b"feature")
     staged = runtime.stage_workspace(tmp_path, workspace, spec, attempt)
 
+    assert staged.repository == "song-000123"
     assert staged.branch == staging_branch_name(attempt)
     staging_branch = repo.branches[staged.branch]
     assert staging_branch.created_from == "input-commit"
@@ -227,9 +237,27 @@ def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     assert staging_branch.merges[0]["metadata"]["perago.phase"] == "confirm"
     assert staging_branch.merges[0]["metadata"]["perago.staging_commit"] == "staging-commit"
 
-    runtime.cleanup_staging(StagedWorkspace(branch=staged.branch, commit=staged.commit))
+    runtime.cleanup_staging(StagedWorkspace(repository=staged.repository, branch=staged.branch, commit=staged.commit))
 
     assert staging_branch.deleted is True
+
+
+def test_lakefs_cleanup_uses_staged_repository_without_prior_runtime_state() -> None:
+    shared_branch = "perago-staging-shared"
+    repo_a = FakeRepo()
+    repo_b = FakeRepo()
+    branch_a = repo_a.branch(shared_branch)
+    branch_b = repo_b.branch(shared_branch)
+    runtime = MultiRepoRuntime({"song-a": repo_a, "song-b": repo_b})
+
+    staged_a = StagedWorkspace(repository="song-a", branch=shared_branch, commit="staging-commit-a")
+    staged_b = StagedWorkspace(repository="song-b", branch=shared_branch, commit="staging-commit-b")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(runtime.cleanup_staging, [staged_a, staged_b]))
+
+    assert branch_a.deleted is True
+    assert branch_b.deleted is True
 
 
 def test_lakefs_publish_uses_merge_request_timeout_from_publish_budget(tmp_path) -> None:
@@ -242,16 +270,16 @@ def test_lakefs_publish_uses_merge_request_timeout_from_publish_budget(tmp_path)
         worker_shutdown_grace_seconds=30,
         heartbeat_interval_seconds=10,
     )
-    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo, publish_budget=budget))
+    runtime = FakeRuntime(repo, publish_budget=budget)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
     attempt = Attempt()
 
-    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+    staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
     published = runtime.publish_workspace(staged, workspace, spec, attempt)
 
     assert published == "published-commit"
-    merge_call = runtime._runtime._client.sdk_client.refs_api.merge_calls[0]
+    merge_call = runtime._client.sdk_client.refs_api.merge_calls[0]
     assert merge_call["repository"] == "song-000123"
     assert merge_call["source_ref"] == staged.branch
     assert merge_call["destination_branch"] == "main"
@@ -269,10 +297,10 @@ def test_lakefs_publish_accepts_same_logical_task_commit_range() -> None:
         FakeCommit(id="head-1", metadata={"perago.logical_task_key": key}),
         FakeCommit(id="input-commit"),
     ]
-    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    runtime = FakeRuntime(repo)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
-    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+    staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
 
     published = runtime.publish_workspace(staged, workspace, spec, attempt)
 
@@ -293,10 +321,10 @@ def test_lakefs_publish_rejects_metadata_incomplete_commit_range() -> None:
         FakeCommit(id="head-1"),
         FakeCommit(id="input-commit"),
     ]
-    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    runtime = FakeRuntime(repo)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
-    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+    staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
 
     with pytest.raises(PublishFenceError, match="main advanced"):
         runtime.publish_workspace(staged, workspace, spec, attempt)
@@ -311,10 +339,10 @@ def test_lakefs_publish_rejects_unreachable_input_ref() -> None:
         FakeCommit(id="head-2"),
         FakeCommit(id="head-1"),
     ]
-    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    runtime = FakeRuntime(repo)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
-    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+    staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
 
     with pytest.raises(PublishFenceError, match="no longer contains workspace input ref"):
         runtime.publish_workspace(staged, workspace, spec, attempt)
@@ -324,10 +352,10 @@ def test_lakefs_publish_rejects_oversized_commit_range() -> None:
     repo = FakeRepo()
     attempt = Attempt()
     repo.main_commit_log = [FakeCommit(id=f"head-{idx}") for idx in range(2000)] + [FakeCommit(id="input-commit")]
-    runtime = BoundLakeFSWorkspaceRuntime(FakeRuntime(repo))
+    runtime = FakeRuntime(repo)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
-    staged = StagedWorkspace(branch=staging_branch_name(attempt), commit="staging-commit")
+    staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
 
     with pytest.raises(PublishFenceError, match="advanced beyond supported publish range"):
         runtime.publish_workspace(staged, workspace, spec, attempt)

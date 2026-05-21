@@ -23,7 +23,7 @@ from perago.conductor_runtime import (
 )
 from perago.config import ExecutionMode, RuntimeConfig, child_environment
 from perago.errors import RuntimeConfigError
-from perago.lakefs_runtime import BoundLakeFSWorkspaceRuntime, LakeFSWorkspaceRuntime
+from perago.lakefs_runtime import LakeFSWorkspaceRuntime
 from perago.task import load_module_task
 from perago.worker_runtime import prepare_worker_runtime
 from perago.workspace import garbage_collect_attempt_workspaces
@@ -644,9 +644,7 @@ def _process_executor_main(
         raise RuntimeConfigError("LakeFS config is required for perago start")
 
     publish_budget = task.controls.publish_budget
-    lakefs = BoundLakeFSWorkspaceRuntime(
-        LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
-    )
+    lakefs = LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process executor started"
@@ -688,9 +686,7 @@ def _thread_runner_main(
 
     publish_budget = task.controls.publish_budget
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
-    lakefs = BoundLakeFSWorkspaceRuntime(
-        LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
-    )
+    lakefs = LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "thread runner started"

@@ -1079,7 +1079,7 @@ Workspace publishing uses a TCC-inspired model, but the user function does not i
 | Confirm | Re-check the current Conductor attempt, check whether the target branch may still be advanced, then squash merge the staging commit into the target branch. | Visible as one linear commit. |
 | Cancel | Delete the staging branch after failure, stale attempt detection, publish-fence failure, or successful merge. | No target branch change unless confirm already succeeded. |
 
-The staging branch is internal runtime state. It is not part of Conductor task input or output.
+The staging branch is internal runtime state. It is not part of Conductor task input or output. Inside the runtime, the staged workspace reference carries the LakeFS repository, staging branch, and staging commit so cleanup is driven by explicit identity instead of worker-local mutable state.
 
 ```text
 Conductor task input

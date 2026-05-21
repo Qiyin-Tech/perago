@@ -591,7 +591,6 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
         )
         or lakefs_runtime,
     )
-    monkeypatch.setattr("perago.supervisor.BoundLakeFSWorkspaceRuntime", lambda lakefs: lakefs)
     monkeypatch.setattr("perago.supervisor.run_process_executor_loop", lambda **kwargs: ran.update(kwargs))
 
     _process_executor_main(
@@ -673,7 +672,6 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
         "perago.supervisor.LakeFSWorkspaceRuntime.from_config",
         lambda lakefs_config, publish_budget: lakefs_runtime,
     )
-    monkeypatch.setattr("perago.supervisor.BoundLakeFSWorkspaceRuntime", lambda lakefs: lakefs)
     monkeypatch.setattr("perago.supervisor.run_conductor_thread_runner", lambda **kwargs: ran.update(kwargs))
 
     _thread_runner_main(config=config, module_target="app.workers.features_build", thread_count=4)
