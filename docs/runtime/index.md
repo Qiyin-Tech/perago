@@ -11,6 +11,7 @@ worker-processes
 logging
 conductor
 lakefs
+integration-protocol
 workspace-publication
 publish-budget
 ```

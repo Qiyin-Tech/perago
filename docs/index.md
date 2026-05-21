@@ -4,6 +4,8 @@ Perago 是一个内部任务运行时上下文，用于让 typed Python workers 
 
 它把任务契约、Conductor TaskDef、LakeFS workspace 输入输出、attempt-local workspace、发布事务和 guardrail 收敛到同一组边界里。任务作者主要关心函数签名、Pydantic 契约、workspace 注入和 guardrail；运行时维护者主要关心 worker process、Conductor poll/result、LakeFS 同步和 publication fence。
 
+如果 workflow 中还包含 TypeScript worker、人工审核节点或其他非 Perago 节点，先阅读 [Conductor / LakeFS Integration Protocol](runtime/integration-protocol.md)。该页面定义了所有节点共享同一份 LakeFS workspace 时必须遵守的 payload、publication 和 metadata 规则。
+
 ## 最小 workspace task
 
 ```python
