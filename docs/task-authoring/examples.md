@@ -108,7 +108,7 @@ def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
 
 ## Workspace task with publish budget
 
-这个正例展示 workspace task 如何声明 publication budget。`PublishBudget` 不会作为业务 input，也不会写入 TaskDef 的独立字段；它会派生 generated `responseTimeoutSeconds`，并在 runtime 中约束 LakeFS merge 和 Conductor completion 的 request timeout。
+这个正例展示 workspace task 如何声明 publication budget。`PublishBudget` 不会作为业务 input，也不会写入 TaskDef 的独立字段；它会派生 generated `responseTimeoutSeconds`，并在 runtime 中约束 LakeFS merge request timeout。Conductor completion 字段只是 `responseTimeoutSeconds` 中的阶段预留，当前不作为 SDK `TaskRunner` 内部 HTTP request timeout 生效。
 
 ```python
 from pathlib import Path

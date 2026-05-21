@@ -5,16 +5,25 @@ from perago import PublishBudget, TaskControls, TimeoutPolicy
 
 
 def test_publish_budget_derives_response_timeout_from_operational_bounds() -> None:
+    lakefs_merge_timeout_seconds = 45
+    conductor_completion_timeout_seconds = 15
+    worker_shutdown_grace_seconds = 30
+    heartbeat_interval_seconds = 10
     budget = PublishBudget(
         observed_merge_p99_seconds=20,
         safety_margin_seconds=10,
-        lakefs_merge_timeout_seconds=45,
-        conductor_completion_timeout_seconds=15,
-        worker_shutdown_grace_seconds=30,
-        heartbeat_interval_seconds=10,
+        lakefs_merge_timeout_seconds=lakefs_merge_timeout_seconds,
+        conductor_completion_timeout_seconds=conductor_completion_timeout_seconds,
+        worker_shutdown_grace_seconds=worker_shutdown_grace_seconds,
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
     )
 
-    assert budget.response_timeout_seconds == 100
+    assert budget.response_timeout_seconds == (
+        lakefs_merge_timeout_seconds
+        + conductor_completion_timeout_seconds
+        + worker_shutdown_grace_seconds
+        + heartbeat_interval_seconds
+    )
 
 
 def test_task_controls_response_timeout_prefers_publish_budget() -> None:

@@ -272,7 +272,7 @@ Perago maps these fields to Conductor TaskDef fields:
 
 Fields set to `None` are omitted from the extracted TaskDef JSON.
 
-If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. At runtime, the same budget provides the LakeFS merge request timeout and the Conductor completion request timeout. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
+If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. At runtime, the same budget provides the LakeFS merge request timeout and a Conductor completion reserve inside `responseTimeoutSeconds`; it is not wired to the SDK `TaskRunner` result-update HTTP timeout. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
 
 `TaskControls.response_timeout_seconds` is the single local source used for the generated TaskDef `responseTimeoutSeconds` value.
 
@@ -904,7 +904,7 @@ attempt cleanup of the attempt-local workspace
 complete the Conductor task
 ```
 
-Perago attempts local workspace cleanup before every Conductor result update. Cleanup errors are logged with `loguru` but do not change the Conductor result:
+Perago attempts local workspace cleanup before returning a result to the SDK `TaskRunner`. Cleanup errors are logged with `loguru` but do not change the Conductor result:
 
 ```python
 from pathlib import Path
@@ -1124,21 +1124,11 @@ The logical task key is written into LakeFS commit metadata so later attempts ca
 Before Perago uploads the final workspace and again before it publishes to the target branch, it must verify that the current process still owns the active Conductor task attempt.
 
 ```python
-from conductor.client.http.models.task_result import TaskResult
-
-
 class StaleAttemptError(RuntimeError):
     pass
 
 
-def assert_current_attempt(task_client, task, worker_id: str) -> None:
-    task_client.update_task(body=TaskResult(
-        workflow_instance_id=task.workflow_instance_id,
-        task_id=task.task_id,
-        worker_id=worker_id,
-        extend_lease=True,
-    ))
-
+def assert_current_attempt(task_client, task) -> None:
     fresh = task_client.get_task(task.task_id)
     if (
         fresh.status != "IN_PROGRESS"
@@ -1337,7 +1327,7 @@ MVP handling for the attempt crash window:
 - keep Conductor lease extension active through local execution, staging upload, staging commit, merge, local workspace cleanup, and Conductor completion;
 - run `assert_current_attempt(...)` immediately before entering `merge_into(...)`;
 - keep uploads and staging commits outside the final target-branch critical section; after the final attempt fence, Perago should only perform the target-branch merge, local workspace cleanup, and Conductor completion;
-- configure lakeFS client request timeouts for merge and Conductor completion instead of allowing unbounded blocking calls;
+- configure lakeFS client request timeout for merge and include a Conductor completion reserve in `responseTimeoutSeconds`;
 - configure `responseTimeoutSeconds` from an explicit publish budget, not from a guess;
 - do not retry an uncertain `merge_into(...)` blindly after a timeout or connection error; first inspect the target branch log for Perago metadata matching `perago.logical_task_key`, `perago.task_id`, and `perago.staging_commit`;
 - if merge succeeded but Conductor completion failed, do not roll back LakeFS; let Conductor retry the task, re-execute, and publish a new merge commit that records `perago.supersedes`;
@@ -1345,13 +1335,13 @@ MVP handling for the attempt crash window:
 
 The publish budget must be derived from real limits and measurements:
 
-- lakeFS merge request timeout and Conductor completion request timeout;
+- lakeFS merge request timeout and Conductor completion budget reserve;
 - observed lakeFS merge latency under expected repository size and object count, using a high percentile plus safety margin;
 - operational limits for worker shutdown grace period and heartbeat interval.
 
 Workspace publication does not follow or upload symbolic links. A symlink under the local workspace is rejected before staging because it can point outside the attempt-local workspace root.
 
-There is no absolute "worst LakeFS publish time" unless Perago imposes these bounds. For the MVP, the project accepts an operational maximum LakeFS merge time as part of the publish budget. That budget is an assumption used to size `responseTimeoutSeconds`, request timeouts, and shutdown grace periods; it is not a distributed-systems proof. A worker process can be paused, killed, or partitioned for an unbounded amount of time, so lease margin is a mitigation, not a proof.
+There is no absolute "worst LakeFS publish time" unless Perago imposes these bounds. For the MVP, the project accepts an operational maximum LakeFS merge time as part of the publish budget. That budget is an assumption used to size `responseTimeoutSeconds`, the LakeFS merge request timeout, and shutdown grace periods; it is not a distributed-systems proof. A worker process can be paused, killed, or partitioned for an unbounded amount of time, so lease margin is a mitigation, not a proof.
 
 This makes retries idempotent at the workflow level: the latest successful retry produces the Workspace Output, and the target branch remains linear. It does not promise exactly one LakeFS commit per logical task.
 

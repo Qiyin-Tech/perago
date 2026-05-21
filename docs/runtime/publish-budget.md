@@ -1,6 +1,6 @@
 # Publish Budget
 
-`PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只适用于 workspace task，用来让 Conductor 的 `responseTimeoutSeconds` 覆盖 LakeFS merge、Conductor completion update、worker shutdown grace 和 heartbeat slack。
+`PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只适用于 workspace task，用来让 Conductor 的 `responseTimeoutSeconds` 覆盖 LakeFS merge、Conductor completion 阶段预留、worker shutdown grace 和 heartbeat slack。
 
 这个页面面向运行时维护者和需要给 workspace task 配置发布预算的任务作者。TaskDef 字段映射见 `../task-authoring/controls-and-taskdef.md`；LakeFS 发布顺序见 `workspace-publication.md`。
 
@@ -8,7 +8,7 @@
 
 默认 `TaskControls(timeout=TimeoutPolicy(response_seconds=600))` 只表达 Conductor response timeout。对短任务或没有真实 LakeFS publication 压力的任务，这通常足够。
 
-当 workspace task 会修改大量 object、LakeFS merge latency 已经有观测值，或 worker shutdown 与 Conductor result update 需要明确留量时，配置 `publish_budget`：
+当 workspace task 会修改大量 object、LakeFS merge latency 已经有观测值，或 worker shutdown 与 Conductor completion 阶段需要明确留量时，配置 `publish_budget`：
 
 ```python
 from pathlib import Path
@@ -60,7 +60,7 @@ Required/optional/generated 字段边界：
 | `observed_merge_p99_seconds` | `>= 0` | 目标 workload 下已观测到的 LakeFS merge 高分位延迟。 |
 | `safety_margin_seconds` | `>= 0` | 覆盖观测抖动、网络抖动和小幅数据量增长的安全余量。 |
 | `lakefs_merge_timeout_seconds` | `>= 1` | 传给 LakeFS merge SDK request 的 timeout。必须覆盖观测 p99 加安全余量。 |
-| `conductor_completion_timeout_seconds` | `>= 1` | worker 向 Conductor 回写最终 task result 的 request timeout。 |
+| `conductor_completion_timeout_seconds` | `>= 1` | Conductor completion 阶段的预算预留，用于派生 `responseTimeoutSeconds`。当前 SDK `TaskRunner` owns result update，Perago 不把该值作为 SDK 内部 HTTP request timeout。 |
 | `worker_shutdown_grace_seconds` | `>= 1` | publication 后预留给 worker 停止、清理和进程退出的时间。 |
 | `heartbeat_interval_seconds` | `>= 1` | 预留给 Conductor response timeout/heartbeat 机制的 slack。 |
 
@@ -101,7 +101,9 @@ lakefs_merge_timeout_seconds
 | --- | --- | --- |
 | TaskDef generation | `response_timeout_seconds` | 生成 Conductor `responseTimeoutSeconds`。 |
 | LakeFS publish | `lakefs_merge_timeout_seconds` | 作为 merge request timeout 传给 LakeFS SDK。 |
-| Conductor result update | `conductor_completion_timeout_seconds` | 作为 task completion update request timeout 传给 Conductor client。 |
+| Conductor completion reserve | `conductor_completion_timeout_seconds` | 只参与 `responseTimeoutSeconds` 预算；SDK `TaskRunner` 当前 owns completion result update。 |
+
+Perago 当前不直接发送 Conductor completion update，也不接管 SDK 的 `update_task_v2` / `update_task` fallback。`conductor-python 1.3.11` 当前没有公开的 `TaskRunner` completion update HTTP timeout 配置入口；如果后续 SDK 提供正式 public option，再把该字段接到 SDK 公开配置上。
 
 `observed_merge_p99_seconds` 和 `safety_margin_seconds` 不直接传给外部系统。它们只用于校验 `lakefs_merge_timeout_seconds` 是否覆盖 `observed_merge_p99_seconds + safety_margin_seconds`。
 
@@ -111,7 +113,7 @@ lakefs_merge_timeout_seconds
 2. 选取稳定窗口内的 p99 或更保守分位，填入 `observed_merge_p99_seconds`。
 3. 根据网络、object 数量增长和 LakeFS 负载变化选择 `safety_margin_seconds`。
 4. 设置 `lakefs_merge_timeout_seconds >= observed_merge_p99_seconds + safety_margin_seconds`。
-5. 为 Conductor completion update 和 worker shutdown 分别设置明确预算。
+5. 为 Conductor completion 阶段和 worker shutdown 分别设置明确预算。
 6. 运行 `perago check` 验证 task definition，再运行 `perago extract` 检查生成的 `responseTimeoutSeconds`。
 
 不要把 `lakefs_merge_timeout_seconds` 设成远小于观测值的探测性 timeout。merge timeout 或连接错误后，runtime 不能假设 publish 一定没有发生；需要先用 commit metadata 判断是否已经存在匹配的 publication。

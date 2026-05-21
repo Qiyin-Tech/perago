@@ -38,7 +38,7 @@ perago start app.workers.features_build -j 2 --execution-mode process
 4. workspace task 的 attempt fence 通过 broker IPC 重新读取 fresh attempt。
 5. executor 把 `RuntimeTaskResult` 写回 completion queue。
 6. broker adapter 把 completion 映射成 SDK `TaskResult`。
-7. SDK `TaskRunner` 调用 result update，并按 SDK 策略处理 update-v2 fallback。
+7. SDK `TaskRunner` 调用 result update，并按 SDK 策略处理 `update_task_v2` / `update_task` fallback。
 
 process mode 不会在一个 Python module 内路由多个 task。并发来自 broker SDK runner 的 `thread_count=N` 和 N 个独立 executor process；broker thread 只负责把 SDK `Task` 派发到 assignment queue 并等待 completion。
 
@@ -51,6 +51,8 @@ process broker 由 `PeragoProcessDispatchWorker` 与 `run_conductor_process_brok
 process executor 的本地执行循环是 `run_process_executor_loop(...)`。executor 只消费 `ProcessTaskAssignment`，复用现有 `execute_polled_task()` 跑 workspace 或 workspace-free task，再把同一 `task_id` 和 `execution_id` 的 `ProcessTaskCompletion` 写回 completion queue；它不 poll Conductor，也不 update Conductor result。workspace task 的 attempt-fence reload 会写入 `attempt_fence_request_queue`，由 broker 调 Conductor `get_task` 后通过对应 executor 的 response queue 返回 fresh attempt snapshot。
 
 execution id 的作用域是“一次 executor 实际执行 assignment”。它不是 Conductor task id，也不是 workflow step identity；broker 使用它拒绝旧 completion 或重复派发残留 completion，LakeFS runtime 使用它隔离 staging branch 和本机 attempt workspace。
+
+Perago 的维护边界是 worker adapter、workspace execution 和 LakeFS publish。Conductor task lifecycle 仍交给 SDK `TaskRunner`：poll、lease tracking、result update 以及 update-v2 fallback 都不是 Perago 自己实现的 HTTP path。
 
 ## Attempt snapshot
 
@@ -91,7 +93,7 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 
 `COMPLETED` 必须带 output，且不能带 failure reason。失败状态必须带 `reasonForIncompletion`，且不能带 output。worker id 会写入 Conductor result，便于从 Conductor 结果反查 worker 日志目录。
 
-workspace task 如果配置了 `PublishBudget`，TaskDef 会使用派生出的 `responseTimeoutSeconds`，让 SDK runner 的 LeaseManager 按 publication 预算续租。LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束。没有 publish budget 时使用普通 task timeout。
+workspace task 如果配置了 `PublishBudget`，TaskDef 会使用派生出的 `responseTimeoutSeconds`，让 SDK runner 的 LeaseManager 按 publication 预算续租。LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束。`conductor_completion_timeout_seconds` 只是 `responseTimeoutSeconds` 中的 completion reserve；当前不传给 SDK `TaskRunner` 作为 result update HTTP timeout。没有 publish budget 时使用普通 task timeout。
 
 `ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。显式 thread runtime 和默认 process broker runtime 都交给 SDK `TaskRunner` 处理 LeaseManager 续租。
 

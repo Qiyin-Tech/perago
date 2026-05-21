@@ -18,7 +18,7 @@ The Conductor attempt fence is implemented by re-checking the active task attemp
 
 LakeFS Community pre-merge hooks/actions may be used as fast gates to abort invalid merges. They must not be used as long-running lock waits. Treat hook-based expected-head validation as an optional hard-fence candidate until it is proven by integration test against the deployed LakeFS Community version.
 
-The MVP accepts the soft-fence model. Perago defines an operational maximum LakeFS merge time as part of a publish budget and uses that budget to size `responseTimeoutSeconds`, the LakeFS merge request timeout, the Conductor completion request timeout, heartbeat interval, and shutdown grace period. The publish budget is a timing boundary, not a changed-object or changed-byte quota. If timeout or metadata checks cannot classify a publish outcome, Perago fails closed instead of trying to prove exactly-once recovery.
+The MVP accepts the soft-fence model. Perago defines an operational maximum LakeFS merge time as part of a publish budget and uses that budget to size `responseTimeoutSeconds`, the LakeFS merge request timeout, the Conductor completion budget reserve included in `responseTimeoutSeconds`, heartbeat interval, and shutdown grace period. The publish budget is a timing boundary, not a changed-object or changed-byte quota. If timeout or metadata checks cannot classify a publish outcome, Perago fails closed instead of trying to prove exactly-once recovery. The MVP does not take over the SDK `TaskRunner` completion update path.
 
 ## Considered Options
 

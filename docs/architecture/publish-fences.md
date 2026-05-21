@@ -90,7 +90,7 @@ Soft fence 依赖以下约束保持可解释：
 - workspace 写入 workflow 必须保持串行，不允许并行分支写同一个 LakeFS target branch。
 - 同一时间只应有一个活跃 workflow instance 写入给定 workspace branch。
 - target branch 应配置为 protected branch，并约束 workspace 更新只通过 Perago runtime merge 进入。
-- `PublishBudget` 必须覆盖真实 merge 观测值、Conductor completion timeout、heartbeat 和 shutdown grace。
+- `PublishBudget` 必须覆盖真实 merge 观测值、Conductor completion budget reserve、heartbeat 和 shutdown grace。
 - merge timeout 或连接错误后，先按 `perago.logical_task_key`、`perago.task_id` 和 `perago.staging_commit` 检查 commit metadata，再决定是否从当前 branch head 发起新 workflow。
 
 这些约束被破坏时，Perago 的正确行为是失败并保留排查证据，而不是把不确定状态包装成成功。
