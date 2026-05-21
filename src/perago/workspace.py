@@ -221,6 +221,7 @@ def workspace_local_path(workspace_spec: WorkspaceSpec, object_path: str | PathL
         if not remote_path.startswith(prefix_with_separator):
             return None
         remote_path = remote_path.removeprefix(prefix_with_separator)
+        remote_path = _canonical_workspace_path(remote_path)
 
     local_path = Path(remote_path)
     if local_path.name == ATTEMPT_WORKSPACE_MARKER:
