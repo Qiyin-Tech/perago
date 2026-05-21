@@ -7,9 +7,11 @@ description: Refactor oversized Python modules into smaller packages while prese
 
 ## Goal
 
-Split a large Python module by responsibility without changing runtime behavior, CLI behavior, docs semantics, or the existing public import path.
+Split a large Python module by responsibility without changing runtime behavior, CLI behavior, docs semantics, code comments, docstrings, or the existing public import path.
 
 The preferred project pattern is the `a75d8ea` conductor runtime refactor: delete `src/perago/conductor_runtime.py`, create `src/perago/conductor_runtime/`, put compatibility re-exports in `__init__.py`, and move implementation into focused internal modules.
+
+During a split refactor, existing comments and docstrings are part of the code being moved. Move them with their owning code, but do not rewrite, shorten, expand, delete, or add comments/docstrings unless the user explicitly asks for comment or documentation edits in the same request.
 
 ## Workflow
 
@@ -32,6 +34,7 @@ The preferred project pattern is the `a75d8ea` conductor runtime refactor: delet
    - Put runner lifecycle, signal handling, and stop coordination in `runners.py`.
    - Put process-loop specific shutdown and assignment handling in `process_executor.py`.
    - Extract small helpers where nesting hides behavior, especially for validation, completion waits, signal restore, and control-message handling.
+   - Preserve existing comments and docstrings byte-for-byte when moving code. Do not use the refactor as an opportunity to edit prose, improve wording, trim examples, or add new explanatory comments.
 
 4. Preserve compatibility explicitly.
    - Make `__init__.py` import and re-export every old public symbol.
@@ -50,7 +53,7 @@ The preferred project pattern is the `a75d8ea` conductor runtime refactor: delet
    - Run the old targeted baseline before the split when possible.
    - Run the new targeted test set after each meaningful slice.
    - Run `rtk uv run pytest -q` before finishing in this repo.
-   - Inspect `git diff --stat` and `git diff --check`; the expected diff should show code movement plus focused helper extraction, not semantic drift.
+   - Inspect `git diff --stat` and `git diff --check`; the expected diff should show code movement plus focused helper extraction, not semantic drift or comment/docstring churn.
 
 ## Review Checklist
 
@@ -60,4 +63,5 @@ The preferred project pattern is the `a75d8ea` conductor runtime refactor: delet
 - No same-name `.py` file and package directory coexist.
 - Signal handlers, process shutdown, queue waits, and other lifecycle code still restore or clean up on all exits.
 - Error messages, result mapping, task registration behavior, and CLI contracts are unchanged.
+- Existing comments and docstrings are moved with their code and are not rewritten, shortened, expanded, deleted, or newly added unless explicitly requested.
 - Tests include both module-level behavior and import compatibility.
