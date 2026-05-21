@@ -2,7 +2,7 @@
 
 Perago workspace task 使用 LakeFS 存放输入和发布输出。Conductor task input 只携带 `repository`、`branch`、`ref_type` 和 `ref`；LakeFS endpoint 与 credentials 来自 worker-local runtime config，不进入 Conductor payload，也不写入 TaskDef。
 
-这个页面说明 worker child process 如何把一次 Conductor attempt 映射到 LakeFS download、stage、merge 和 cleanup。发布事务边界和 soft fence 的设计取舍在后续 architecture 页面展开。
+这个页面说明 worker child process 如何把一次 Conductor attempt 映射到 LakeFS download、stage、publish 和 cleanup。正式发布协议见 [LakeFS 发布协议](../lakefs-publication-protocol.md)。
 
 ## 输入边界
 
@@ -63,7 +63,7 @@ task body 成功并通过第一次 attempt fence 后，Perago 会把本机 works
 4. 根据本机 workspace 构建 sync plan。
 5. 删除 prefix 内已不再存在的 remote object。
 6. 上传 prefix 内新增或更新的本机文件。
-7. 提交 staging branch，metadata 中写入 `perago.phase=try`。
+7. 提交 staging branch，得到本次 attempt 的 staged commit。
 
 stage 同步的是整个 `WorkspaceSpec.prefix` 投影，而不是只追加本轮新增文件。也就是说，本机 workspace 中删除某个文件后，stage 会删除 staging branch 上 prefix 内对应 object。prefix 外对象不受影响。
 
@@ -83,22 +83,21 @@ staging branch 是 runtime 内部状态，不进入 Conductor task output。bran
 perago-staging-<workflow>-<reference>-seq-<seq>-iteration-<iteration>-task-id-<task_id>-retry-<retry_count>-exec-<execution_id>
 ```
 
-execution id 表示“一次 executor 实际执行 assignment”，不是 Conductor logical task。它只用于隔离本机 workspace 和 staging branch；publish fence 仍使用不含 `task_id` 和 execution id 的 `perago.logical_task_key` 判断目标 branch 是否仍属于同一个 workflow step。
+execution id 表示“一次 executor 实际执行 assignment”，只用于隔离本机 workspace 和 staging branch；publish fence 使用 Conductor attempt 状态和 HEAD 状态判断是否可发布。
 
 staging branch 必须是新 branch。如果同名 branch 已存在，stage 会 fail closed，当前 attempt 返回 `FAILED` 并进入正常 cleanup。stage 成功后，runtime 会把 LakeFS repository、staging branch 和 staging commit id 保存在 `StagedWorkspace` 中，供后续 publish 和 cleanup 使用。这个 staged reference 必须完整携带 repository，cleanup、publish 或 retry 不能依赖 worker-local mutable state 来补齐 LakeFS 身份。
 
-这样设计不是为了迁就测试桩，而是为了匹配真实 runtime 形状。默认 `process` 模式下每个 executor process 会各自创建 `LakeFSWorkspaceRuntime`；但显式 `thread` 模式下，当前实现只创建一个 `LakeFSWorkspaceRuntime` 并把它的方法交给 SDK `TaskRunner(thread_count=N)` 的线程池复用。因此 runtime 不能记住“上一轮 stage 用的是哪个 repository”这类 per-attempt 状态；如果 cleanup 需要 repository identity，它必须从 `StagedWorkspace.repository` 这类显式 staged reference 读取，而不能从 runtime 内部猜测。
+这样设计用于匹配真实 runtime：默认 `process` 模式下每个 executor process 会各自创建 `LakeFSWorkspaceRuntime`；显式 `thread` 模式下，当前实现只创建一个 `LakeFSWorkspaceRuntime` 并把它的方法交给 SDK `TaskRunner(thread_count=N)` 的线程池复用。因此 runtime 不能记住“上一轮 stage 用的是哪个 repository”这类 per-attempt 状态；如果 cleanup 需要 repository identity，它必须从 `StagedWorkspace.repository` 这类显式 staged reference 读取，不能从 runtime 内部猜测。
 
 ## Publish
 
 stage 成功并通过第二次 attempt fence 后，Perago 会发布 staging commit：
 
 1. 读取目标 branch 的 current head。
-2. 生成 workspace publication plan。
-3. 检查目标 branch 是否仍可作为发布基准。
-4. 将 staging branch squash merge 到 `WorkspaceInput.branch`。
-5. 在 merge metadata 中写入 `perago.phase=confirm`、`perago.staging_branch`、`perago.staging_commit` 和 `perago.expected_head`。
-6. 返回 LakeFS merge commit id。
+2. 检查目标 branch 是否符合 protocol 中的可发布状态。
+3. 如果 current head 等于 input ref，将 staging branch merge 到 `WorkspaceInput.branch`。
+4. 如果 current head 的直接 parent 是 input ref，将 `WorkspaceInput.branch` hard-reset / relocate 到 staged commit。
+5. 返回发布后的 LakeFS commit id。
 
 成功发布后的 Conductor output 会把 input workspace 改写为新的 published ref：
 
@@ -114,22 +113,20 @@ stage 成功并通过第二次 attempt fence 后，Perago 会发布 staging comm
 }
 ```
 
-如果 task 配置了 `PublishBudget`，LakeFS merge 会使用 `lakefs_merge_timeout_seconds` 作为 SDK request timeout。没有 publish budget 时，runtime 使用 LakeFS SDK 的默认 merge 行为。
+如果 task 配置了 `PublishBudget`，LakeFS publish 操作会使用 `lakefs_merge_timeout_seconds` 作为 SDK request timeout。没有 publish budget 时，runtime 使用 LakeFS SDK 的默认 timeout 行为。
 
 ## Publish fence
 
-publish 前的 client-side fence 由 `build_workspace_publication_plan()` 执行。当前支持两种可发布状态：
+publish 前的 client-side fence 当前支持两种可发布状态：
 
 | 状态 | 结果 |
 | --- | --- |
-| 目标 branch current head 等于 input `workspace.ref` | 以 input ref 作为 publish base。 |
-| 目标 branch 已被同一个 `perago.logical_task_key` 的提交推进 | 允许从 current head 继续发布，并在 metadata 中记录 `perago.supersedes`。 |
+| 目标 branch current head 等于 input `workspace.ref` | 直接 merge staging branch。 |
+| 目标 branch current head 的直接 parent 等于 input `workspace.ref` | 视为 abandoned publication，hard-reset / relocate 到 staged commit。 |
 
 其他 branch advancement 会抛出 `PublishFenceError`，attempt 结果映射为 `FAILED`。这类失败不发布 workspace output，并会触发 staging cleanup 和 attempt-local workspace cleanup。
 
-为了避免对长历史做无界扫描，runtime 从 current head 沿 first-parent 回溯到 input `workspace.ref` 时最多读取 1024 个 commits。超过上限，或在 first-parent history 中找不到 input ref，都会 fail closed 为 `PublishFenceError`。
-
-这个 fence 是 worker 进程里的 soft fence。它能在 merge 前发现意外 branch advancement，但不是 LakeFS server-side compare-and-swap，也不是 exactly-once publication 证明。
+这个 fence 是 worker 进程里的 soft fence。它能在 merge 前发现意外 branch advancement；它不提供 LakeFS server-side compare-and-swap 或 exactly-once publication 证明。
 
 ## Cleanup
 

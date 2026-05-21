@@ -80,6 +80,14 @@ _Avoid_: task id, worker id, process id
 The Perago-managed publication boundary that turns a local workspace result into a committed Workspace Output.
 _Avoid_: direct branch write, business transaction
 
+**Abandoned Workspace Publication**:
+A LakeFS workspace update left behind by a Task Attempt that Conductor did not accept as successful.
+_Avoid_: recoverable success, durable task result
+
+**Replacement Workspace Publication**:
+A workspace publication that supersedes an Abandoned Workspace Publication while keeping the new visible commit parented by the original Workspace Ref.
+_Avoid_: ordinary merge, recovery success
+
 **Serial Workspace Workflow**:
 A workflow shape where Workspace Task Workers that write the same Workspace Branch are ordered and never run in parallel.
 _Avoid_: parallel workspace writers, fan-out writers
@@ -99,6 +107,10 @@ _Avoid_: retry policy, timeout setting
 **Publish Fence**:
 The check that the target Workspace Branch is still in a state where a Workspace Transaction may be published.
 _Avoid_: merge strategy, schema validation
+
+**Operational Publish Window**:
+The short interval after an Attempt Fence during which Perago assumes no other actor advances the same Workspace Branch.
+_Avoid_: distributed lock, compare-and-swap guarantee
 
 **Publish Budget**:
 The operational time bound Perago assumes for confirming a Workspace Transaction through LakeFS and reporting completion to Conductor.
@@ -155,6 +167,10 @@ _Avoid_: file path, object path, module:app target
 - A **Workspace Transaction** belongs to one **Task Attempt**.
 - A **Workspace Transaction** uses one **Staging Branch** before it can update the target **Workspace Branch**.
 - A **Workspace Transaction** must pass an **Attempt Fence** and a **Publish Fence** before producing a **Workspace Output**.
+- A **Publish Fence** relies on an **Operational Publish Window** rather than a distributed lock.
+- A **Task Attempt** may leave an **Abandoned Workspace Publication** if Conductor does not accept the attempt as successful.
+- An **Abandoned Workspace Publication** is not a **Workspace Output**.
+- A **Replacement Workspace Publication** may replace an **Abandoned Workspace Publication** without making the abandoned commit the parent of the new visible **Workspace Ref**.
 - A **Publish Budget** sizes Conductor response timeout, LakeFS merge request timeout, Conductor completion budget reserve, heartbeat interval, and worker shutdown grace around a **Publish Fence**.
 - A **Serial Workspace Workflow** orders all Workspace Task Workers that write the same **Workspace Branch**.
 - A **Single Active Workspace Workflow** prevents duplicate workflow instances from writing the same **Workspace Branch**.
@@ -197,5 +213,6 @@ _Avoid_: file path, object path, module:app target
 - A **Staging Branch** is not workflow data and must not be exposed as **Workspace Input** or **Workspace Output**.
 - A **Workspace Transaction** is runtime publication control around workspace data; it does not make the business function implement TCC methods.
 - A **Publish Budget** is an accepted MVP operating assumption, not proof that stale publication is impossible.
+- An **Operational Publish Window** is an accepted operating assumption, not a compare-and-swap guarantee.
 - Parallel Workspace Task Workers writing the same **Workspace Branch** are outside the Perago workflow model.
 - Duplicate workflow instances writing the same **Workspace Branch** are outside the Perago workflow model.

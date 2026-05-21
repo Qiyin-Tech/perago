@@ -149,9 +149,9 @@ responseTimeoutSeconds =
 - LakeFS endpoint、credentials、repository 默认值
 - workspace root、log root、worker id prefix
 - `publish_budget` 的各个原始字段
-- attempt snapshot、publish fence metadata、staging branch
+- attempt snapshot、publish fence 状态、staging branch
 
-这些信息分别在 task module、运行时环境变量、Conductor input、LakeFS commit metadata 或 worker 本地状态中生效。
+这些信息分别在 task module、运行时环境变量、Conductor input、LakeFS target HEAD 或 worker 本地状态中生效。
 
 ## 常见拒绝形状
 

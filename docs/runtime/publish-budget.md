@@ -116,7 +116,7 @@ Perago 当前不直接发送 Conductor completion update，也不接管 SDK 的 
 5. 为 Conductor completion 阶段和 worker shutdown 分别设置明确预算。
 6. 运行 `perago check` 验证 task definition，再运行 `perago extract` 检查生成的 `responseTimeoutSeconds`。
 
-不要把 `lakefs_merge_timeout_seconds` 设成远小于观测值的探测性 timeout。merge timeout 或连接错误后，runtime 不能假设 publish 一定没有发生；需要先用 commit metadata 判断是否已经存在匹配的 publication。
+不要把 `lakefs_merge_timeout_seconds` 设成远小于观测值的探测性 timeout。publish timeout 或连接错误后，runtime 不能假设 publish 一定没有发生；下一次 retry 按 [LakeFS 发布协议](../lakefs-publication-protocol.md) 检查 target HEAD 状态。
 
 ## 常见拒绝形状
 
@@ -159,4 +159,4 @@ PublishBudget(
 )
 ```
 
-`PublishBudget` 是运维时间预算，不是 exactly-once publication 证明。Perago MVP 的恢复边界仍然是 attempt fence、publish fence、metadata classification 和 fail closed。
+`PublishBudget` 是运维时间预算，不提供 exactly-once publication 证明。Perago MVP 的恢复边界仍然是 attempt fence、publish fence、replacement publication 和 fail closed。

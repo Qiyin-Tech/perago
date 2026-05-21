@@ -1099,29 +1099,9 @@ Conductor task output
   workspace.ref        = published merge commit
 ```
 
-### Logical task identity
-
-`task.task_id` identifies one Conductor attempt. It must not be used as the stable idempotency key because retries may use a different task id.
-
-Perago derives a logical task key from workflow-stable fields:
-
-```python
-def logical_task_key(task) -> str:
-    parts = [
-        task.workflow_instance_id,
-        task.reference_task_name,
-        str(task.seq),
-        str(task.iteration),
-        task.task_def_name,
-    ]
-    return ":".join(parts)
-```
-
-The logical task key is written into LakeFS commit metadata so later attempts can distinguish "my previous lost attempt" from "some other workflow step changed the branch".
-
 ### Attempt fence
 
-Before Perago uploads the final workspace and again before it publishes to the target branch, it must verify that the current process still owns the active Conductor task attempt.
+发布前必须确认当前 worker 仍持有 Conductor task attempt。
 
 ```python
 class StaleAttemptError(RuntimeError):
@@ -1139,258 +1119,57 @@ def assert_current_attempt(task_client, task) -> None:
         raise StaleAttemptError(task.task_id)
 ```
 
-This fence is a hard gate for stale Conductor attempts. If an old process wakes up after Conductor has retried or completed the task, it must fail before publishing.
+Perago 在 stage 前和 publish 前各检查一次。检查失败时，attempt 返回 `FAILED`，并执行 cleanup。
 
-### LakeFS metadata
+### LakeFS publish protocol
 
-LakeFS commit and merge metadata values are strings. Perago stores transaction identity and attempt identity in metadata on both the staging commit and the merge commit.
+完整协议见 [LakeFS 发布协议](lakefs-publication-protocol.md)。核心规则：
 
-```python
-import json
+- 不需要任何 commit metadata。
+- staging branch 从 input `workspace.ref` 创建。
+- 如果 target `HEAD == input_ref`，merge staging branch。
+- 如果 `parent(HEAD) == input_ref`，把当前 HEAD 当作 abandoned publication，并 hard-reset / relocate target branch 到本次 staging commit。
+- 其他 HEAD 状态全部 fail closed。
+- publish 后 best-effort 删除 staging branch。
 
-
-def metadata_value(value) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, separators=(",", ":"), sort_keys=True)
-
-
-def perago_metadata(
-    *,
-    task,
-    workspace,
-    workspace_spec,
-    logical_task_key: str,
-    phase: str,
-    extra: dict[str, object] | None = None,
-) -> dict[str, str]:
-    data = {
-        "perago.phase": phase,
-        "perago.logical_task_key": logical_task_key,
-        "perago.workflow_instance_id": task.workflow_instance_id,
-        "perago.task_def_name": task.task_def_name,
-        "perago.reference_task_name": task.reference_task_name,
-        "perago.seq": task.seq,
-        "perago.iteration": task.iteration,
-        "perago.input_ref": workspace.ref,
-        "perago.target_branch": workspace.branch,
-        "perago.prefix": workspace_spec.prefix,
-        "perago.task_id": task.task_id,
-        "perago.retry_count": task.retry_count,
-        "perago.retried_task_id": task.retried_task_id,
-    }
-    if extra:
-        data.update(extra)
-    return {key: metadata_value(value) for key, value in data.items()}
-```
-
-The LakeFS Python SDK supports this shape through `Branch.commit(..., metadata=...)` and `Reference.merge_into(..., metadata=..., squash_merge=True)`.
+简化伪代码：
 
 ```python
-import lakefs
+def publish_workspace(task_client, task, workspace, staging):
+    assert_current_attempt(task_client, task)
 
-
-def cleanup_staging_branch(staging) -> None:
-    try:
-        staging.delete()
-    except Exception:
-        # Cleanup failure must be logged by the real implementation, but it
-        # must not hide an already produced merge commit id.
-        pass
-
-
-def publish_workspace(
-    *,
-    task_client,
-    task,
-    worker_id: str,
-    workspace,
-    workspace_spec,
-    staging_branch_name: str,
-    publish_base_head: str,
-    superseded_commit_id: str | None,
-) -> str:
     repo = lakefs.repository(workspace.repository)
-    target_branch = repo.branch(workspace.branch)
-    logical_key = logical_task_key(task)
-
-    assert_current_attempt(task_client, task, worker_id)
-
-    staging = None
-
-    try:
-        staging = repo.branch(staging_branch_name).create(
-            publish_base_head,
-            hidden=True,
-        )
-
-        # Perago syncs the local workspace prefix into the staging branch here.
-        # Business code never writes directly to the target branch.
-
-        staging_commit = staging.commit(
-            message=f"perago try {task.task_def_name} {logical_key}",
-            metadata=perago_metadata(
-                task=task,
-                workspace=workspace,
-                workspace_spec=workspace_spec,
-                logical_task_key=logical_key,
-                phase="try",
-            ),
-        )
-
-        assert_current_attempt(task_client, task, worker_id)
-
-        merge_commit_id = staging_commit.merge_into(
-            target_branch,
-            message=f"perago confirm {task.task_def_name} {logical_key}",
-            metadata=perago_metadata(
-                task=task,
-                workspace=workspace,
-                workspace_spec=workspace_spec,
-                logical_task_key=logical_key,
-                phase="confirm",
-                extra={
-                    "perago.staging_branch": staging_branch_name,
-                    "perago.staging_commit": staging_commit.id,
-                    "perago.expected_head": publish_base_head,
-                    "perago.supersedes": superseded_commit_id,
-                },
-            ),
-            squash_merge=True,
-        )
-        return merge_commit_id
-    finally:
-        if staging is not None:
-            cleanup_staging_branch(staging)
-```
-
-### Publish fence
-
-The publish fence decides whether the target branch may be advanced by this attempt.
-
-Client-side publish-fence logic is:
-
-```python
-class PublishFenceError(RuntimeError):
-    pass
-
-
-def choose_publish_base(repo, workspace, logical_key: str) -> tuple[str, str | None]:
     target = repo.branch(workspace.branch)
-    current_head = target.head.id
+    head = target.get_commit()
 
-    if current_head == workspace.ref:
-        return current_head, None
+    if head.id == workspace.ref:
+        published_ref = staging.merge_into(target, squash_merge=True)
+    elif first_parent(head) == workspace.ref:
+        published_ref = staging.get_commit().id
+        repo.client.sdk_client.experimental_api.hard_reset_branch(
+            workspace.repository,
+            workspace.branch,
+            ref=published_ref,
+            force=False,
+        )
+    else:
+        raise PublishFenceError(
+            f"{workspace.branch} cannot publish from input ref {workspace.ref}"
+        )
 
-    commits = list_perago_commits_between(
-        repo=repo,
-        branch=workspace.branch,
-        older_ref=workspace.ref,
-        newer_ref=current_head,
-    )
-
-    if commits and all(
-        commit.metadata.get("perago.logical_task_key") == logical_key
-        for commit in commits
-    ):
-        return current_head, commits[-1].id
-
-    raise PublishFenceError(
-        f"{workspace.branch} advanced from {workspace.ref} to {current_head}"
-    )
+    return published_ref
 ```
 
-This is a soft fence if it is implemented only in the Python process: the read of `target.head` and the later `merge_into(...)` are two separate operations. The local LakeFS SDK `Merge` model supports `message`, `metadata`, `strategy`, `force`, `allow_empty`, and `squash_merge`, but it does not expose an `expected_destination_head` or compare-and-swap field.
+### Publish budget
 
-For the same logical task under normal Conductor retry semantics, two current attempts should not both pass the attempt fence. If the old process has lost its lease and Conductor has scheduled a retry, the old process must fail the next attempt fence before publishing.
+Publish budget 必须来自真实限制和观测：
 
-Perago workflows are serial for workspace writes. A workflow must not contain parallel branches that write the same `(repository, branch)`. Parallel workspace writers are a rejected workflow shape, not a supported case the runtime should silently reconcile.
+- LakeFS publish request timeout；
+- Conductor completion budget reserve；
+- 目标数据量下的 LakeFS publish 延迟观测值；
+- worker shutdown grace 和 heartbeat interval。
 
-Perago also assumes there is only one active workflow instance for a given `(repository, branch)`. Manual reruns, backfills, or duplicate starts for the same workspace branch must be prevented by the workflow caller or by an orchestration guard outside the worker runtime.
-
-The target branch should be a protected LakeFS branch. That prevents a stale worker or a non-Perago client from bypassing the staging-branch publish path with direct writes or direct commits.
-
-With those two invariants, the remaining soft-fence risk is the attempt crash window:
-
-- an old process can pass an attempt fence and then stall in the small gap before `merge_into(...)`; if the lease expires and another attempt or workflow publishes in that gap, LakeFS itself still has no expected-head CAS to reject the stale merge;
-- a process can merge successfully and die before local workspace cleanup or Conductor completion, so a retry may later be valid even though the target branch has already advanced.
-
-Concrete cases:
-
-- Lease-gap stale attempt: attempt A extends its lease and passes the final attempt fence, then the process is paused, loses Conductor connectivity, blocks in a LakeFS call, or otherwise stops heartbeating before it completes Conductor. After `responseTimeoutSeconds`, Conductor may schedule attempt B. If B publishes before A resumes, A can still call LakeFS `merge_into(...)` unless LakeFS itself checks an expected destination head.
-- Post-merge lost result: attempt A successfully merges to LakeFS, then dies or loses Conductor connectivity before cleanup and `COMPLETED` with output data. Conductor retries attempt B. B is valid from Conductor's point of view, but the target branch already contains A's publication.
-
-MVP handling for the attempt crash window:
-
-- keep Conductor lease extension active through local execution, staging upload, staging commit, merge, local workspace cleanup, and Conductor completion;
-- run `assert_current_attempt(...)` immediately before entering `merge_into(...)`;
-- keep uploads and staging commits outside the final target-branch critical section; after the final attempt fence, Perago should only perform the target-branch merge, local workspace cleanup, and Conductor completion;
-- configure lakeFS client request timeout for merge and include a Conductor completion reserve in `responseTimeoutSeconds`;
-- configure `responseTimeoutSeconds` from an explicit publish budget, not from a guess;
-- do not retry an uncertain `merge_into(...)` blindly after a timeout or connection error; first inspect the target branch log for Perago metadata matching `perago.logical_task_key`, `perago.task_id`, and `perago.staging_commit`;
-- if merge succeeded but Conductor completion failed, do not roll back LakeFS; let Conductor retry the task, re-execute, and publish a new merge commit that records `perago.supersedes`;
-- on retry, if the target branch advanced only through commits with the same `perago.logical_task_key`, use the current head as the new publish base and record the previous commit as superseded.
-
-The publish budget must be derived from real limits and measurements:
-
-- lakeFS merge request timeout and Conductor completion budget reserve;
-- observed lakeFS merge latency under expected repository size and object count, using a high percentile plus safety margin;
-- operational limits for worker shutdown grace period and heartbeat interval.
-
-Workspace publication does not follow or upload symbolic links. A symlink under the local workspace is rejected before staging because it can point outside the attempt-local workspace root.
-
-There is no absolute "worst LakeFS publish time" unless Perago imposes these bounds. For the MVP, the project accepts an operational maximum LakeFS merge time as part of the publish budget. That budget is an assumption used to size `responseTimeoutSeconds`, the LakeFS merge request timeout, and shutdown grace periods; it is not a distributed-systems proof. A worker process can be paused, killed, or partitioned for an unbounded amount of time, so lease margin is a mitigation, not a proof.
-
-This makes retries idempotent at the workflow level: the latest successful retry produces the Workspace Output, and the target branch remains linear. It does not promise exactly one LakeFS commit per logical task.
-
-The lease-margin strategy handles the post-merge lost-result case and reduces the lease-gap stale-attempt case. It does not fully solve stale merge after final attempt fence. Fully solving that requires the expected-head check to run inside the LakeFS merge path, or a publish coordinator that is the only component allowed to call LakeFS merge.
-
-If the deployment guarantees one serial workflow writer per `(repository, branch)`, no duplicate workflow instances, and enough lease margin between the final attempt fence and `merge_into(...)`, the client-side publish fence is sufficient for the MVP. It is still not a hard linearization point because the guarantee comes from Conductor topology and operational assumptions, not from LakeFS rejecting a stale expected head.
-
-The MVP should still implement the client-side publish fence because it catches stale attempts and unexpected branch advancement before merge. It is not a hard linearization point.
-
-If the soft-fence assumptions are violated and Perago cannot classify the LakeFS state from commit metadata, the runtime must fail closed: mark the Conductor task failed and allow the workflow to fail. Recovery is to start a new workflow from the current protected branch head. The MVP does not try to repair or resume the failed workflow with an external transaction record.
-
-### Hard publish fence options
-
-There are two ways to make the publish fence hard in a Community/OSS deployment:
-
-- Move the expected-head check into LakeFS server-side merge validation, for example a pre-merge action or webhook that reads `perago.expected_head` from merge metadata, reads the current destination branch head, and aborts immediately if they differ. This must be proven by integration test against the target LakeFS Community version. The hook must be a fast gate only; it must not wait for locks or run long work.
-- Introduce a Perago-owned external transaction ledger with compare-and-swap or row-level locking for `(repository, branch)`, plus durable publication records keyed by logical task key.
-
-The external ledger is not part of the MVP. It becomes necessary if Perago must guarantee exactly-once publication and recover a completed Conductor result after a process dies between LakeFS merge and Conductor task completion. A PostgreSQL advisory lock or row lock can serialize a publish coordinator, but that only solves the critical section if all LakeFS merges go through that coordinator and the coordinator records durable intent before calling LakeFS.
-
-One possible hard-mode ledger shape is:
-
-```sql
-CREATE TABLE perago_branch_publications (
-  repository text NOT NULL,
-  branch text NOT NULL,
-  logical_task_key text NOT NULL,
-  task_id text NOT NULL,
-  input_ref text NOT NULL,
-  expected_head text NOT NULL,
-  staging_branch text,
-  staging_commit text,
-  merge_commit text,
-  output_json jsonb,
-  status text NOT NULL,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (repository, branch, logical_task_key)
-);
-
-CREATE TABLE perago_branch_heads (
-  repository text NOT NULL,
-  branch text NOT NULL,
-  head text NOT NULL,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (repository, branch)
-);
-```
-
-The ledger gives Perago a durable idempotency record and a row-level lock or compare-and-swap point for `(repository, branch)`. It still needs recovery logic: if a process dies after LakeFS merge but before the ledger commit, a reconciler must read LakeFS commit metadata and repair the ledger before completing or retrying the Conductor task.
+Workspace publication 不跟随或上传 symbolic link。workspace 内出现 symlink 时，stage 前拒绝发布。
 
 ## Extracted task definition
 

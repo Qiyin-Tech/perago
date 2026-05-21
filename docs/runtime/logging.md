@@ -85,4 +85,4 @@ attempt workspace 清理不在 `prepare_worker_runtime()` 内执行。`perago st
 | task attempt 执行失败 | worker JSONL 中带 `task_id`、`workflow_instance_id` 或异常信息的记录。 |
 | workspace 清理或发布问题 | worker JSONL 中的 workspace runtime、LakeFS runtime 和 cleanup 相关记录。 |
 
-Perago 日志目录只保存 worker-local 事实。最终 task 状态仍以 Conductor task update 为准；LakeFS workspace 是否发布成功仍以 protected branch、staging branch 和相关 metadata 判定。
+Perago 日志目录只保存 worker-local 事实。最终 task 状态仍以 Conductor task update 为准；LakeFS workspace 是否发布成功按 target HEAD、staging branch 和 [LakeFS 发布协议](../lakefs-publication-protocol.md) 判定。

@@ -1,8 +1,10 @@
 # ADR-0001: Use TCC-inspired workspace transaction for LakeFS publication
 
 **Date**: 2026-05-19
-**Status**: accepted
+**Status**: superseded by [ADR-0003](0003-use-soft-fenced-lakefs-publication-protocol.md)
 **Deciders**: Perago maintainers
+
+> 历史记录。当前 LakeFS 发布规则以 ADR-0003 和 [LakeFS 发布协议](../../lakefs-publication-protocol.md) 为准。
 
 ## Context
 

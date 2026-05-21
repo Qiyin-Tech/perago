@@ -64,6 +64,7 @@ def double(params: Params) -> Output:
 :caption: 文档
 
 getting-started
+lakefs-publication-protocol
 concepts/index
 task-authoring/index
 runtime/index

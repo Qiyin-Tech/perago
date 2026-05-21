@@ -69,7 +69,7 @@ Conductor task 会被映射成 Perago attempt snapshot：
 | `iteration` | optional | 缺失时按 `0` 处理。 |
 | `status` | required | 当前 Conductor task 状态。 |
 | `input_data` | required | Perago task input payload；必须是 mapping。 |
-| `retried_task_id` | optional | 用于 metadata 和 publish-state 追踪。 |
+| `retried_task_id` | optional | Conductor retry lineage，可用于日志排查。 |
 | `response_timeout_seconds` | optional | SDK task 的 lease timeout snapshot；后续 SDK broker/runner adapter 用它接入 LeaseManager 追踪和日志排查。 |
 
 workspace task 在发布前会重新读取当前 `task_id` 的 Conductor task，并调用 attempt fence。默认 process 模式下，这个重新读取动作由 broker-owned RPC 完成，executor 不持有 Conductor client；thread 模式下由同进程 runner client 完成。只有 fresh snapshot 同时满足以下条件时，才允许继续进入 stage 或 publish：
@@ -114,6 +114,6 @@ Conductor runtime 页面只覆盖与 Conductor 交互有关的边界：
 
 - TaskDef 缺失会阻止 `perago start` 启动 worker。
 - poll 失败和 result update 失败会记录日志并退避重试，不会让 supervisor 立即退出。
-- result update 失败发生在 task 已经本地执行之后；对于 workspace task，publish 可能已经完成，因此排查时要同时看 Conductor task 状态、worker JSONL 日志和 LakeFS publication metadata。
+- result update 失败发生在 task 已经本地执行之后；对于 workspace task，publish 可能已经完成，因此排查时要同时看 Conductor task 状态、worker JSONL 日志和 LakeFS target HEAD。
 - attempt fence 是 client-side soft fence。它降低旧 attempt 继续发布的风险，但不是 exactly-once 证明。
-- 如果 LakeFS publish 已成功但 Conductor result update 未完成，Perago 不会在下一次启动时补发 completion，也不会从 LakeFS metadata 恢复旧 attempt 状态；最终由 Conductor timeout/fail/retry 处理。
+- 如果 LakeFS publish 已成功但 Conductor result update 未完成，Perago 不会在下一次启动时补发 completion；最终由 Conductor timeout/fail/retry 处理。

@@ -99,6 +99,6 @@ Perago 的失败分类是 fail-closed 的：
 
 - publish fence、stale attempt 和 LakeFS merge 错误不会被包装成成功。
 - staging cleanup 和 local cleanup 的错误只写日志，不覆盖原始 task result。
-- merge timeout 或 result update 失败后，不应直接假设 publish 没发生；运维恢复需要检查目标 branch commit metadata。
+- publish timeout 或 result update 失败后，不应直接假设 publish 没发生；下一次 retry 按 [LakeFS 发布协议](../lakefs-publication-protocol.md) 检查 target HEAD 状态。
 
-MVP 不提供严格 exactly-once publication 证明。Reference 中的失败分类只描述 worker 如何回写当前 attempt result；跨 attempt 的恢复判断需要结合 `perago.logical_task_key`、`perago.task_id`、`perago.staging_commit` 等发布 metadata。
+MVP 不提供严格 exactly-once publication 证明。Reference 中的失败分类只描述 worker 如何回写当前 attempt result；跨 attempt 的发布判断来自 Conductor attempt fence 和 LakeFS HEAD 状态。
