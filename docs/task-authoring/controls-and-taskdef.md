@@ -136,7 +136,7 @@ controls = TaskControls(
 45 + 15 + 30 + 10 = 100
 ```
 
-`PublishBudget` 本身不会写入 TaskDef JSON。它同时给 runtime 提供 LakeFS merge request timeout 和向 Conductor 回写 completion 的 request timeout。`lakefs_merge_timeout_seconds` 必须覆盖 `observed_merge_p99_seconds + safety_margin_seconds`，否则校验失败。
+`PublishBudget` 本身不会写入 TaskDef JSON。它给 runtime 提供 LakeFS merge request timeout，并把 Conductor completion 阶段预留计入 `responseTimeoutSeconds`。SDK `TaskRunner` owns completion result update；Perago 当前不把 `conductor_completion_timeout_seconds` 写成 SDK 内部 HTTP request timeout。`lakefs_merge_timeout_seconds` 必须覆盖 `observed_merge_p99_seconds + safety_margin_seconds`，否则校验失败。
 
 `publish_budget` 只适用于 workspace task。workspace-free task 没有 LakeFS publication 阶段，配置 `TaskControls(publish_budget=...)` 会被拒绝。
 

@@ -141,7 +141,7 @@ Perago 没有用户可见的 cancel hook。runtime 的 cancel 行为是清理内
 MVP 的 workspace publication 依赖这些运行时假设：
 
 - Conductor lease/heartbeat 必须覆盖 task body、stage、publish、cleanup 和 result update。
-- `PublishBudget` 应来自真实 LakeFS merge 观测值和安全边界，用来约束 merge timeout 与 Conductor completion timeout。
+- `PublishBudget` 应来自真实 LakeFS merge 观测值和安全边界，用来约束 merge timeout，并把 Conductor completion budget reserve 计入 `responseTimeoutSeconds`。
 - 不要把 LakeFS merge 与 Conductor completion 当成单个事务。publish 成功但 completion 未上报时，Perago 不做 workflow recovery。
 - 如果 runtime 无法判断当前 attempt 是否仍可发布，应 fail closed，让 Conductor 按 timeout/fail/retry 策略处理。
 

@@ -155,7 +155,7 @@ _Avoid_: file path, object path, module:app target
 - A **Workspace Transaction** belongs to one **Task Attempt**.
 - A **Workspace Transaction** uses one **Staging Branch** before it can update the target **Workspace Branch**.
 - A **Workspace Transaction** must pass an **Attempt Fence** and a **Publish Fence** before producing a **Workspace Output**.
-- A **Publish Budget** sizes Conductor response timeout, LakeFS merge request timeout, Conductor completion request timeout, heartbeat interval, and worker shutdown grace around a **Publish Fence**.
+- A **Publish Budget** sizes Conductor response timeout, LakeFS merge request timeout, Conductor completion budget reserve, heartbeat interval, and worker shutdown grace around a **Publish Fence**.
 - A **Serial Workspace Workflow** orders all Workspace Task Workers that write the same **Workspace Branch**.
 - A **Single Active Workspace Workflow** prevents duplicate workflow instances from writing the same **Workspace Branch**.
 - A **Task Worker** is either a **Workspace Task Worker** or a **Workspace-Free Task Worker**.

@@ -1,6 +1,7 @@
 from queue import Empty
 
 import pytest
+from conductor.client.configuration.configuration import Configuration
 from conductor.client.http.models.task import Task
 
 from perago.conductor_runtime import (
@@ -917,6 +918,9 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
     assert created["worker"].thread_count == 3
     assert created["worker"].lease_extend_enabled is True
     assert created["worker"].get_identity() == "metadataBroker"
+    assert isinstance(created["configuration"], Configuration)
+    assert created["configuration"].host == "http://conductor.local/api"
+    assert not hasattr(created["configuration"], "request_timeout")
 
 
 def test_run_conductor_process_broker_builds_sdk_runner() -> None:
@@ -952,3 +956,6 @@ def test_run_conductor_process_broker_builds_sdk_runner() -> None:
     assert created["worker"].get_identity() == "metadataBroker"
     assert created["worker"]._assignment_queue is assignment_queue
     assert created["worker"]._completion_queue is completion_queue
+    assert isinstance(created["configuration"], Configuration)
+    assert created["configuration"].host == "http://conductor.local/api"
+    assert not hasattr(created["configuration"], "request_timeout")

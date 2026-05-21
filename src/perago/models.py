@@ -153,9 +153,11 @@ class PublishBudget(BaseModel):
     """Operational time budget for workspace publication.
 
     ``PublishBudget`` derives the Conductor ``responseTimeoutSeconds`` used by
-    generated TaskDefs for workspace tasks and provides runtime timeouts for
-    the LakeFS merge and Conductor completion calls. It is an operational time
-    budget, not an exactly-once publication proof.
+    generated TaskDefs for workspace tasks. The LakeFS merge field is used as
+    a LakeFS SDK request timeout. The Conductor completion field is currently a
+    completion-phase reserve inside ``responseTimeoutSeconds``; it is not wired
+    to the Conductor SDK ``TaskRunner`` result-update HTTP request timeout. It
+    is an operational time budget, not an exactly-once publication proof.
 
     Parameters
     ----------
@@ -167,7 +169,10 @@ class PublishBudget(BaseModel):
         Request timeout for the LakeFS merge operation. Must cover
         ``observed_merge_p99_seconds + safety_margin_seconds``.
     conductor_completion_timeout_seconds : int
-        Request timeout for reporting the final task result to Conductor.
+        Reserve for the Conductor completion phase when deriving
+        ``responseTimeoutSeconds``. The SDK ``TaskRunner`` owns result update,
+        and Perago does not currently apply this value as its internal HTTP
+        request timeout.
     worker_shutdown_grace_seconds : int
         Grace period reserved for worker shutdown after publication.
     heartbeat_interval_seconds : int
@@ -487,4 +492,3 @@ class WorkspaceOutput(WorkspaceRef):
     ref : str
         Published commit ref.
     """
-
