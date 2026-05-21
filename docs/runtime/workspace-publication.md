@@ -2,7 +2,7 @@
 
 Workspace publication 是 Perago 对一次 workspace task attempt 的事务边界。任务函数只读写本机 attempt-local workspace；下载、stage、publish fence、LakeFS publish、Conductor output 和 cleanup 都由 runtime 包起来执行。
 
-正式 LakeFS 操作协议见 [LakeFS 发布协议](../lakefs-publication-protocol.md)。本页按 attempt 生命周期说明 runtime 如何执行该协议。LakeFS object 同步细节见 `lakefs.md`，Conductor poll/result 细节见 `conductor.md`。
+正式 LakeFS 操作协议见 [LakeFS 发布协议](../lakefs-publication-protocol.md)。本文档按 attempt 生命周期说明 runtime 如何执行该协议。LakeFS object 同步细节见 `lakefs.md`，Conductor poll/result 细节见 `conductor.md`。
 
 ## 生命周期
 

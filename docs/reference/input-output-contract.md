@@ -1,6 +1,6 @@
 # Input/Output Contract
 
-本页定义 Perago worker 从 Conductor 读取的 `inputData` 形状，以及 Perago 回写到 Conductor 的 task result 形状。这里的 contract 是运行时边界，不是业务模型定义位置；业务 `params` 和 `result` 的字段仍然来自 task module 函数签名中的 Pydantic model。
+本页定义 Perago worker 从 Conductor 读取的 `inputData` 结构，以及 Perago 回写到 Conductor 的 task result 结构。这里的 contract 描述运行时边界；业务 `params` 和 `result` 的字段仍然来自 task module 函数签名中的 Pydantic model。
 
 ## Workspace Task Input
 
@@ -64,7 +64,7 @@ Perago 在调用业务函数前使用 task 的 Pydantic `params` model 校验 `p
 
 ## Completed Output
 
-Perago 只在 task 成功完成时向 Conductor 回写 `outputData`。`RuntimeTaskResult.conductor_payload()` 的完成形状是：
+Perago 只在 task 成功完成时向 Conductor 回写 `outputData`。`RuntimeTaskResult.conductor_payload()` 的完成载荷如下：
 
 ```json
 {
@@ -128,7 +128,7 @@ Workspace-free task 的完成输出只包含 `result`。
 | 状态 | 输出字段 | 典型来源 |
 | --- | --- | --- |
 | `COMPLETED` | `output` required, `reasonForIncompletion` forbidden | 业务函数成功、post guardrail 通过、workspace task 已完成发布。 |
-| `FAILED` | `reasonForIncompletion` required, `output` forbidden | 输入形状错误、Pydantic 校验失败、业务异常、post guardrail 失败、attempt fence 或 publish fence 失败。 |
+| `FAILED` | `reasonForIncompletion` required, `output` forbidden | 输入结构错误、Pydantic 校验失败、业务异常、post guardrail 失败、attempt fence 或 publish fence 失败。 |
 | `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required, `output` forbidden | pre guardrail 失败，表示上游 workspace input 不满足任务输入文件契约。 |
 
 ## Strict Top-Level Shapes
@@ -140,4 +140,4 @@ Perago 的运行时入口会先检查顶层字段集合，再校验 Pydantic pay
 | Workspace task | `workspace`, `params` | `workspace`, `result` |
 | Workspace-free task | `params` | `result` |
 
-这些形状同时用于运行时执行和生成 TaskDef schema。TaskDef 中会生成对应的 `inputKeys`、`outputKeys`、`inputSchema` 和 `outputSchema`；guardrail、publish budget、LakeFS credentials 和 staging branch 不会出现在 input/output contract 中。
+这些结构同时用于运行时执行和生成 TaskDef schema。TaskDef 中会生成对应的 `inputKeys`、`outputKeys`、`inputSchema` 和 `outputSchema`；guardrail、publish budget、LakeFS credentials 和 staging branch 不出现在 input/output contract 中。

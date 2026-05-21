@@ -1,6 +1,6 @@
 # Troubleshooting
 
-本页按报错入口反向定位 Perago 问题。优先从 `perago check` 复现 task module 和本机配置问题；只有 `perago check` 通过后，再排查 `perago extract`、TaskDef 注册和 `perago start` 的运行时问题。
+本页按报错入口定位 Perago 问题。优先用 `perago check` 复现 task module 和本机配置问题；`perago check` 通过后，再排查 `perago extract`、TaskDef 注册和 `perago start` 的运行时问题。
 
 ## Triage Flow
 
@@ -15,7 +15,7 @@ PYTHONPATH=tests/fixtures uv run perago start app.workers.features_build -j 1
 | 停在哪一步 | 主要问题范围 | 下一步 |
 | --- | --- | --- |
 | `check` 失败 | task module、Pydantic contract、WorkspaceSpec、TaskControls 或本机 runtime config | 先看 stderr 的 `error: ...`；修正代码或 `.env` 后重跑 `check`。 |
-| `extract` 失败 | `check` 覆盖的范围，或输出路径不是 `.json` | 确认输出路径是文件路径，不是目录。 |
+| `extract` 失败 | `check` 覆盖的范围，或输出路径缺少 `.json` 后缀 | 确认输出路径指向 JSON 文件。 |
 | `start` 失败 | Conductor/LakeFS 连接变量、Conductor TaskDef 注册、worker supervisor 启动前检查 | 先确认 `.env` 完整，再确认 TaskDef 已注册到 Conductor。 |
 | attempt 运行中失败 | Conductor input、LakeFS workspace、Workspace Check、task body、publish fence 或 cleanup | 结合 Conductor result status、`reasonForIncompletion` 和 worker JSONL 日志排查。 |
 
@@ -55,8 +55,8 @@ Perago 的 worker 单元是 exactly one task per Python module。一个 worker p
 | `workspace task functions require workspace=WorkspaceSpec(...)` | 函数签名像 workspace task，但 decorator 没声明 workspace。 | 在 `@task(...)` 里加入 `workspace=WorkspaceSpec(...)`。 |
 | `workspace-free task parameter must be named params` | workspace-free task 的唯一参数不叫 `params`。 | 把唯一参数命名为 `params`。 |
 | `workspace-free task functions must not declare workspace=WorkspaceSpec(...)` | 函数只有 `params`，但 decorator 声明了 workspace。 | 删除 `workspace=...`，或把函数改成 workspace task 签名。 |
-| `params must be annotated as a Pydantic BaseModel subclass` | `params` 没有类型注解，或不是 Pydantic model。 | 定义 `class Params(BaseModel): ...` 并标注 `params: Params`。 |
-| `return value must be annotated as a Pydantic BaseModel subclass` | 返回值没标注，或不是 Pydantic model。 | 定义 output model 并标注 `-> Output`。 |
+| `params must be annotated as a Pydantic BaseModel subclass` | `params` 缺少类型注解，或类型未继承 Pydantic `BaseModel`。 | 定义 `class Params(BaseModel): ...` 并标注 `params: Params`。 |
+| `return value must be annotated as a Pydantic BaseModel subclass` | 返回值缺少类型注解，或类型未继承 Pydantic `BaseModel`。 | 定义 output model 并标注 `-> Output`。 |
 
 不要把业务字段展开成多个函数参数。函数签名只声明 Perago contract；业务 required/optional 字段属于 Pydantic `Params` 和 `Output` model。
 
@@ -75,11 +75,11 @@ Perago 的 worker 单元是 exactly one task per Python module。一个 worker p
 
 运行中 Workspace Check 失败会进入 `reasonForIncompletion`：
 
-| 错误文本形状 | 状态 | 含义 |
+| 错误文本 | 状态 | 含义 |
 | --- | --- | --- |
 | `pre guardrail require_file('...') did not find a file` | `FAILED_WITH_TERMINAL_ERROR` | 输入 workspace 缺少 task 声明的必需文件。 |
 | `pre guardrail require_glob('...') matched 0 files; min_count=1` | `FAILED_WITH_TERMINAL_ERROR` | 输入 workspace glob 数量不足。 |
-| `post guardrail forbid_glob('...') matched N files` | `FAILED` | task body 产出的 workspace 文件形状不满足 post check。 |
+| `post guardrail forbid_glob('...') matched N files` | `FAILED` | task body 产出的 workspace 文件未通过 post check。 |
 
 只有 pre check 被映射为 `FAILED_WITH_TERMINAL_ERROR`。post check、业务异常和 publish 失败都会映射为普通 `FAILED`。
 

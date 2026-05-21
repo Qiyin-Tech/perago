@@ -2,7 +2,7 @@
 
 Perago 的 workspace transaction 是一个由 runtime 执行的 TCC-inspired 发布模型。它把任务函数限制在 attempt-local workspace 内，让 worker runtime 负责 LakeFS staging、发布 fence、目标 branch 更新、Conductor result 和清理。
 
-正式 LakeFS 操作步骤见 [LakeFS 发布协议](../lakefs-publication-protocol.md)。本页解释为什么这个模型存在，以及它不保证什么。
+正式 LakeFS 操作步骤见 [LakeFS 发布协议](../lakefs-publication-protocol.md)。本页说明该模型提供的保证以及不涵盖的范围。
 
 ## 设计目标
 

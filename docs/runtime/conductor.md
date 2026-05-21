@@ -18,7 +18,7 @@ Perago 默认 `process` runtime 由一个 Conductor broker process 拉取单个 
 error: Conductor TaskDef 'features.build' is not registered; run perago extract and register it before start
 ```
 
-正确顺序是先本地校验，再生成 TaskDef JSON，再通过部署流程注册到 Conductor，最后启动 worker：
+推荐顺序如下：先本地校验，再生成 TaskDef JSON，再通过部署流程注册到 Conductor，最后启动 worker：
 
 ```bash
 perago check app.workers.features_build
@@ -44,15 +44,15 @@ process mode 不会在一个 Python module 内路由多个 task。并发来自 b
 
 显式 `thread` runtime 使用 SDK `TaskRunner` 和 `PeragoThreadWorker`。`-j N` 会传给 SDK worker 的 `thread_count`，`lease_extend_enabled=True`，并且 `register_task_def=False`、`register_schema=False`。在这个模式下，SDK thread pool 负责 poll、LeaseManager 追踪和 result update；Perago adapter 只把 SDK `Task` 转成 `ConductorTaskAttempt`，执行现有 task body/workspace 流程，再把 `RuntimeTaskResult` 转回 SDK `TaskResult`。thread mode 的 Conductor 可见 worker id 当前由 `PERAGO_WORKER_ID_PREFIX + "Broker"` 派生。
 
-thread mode 当前是“一个 `PeragoThreadWorker` + 一个 `LakeFSWorkspaceRuntime` + SDK `ThreadPoolExecutor(max_workers=N)`”的形状，而不是“一线程一个 runtime”。也就是说，同一个 runtime 实例的方法会被多个 SDK worker thread 并发调用。这里的设计前提是 `LakeFSWorkspaceRuntime` 只持有共享 client 和 publish budget，不缓存上一轮 attempt 的 repository、branch 或其他 per-attempt 可变状态；每次执行需要的 LakeFS 身份都必须来自当前 `workspace input` 或 `StagedWorkspace` 这类显式参数。
+thread mode 使用一个 `PeragoThreadWorker`、一个 `LakeFSWorkspaceRuntime` 和 SDK `ThreadPoolExecutor(max_workers=N)`。同一个 runtime 实例的方法会被多个 SDK worker thread 并发调用，因此 `LakeFSWorkspaceRuntime` 只持有共享 client 和 publish budget，不缓存上一轮 attempt 的 repository、branch 或其他 per-attempt 可变状态；每次执行需要的 LakeFS 身份都来自当前 `workspace input` 或 `StagedWorkspace` 这类显式参数。
 
 process broker 由 `PeragoProcessDispatchWorker` 与 `run_conductor_process_broker(...)` 组成。它同样满足 SDK worker contract：`thread_count=N`、`lease_extend_enabled=True`、`register_task_def=False`、`register_schema=False`，并用 broker worker id 作为 Conductor 可见 identity。和 thread worker 不同，它不会在 SDK worker thread 内执行 task body；`execute(...)` 会把 SDK `Task` 转成 `ConductorTaskAttempt`，生成本次 execution id，放入 broker-to-executor assignment queue，等待 executor 返回同一个 `task_id` 和同一个 `execution_id` 的 `RuntimeTaskResult` completion，再映射成 SDK `TaskResult`。SDK `TaskRunner` 仍负责 broker 侧 poll、LeaseManager tracking 和 result update。
 
 process executor 的本地执行循环是 `run_process_executor_loop(...)`。executor 只消费 `ProcessTaskAssignment`，复用现有 `execute_polled_task()` 跑 workspace 或 workspace-free task，再把同一 `task_id` 和 `execution_id` 的 `ProcessTaskCompletion` 写回 completion queue；它不 poll Conductor，也不 update Conductor result。workspace task 的 attempt-fence reload 会写入 `attempt_fence_request_queue`，由 broker 调 Conductor `get_task` 后通过对应 executor 的 response queue 返回 fresh attempt snapshot。
 
-execution id 的作用域是“一次 executor 实际执行 assignment”。它不是 Conductor task id，也不是 workflow step identity；broker 使用它拒绝旧 completion 或重复派发残留 completion，LakeFS runtime 使用它隔离 staging branch 和本机 attempt workspace。
+execution id 的作用域是“一次 executor 实际执行 assignment”。Conductor task id 和 workflow step identity 使用各自的独立字段；broker 使用 execution id 拒绝旧 completion 或重复派发残留 completion，LakeFS runtime 使用它隔离 staging branch 和本机 attempt workspace。
 
-Perago 的维护边界是 worker adapter、workspace execution 和 LakeFS publish。Conductor task lifecycle 仍交给 SDK `TaskRunner`：poll、lease tracking、result update 以及 update-v2 fallback 都不是 Perago 自己实现的 HTTP path。
+Perago 的维护边界是 worker adapter、workspace execution 和 LakeFS publish。Conductor task lifecycle 仍交给 SDK `TaskRunner`：poll、lease tracking、result update 以及 update-v2 fallback 都由 SDK 处理。
 
 ## Attempt snapshot
 
@@ -115,5 +115,5 @@ Conductor runtime 页面只覆盖与 Conductor 交互有关的边界：
 - TaskDef 缺失会阻止 `perago start` 启动 worker。
 - poll 失败和 result update 失败会记录日志并退避重试，不会让 supervisor 立即退出。
 - result update 失败发生在 task 已经本地执行之后；对于 workspace task，publish 可能已经完成，因此排查时要同时看 Conductor task 状态、worker JSONL 日志和 LakeFS target HEAD。
-- attempt fence 是 client-side soft fence。它降低旧 attempt 继续发布的风险，但不是 exactly-once 证明。
+- attempt fence 是 client-side soft fence。它降低旧 attempt 继续发布的风险；strict exactly-once publication proof 超出 MVP 保证范围。
 - 如果 LakeFS publish 已成功但 Conductor result update 未完成，Perago 不会在下一次启动时补发 completion；最终由 Conductor timeout/fail/retry 处理。

@@ -1,6 +1,6 @@
 # Environment Variables
 
-本页是 Perago 运行时环境变量的精确参考。任务作者通常只需要从
+本页提供 Perago 运行时环境变量的精确参考。任务作者通常只需要阅读
 `runtime/configuration` 理解配置流程；排查启动失败、部署变量和本机目录问题时，以本页表格为准。
 
 Perago 只读取当前工作目录下的 `.env` 和进程环境变量。合并顺序是：
@@ -64,7 +64,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 
 | 命令 | 必须完整配置连接变量吗 | 会探测本机目录吗 | 说明 |
 | --- | --- | --- | --- |
-| `perago check` | 否 | 是 | 可在没有 Conductor/LakeFS 的本机环境中检查 task module 和配置形状。 |
+| `perago check` | 否 | 是 | 可在没有 Conductor/LakeFS 的本机环境中检查 task module 和配置。 |
 | `perago extract` | 否 | 是 | 可生成 TaskDef JSON；连接变量不会写入 TaskDef。 |
 | `perago start` | 是 | 是 | 启动前要求 `CONDUCTOR_SERVER_URL`、三个 LakeFS 变量和已注册 TaskDef。 |
 
@@ -79,10 +79,10 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `CONDUCTOR_SERVER_URL is required for perago start` | 启动 worker 时未配置 Conductor endpoint。 | 在 `.env` 或进程环境中配置真实 `CONDUCTOR_SERVER_URL`。 |
 | `LakeFS config is incomplete; missing ...` | LakeFS 三个变量只配置了一部分。 | 同时配置 endpoint、access key id 和 secret access key，或在非 `start` 命令中全部省略。 |
 | `<NAME> must be replaced with a real value` | 连接变量仍是 `replace-me`。 | 用真实部署值替换 `.env.example` 的占位值。 |
-| `PERAGO_LOG_FILE_MAX_SIZE must be a positive size ...` | 日志文件大小不是 `512KB`/`100MB`/`1.5GB` 这类格式。 | 使用正数和 `KB`、`MB` 或 `GB` 单位。 |
-| `PERAGO_LOG_RETENTION must be a positive day count ...` | 日志保留期不是正整数天数。 | 使用 `7d`、`30d` 这类格式。 |
+| `PERAGO_LOG_FILE_MAX_SIZE must be a positive size ...` | 日志文件大小格式无效。 | 使用正数和 `KB`、`MB` 或 `GB` 单位，例如 `512KB`、`100MB`、`1.5GB`。 |
+| `PERAGO_LOG_RETENTION must be a positive day count ...` | 日志保留期格式无效。 | 使用 `7d`、`30d` 这类格式。 |
 | `PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits` | worker id prefix 含有连字符、下划线、点号或非 ASCII 字符。 | 改成只含字母和数字的前缀，例如 `prodAFeaturesBuild`。 |
-| `PERAGO_EXECUTION_MODE must be either 'process' or 'thread'` | execution mode 不是支持的枚举值。 | 使用默认 `process`，或显式设置为 `thread`。 |
+| `PERAGO_EXECUTION_MODE must be either 'process' or 'thread'` | execution mode 超出支持范围。 | 使用默认 `process`，或显式设置为 `thread`。 |
 | `PERAGO_WORKSPACE_GC_TTL must be a positive duration ...` | workspace GC TTL 格式非法。 | 使用 `30m`、`1h`、`24h` 这类正数 duration。 |
 | `PERAGO_WORKSPACE_GC_INTERVAL must be a positive duration ...` | workspace GC interval 格式非法。 | 使用 `30s`、`5m`、`1h` 这类正数 duration。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER must be a positive duration ...` | shutdown force-kill deadline 格式非法。 | 使用 `30s`、`5m`、`1h` 这类正数 duration，或不配置该变量。 |

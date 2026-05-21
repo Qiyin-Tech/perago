@@ -1,6 +1,6 @@
 # LakeFS 发布协议
 
-这份协议定义 Perago worker 如何把 workspace 结果发布到 LakeFS。Python task、TS 节点和人工节点开发者在实现 workspace 发布前都应该先读这一页。
+本协议定义 Perago worker 如何把 workspace 结果发布到 LakeFS。Python task、TS 节点和人工节点开发者在实现 workspace 发布前都应阅读本页。
 
 ## 核心规则
 

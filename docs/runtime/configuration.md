@@ -36,13 +36,13 @@ PERAGO_WORKSPACE_GC_INTERVAL=1h
 PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 ```
 
-`replace-me` 不是有效运行时值。Perago 看到未替换的连接密钥占位值时会拒绝启动。
+`replace-me` 属于占位值。Perago 看到未替换的连接密钥占位值时会拒绝启动。
 
 ## 变量表
 
 | 变量 | Required | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `PERAGO_WORKSPACE_ROOT` | optional | 平台临时目录下的 `perago/workspaces` | attempt-local workspace 根目录。必须是 worker 主机文件系统路径，不是 LakeFS object path。一个 running supervisor 会独占一个 root。 |
+| `PERAGO_WORKSPACE_ROOT` | optional | 平台临时目录下的 `perago/workspaces` | attempt-local workspace 根目录。必须是 worker 主机文件系统路径，LakeFS object path 不适用。一个 running supervisor 会独占一个 root。 |
 | `PERAGO_LOG_ROOT` | optional | 平台临时目录下的 `perago/logs` | worker JSONL 日志根目录。 |
 | `PERAGO_LOG_FILE_MAX_SIZE` | optional | `100MB` | 单个日志文件 rotation 阈值。接受正数加 `KB`、`MB` 或 `GB`，例如 `512KB`、`100MB`、`1.5GB`。裸数字非法。 |
 | `PERAGO_LOG_RETENTION` | optional | `30d` | 日志保留天数。接受正整数加 `d`，例如 `7d` 或 `30d`。 |
@@ -56,7 +56,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for `perago start` | 无 | LakeFS access key id。 |
 | `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for `perago start` | 无 | LakeFS secret access key。 |
 
-Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。Conductor auth key/secret 可以由底层 SDK 或部署环境使用，但不是 Perago `RuntimeConfig` 的字段。
+Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。Conductor auth key/secret 可以由底层 SDK 或部署环境使用；Perago `RuntimeConfig` 暂不建模这两个字段。
 
 ## 本地目录校验
 
@@ -110,11 +110,11 @@ PERAGO_WORKER_ID_PREFIX=prod-a-features-build
 PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits
 ```
 
-`PERAGO_WORKER_ID` 是进程身份，不是 task attempt id、logical task key 或 workspace publication key。supervisor 管理的 worker 会由 supervisor 写入该值；只有非 supervisor 本地调试进程才会使用用户提供的 `PERAGO_WORKER_ID` 或 pid fallback。
+`PERAGO_WORKER_ID` 是进程身份。task attempt id、logical task key 和 workspace publication key 使用各自的独立字段。supervisor 管理的 worker 会由 supervisor 写入该值；只有非 supervisor 本地调试进程才会使用用户提供的 `PERAGO_WORKER_ID` 或 pid fallback。
 
 ## 命令差异
 
-`perago check` 会验证配置、task module 和生成 TaskDef 的基本形状，但不会连接 Conductor 或 LakeFS。
+`perago check` 会验证配置、task module 和生成 TaskDef 的基本结构，且不连接 Conductor 或 LakeFS。
 
 `perago extract` 会验证配置和 task module，然后写出 TaskDef JSON。它同样不要求 Conductor 和 LakeFS 必须已经配置完成。
 
@@ -124,4 +124,4 @@ PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits
 - LakeFS endpoint、access key id 和 secret access key 已完整配置。
 - Conductor 中已经注册了对应 TaskDef。
 
-因此推荐流程是先运行 `perago check`，再运行 `perago extract` 并注册 TaskDef，最后启动 worker。
+推荐流程是先运行 `perago check`，再运行 `perago extract` 并注册 TaskDef，最后启动 worker。

@@ -21,9 +21,9 @@ supervisor process
 worker process count must be at least 1
 ```
 
-Perago 当前已支持解析 execution mode 公共接口：`perago start --execution-mode ...` 优先于 `PERAGO_EXECUTION_MODE`，再退回默认 `process`。`process` 模式是默认重负载模型；`thread` 模式是显式轻量路径，使用 SDK `TaskRunner(thread_count=N)` 在同一进程内执行 task body。
+Perago 通过 `perago start --execution-mode ...` 和 `PERAGO_EXECUTION_MODE` 选择 execution mode；命令行参数优先，其次是环境变量，默认值为 `process`。`process` 模式用于隔离性更强的执行；`thread` 模式使用 SDK `TaskRunner(thread_count=N)` 在同一进程内执行 task body。
 
-默认 process 模式的 task body 并发单位仍是独立 executor process，不是同一进程内的线程池或 asyncio worker pool。broker process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor；executor process 只消费 broker 派发的 assignment。
+默认 process 模式的 task body 并发单位是独立 executor process。同一进程内线程池和 asyncio worker pool 不参与这个模式。broker process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor；executor process 只消费 broker 派发的 assignment。
 
 process broker 的 adapter、SDK runner 启动函数和 supervisor 进程树已经落地。`run_conductor_process_broker(...)` 会把 `PeragoProcessDispatchWorker` 包进 SDK `TaskRunner(thread_count=N)`，让 broker 负责 poll、续租和 update result，同时把 task body 执行派发到 executor assignment queue。每次派发都会生成 execution id；executor completion 必须带回同一个 `task_id` 和同一个 `execution_id` 的 `RuntimeTaskResult`，broker adapter 会 fail closed 处理无法匹配的 completion。
 
@@ -56,7 +56,7 @@ app.workers.features_build -> appworkersfeaturesbuild
 
 supervisor 会把每个 executor 的 `PERAGO_WORKER_ID` 写入 child environment。executor process 启动后，`prepare_worker_runtime()` 会通过 `resolve_worker_id()` 读取这个值，并把它用于本地日志路径和运行时日志字段。broker process 使用 `PERAGO_WORKER_ID_PREFIX + "Broker"` 作为 Conductor poll/update identity。
 
-不要在常规部署中手动设置 `PERAGO_WORKER_ID`。它是 supervisor 生成的进程身份，不是 task attempt id、workflow id、logical task key 或 LakeFS branch 名。
+常规部署中交给 supervisor 设置 `PERAGO_WORKER_ID`。它是 supervisor 生成的进程身份；task attempt id、workflow id、logical task key 和 LakeFS branch 名使用各自独立字段。
 
 ## Child process 启动步骤
 
@@ -120,6 +120,6 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 
 ## 运行时边界
 
-worker process 只对一个 task module 负责。Perago 不支持在同一文件中定义多个 task，再通过命令行参数选择其中一个运行；也不支持 app registry 形状的多 task worker。
+worker process 只对一个 task module 负责。Perago 拒绝在同一文件中定义多个 task 后通过命令行参数选择其中一个运行，也拒绝 app registry 风格的多 task worker。
 
 process count 只增加同一个 task name 的 executor 并发能力；Conductor poll/update 仍集中在 broker。它不会改变 TaskDef、workspace prefix、Pydantic contract 或 publish budget。要运行另一个 task，需要启动另一个 `perago start <module_target>` supervisor。

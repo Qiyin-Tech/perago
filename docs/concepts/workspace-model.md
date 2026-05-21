@@ -4,7 +4,7 @@ Perago 把 LakeFS workspace identity、task-local workspace root 和业务 paylo
 
 ## Workspace input
 
-workspace task 的 Conductor input 形状是：
+workspace task 的 Conductor input 结构如下：
 
 ```json
 {
@@ -20,7 +20,7 @@ workspace task 的 Conductor input 形状是：
 }
 ```
 
-`workspace` 是 flat object，包含 LakeFS repository、target branch、immutable ref type 和 immutable ref。它不是业务参数，也不包含 workspace prefix 或 LakeFS connection settings。
+`workspace` 是 flat object，包含 LakeFS repository、target branch、immutable ref type 和 immutable ref。业务参数、workspace prefix 和 LakeFS connection settings 分别放在 `params`、task metadata 和 worker runtime config 中。
 
 `params` 承载业务 payload，并由 task 函数的 Pydantic params model 定义。
 
@@ -46,9 +46,9 @@ workspace task 成功后返回：
 
 ## Workspace prefix
 
-`WorkspaceSpec(prefix=...)` 是 task metadata，不是 workflow input。默认 prefix 是 `/`，表示暴露整个 repository root。比如 `WorkspaceSpec(prefix="/audio/render")` 会把 LakeFS 中 `audio/render/` 下面的对象映射到本地 `workspace` 路径根部。
+`WorkspaceSpec(prefix=...)` 属于 task metadata。默认 prefix 是 `/`，表示暴露整个 repository root。比如 `WorkspaceSpec(prefix="/audio/render")` 会把 LakeFS 中 `audio/render/` 下面的对象映射到本地 `workspace` 路径根部。
 
-prefix 必须 stay inside the repository。绝对宿主机路径、`..` 逃逸和反斜杠分隔都不是合法 workspace prefix。
+prefix 必须 stay inside the repository。合法 workspace prefix 不能使用绝对宿主机路径、`..` 逃逸或反斜杠分隔。
 
 ## Attempt workspace
 
@@ -67,6 +67,6 @@ workspace-free task 没有 attempt workspace，也不接收 fake workspace。
 
 ## Workspace checks
 
-Workspace checks 是针对本地 workspace root 的文件形状检查。公开 API 中的 `require_file`、`require_dir`、`require_glob` 和 `forbid_glob` 使用 guardrail 命名，但文档中把它们解释为 workspace checks，避免把它们误解成业务数据校验或 Pydantic schema 校验。
+Workspace checks 针对本地 workspace root 检查文件。公开 API 中的 `require_file`、`require_dir`、`require_glob` 和 `forbid_glob` 使用 guardrail 命名；文档中把它们解释为 workspace checks，便于和业务数据校验、Pydantic schema 校验区分。
 
-pre checks 在业务函数执行前检查输入 workspace，post checks 在业务函数执行后、发布前检查输出 workspace。检查失败会映射到对应的 task failure，而不是修改业务返回模型。
+pre checks 在业务函数执行前检查输入 workspace，post checks 在业务函数执行后、发布前检查输出 workspace。检查失败会映射到对应的 task failure，业务返回模型保持原样。
