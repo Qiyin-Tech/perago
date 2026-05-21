@@ -1,7 +1,7 @@
-Task Authoring API
-==================
+Task API
+========
 
-这些 API 是任务作者日常使用的入口，用于声明 task、workspace guardrail 和 Conductor TaskDef。
+这些 API 是 Getting Started 中任务声明、workspace guardrail 和 Conductor TaskDef 生成会用到的入口。
 
 .. currentmodule:: perago
 

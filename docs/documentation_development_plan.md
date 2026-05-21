@@ -216,16 +216,7 @@ autodoc_mock_imports = [
 docs/
   conf.py
   index.md
-  getting-started.md
-
-  concepts/
-    index.md
-    glossary.md
-    task-module.md
-    workspace-model.md
-    task-contract.md
-
-  task-authoring/
+  getting-started/
     index.md
     workspace-task.md
     workspace-free-task.md
@@ -233,6 +224,13 @@ docs/
     guardrails.md
     controls-and-taskdef.md
     examples.md
+
+  concepts/
+    index.md
+    glossary.md
+    task-module.md
+    workspace-model.md
+    task-contract.md
 
   runtime/
     index.md
@@ -264,7 +262,7 @@ docs/
 
   api/
     index.rst
-    task-authoring.rst
+    task.rst
     models.rst
     runtime.rst
     workspace.rst
@@ -291,7 +289,7 @@ docs/
 4. 最小任务长什么样？  
    给出 workspace task 和 workspace-free task 两段最小代码。
 5. 下一步读什么？  
-   新任务作者进入 `task-authoring/`；运维/集成开发者进入 `runtime/`；查 API 进入 `api/`；查设计取舍进入 `architecture/`。
+   新任务作者进入 `getting-started/`；运维/集成开发者进入 `runtime/`；查 API 进入 `api/`；查设计取舍进入 `architecture/`。
 
 ---
 
@@ -348,7 +346,7 @@ API Reference
 .. toctree::
    :maxdepth: 2
 
-   task-authoring
+   task
    models
    runtime
    workspace
@@ -358,11 +356,11 @@ API Reference
    errors
 ```
 
-`docs/api/task-authoring.rst` 示例：
+`docs/api/task.rst` 示例：
 
 ```rst
-Task authoring API
-==================
+Task API
+========
 
 .. currentmodule:: perago
 
@@ -503,16 +501,16 @@ class PublishBudget(BaseModel):
 
 验收标准：读者读完 concepts 后，可以解释 workspace task 和 workspace-free task 的输入输出形状。
 
-### 10.2 Task authoring
+### 10.2 Getting Started task guide
 
 从 `docs/mvp_examples.md` 拆出：
 
-- `task-authoring/workspace-task.md`：workspace task 最小例子、签名规则、Path 注入、workspace prefix。
-- `task-authoring/workspace-free-task.md`：workspace-free task 最小例子。
-- `task-authoring/pydantic-contracts.md`：Pydantic params/output 模型、extra field 拒绝、JSON Schema 生成。
-- `task-authoring/guardrails.md`：`require_file`、`require_dir`、`require_glob`、`forbid_glob`，pre/post 失败分类。
-- `task-authoring/controls-and-taskdef.md`：`TaskControls` 到 Conductor TaskDef 字段映射，publish budget 如何影响 `responseTimeoutSeconds`。
-- `task-authoring/examples.md`：从 `tests/fixtures/app/workers/` 选 3 个正例和若干反例。
+- `getting-started/workspace-task.md`：workspace task 最小例子、签名规则、Path 注入、workspace prefix。
+- `getting-started/workspace-free-task.md`：workspace-free task 最小例子。
+- `getting-started/pydantic-contracts.md`：Pydantic params/output 模型、extra field 拒绝、JSON Schema 生成。
+- `getting-started/guardrails.md`：`require_file`、`require_dir`、`require_glob`、`forbid_glob`，pre/post 失败分类。
+- `getting-started/controls-and-taskdef.md`：`TaskControls` 到 Conductor TaskDef 字段映射，publish budget 如何影响 `responseTimeoutSeconds`。
+- `getting-started/examples.md`：从 `tests/fixtures/app/workers/` 选 3 个正例和若干反例。
 
 验收标准：一个新任务作者可以照文档写出 task module，运行 `perago check`，再运行 `perago extract`。
 
@@ -800,9 +798,9 @@ PostGuardrailViolation
 ## 16. 建议的第一批提交拆分
 
 1. `docs: add sphinx and readthedocs build skeleton`
-2. `docs: restructure concepts and task authoring guide`
+2. `docs: restructure concepts and getting started guide`
 3. `docs: add api autosummary pages`
-4. `docs: add numpydoc docstrings for task authoring API`
+4. `docs: add numpydoc docstrings for task API`
 5. `docs: add runtime and publication guides`
 6. `docs: add docstring and api coverage checks`
 7. `docs: enable warning-as-error for readthedocs build`

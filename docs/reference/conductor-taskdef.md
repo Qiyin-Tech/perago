@@ -34,7 +34,7 @@ write_taskdef(load_module_task("app.workers.features_build"), Path("generated/fe
 
 | TaskDef 字段 | 来源 | Required | 默认值 / 省略规则 |
 | --- | --- | --- | --- |
-| `name` | `@task(name=...)` | yes | 无默认值；空白和非法路径形状会被拒绝。 |
+| `name` | `@task(name=...)` | yes | 无默认值；空白和非法路径格式会被拒绝。 |
 | `ownerEmail` | `@task(owner_email=...)` | yes | 无默认值；空白会被拒绝。 |
 | `description` | `@task(description=...)` | no | `None` 时省略。 |
 | `retryCount` | `controls.retry.count` | generated | 默认 `3`，允许 `0..10`。 |
@@ -141,7 +141,7 @@ responseTimeoutSeconds =
 
 ## 不写入 TaskDef 的 Perago 信息
 
-以下信息属于 Perago runtime 或 task authoring 边界，不属于 Conductor TaskDef：
+以下信息属于 Perago runtime 或任务声明边界，不属于 Conductor TaskDef：
 
 - `WorkspaceSpec.prefix`
 - `WorkspaceSpec.pre` / `WorkspaceSpec.post`
@@ -153,7 +153,7 @@ responseTimeoutSeconds =
 
 这些信息分别在 task module、运行时环境变量、Conductor input、LakeFS target HEAD 或 worker 本地状态中生效。
 
-## 常见拒绝形状
+## 常见拒绝场景
 
 `description` 以外的 TaskDef schema 字段不能从 decorator 传入：
 

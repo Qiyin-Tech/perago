@@ -2,7 +2,7 @@
 
 `TaskControls` 是任务作者能影响 Conductor TaskDef 执行控制字段的唯一入口。业务 input/output、workspace schema、TaskDef key 列表和 JSON Schema 都由 Perago 从函数签名与 Pydantic model 生成，不在 `@task(...)` 里重复声明。
 
-## 最小形状
+## 最小示例
 
 没有特殊控制需求时，可以省略 `controls`。Perago 会使用 `TaskControls()` 的默认值：
 
@@ -87,7 +87,7 @@ Required/optional/generated 字段边界：
 
 所有 control model 都使用 Pydantic 校验并拒绝未知字段。校验失败会在模块导入、`perago check` 或 `perago extract` 阶段暴露为 task definition 错误。
 
-## 生成的 TaskDef 形状
+## 生成的 TaskDef 结构
 
 workspace task 的 TaskDef input/output key 固定为：
 
@@ -130,7 +130,7 @@ controls = TaskControls(
 )
 ```
 
-上面的 `responseTimeoutSeconds` 会生成成 `100`，而不是 `999`：
+上面的 `responseTimeoutSeconds` 会生成成 `100`：
 
 ```text
 45 + 15 + 30 + 10 = 100
@@ -140,7 +140,7 @@ controls = TaskControls(
 
 `publish_budget` 只适用于 workspace task。workspace-free task 没有 LakeFS publication 阶段，配置 `TaskControls(publish_budget=...)` 会被拒绝。
 
-## 常见拒绝形状
+## 常见拒绝场景
 
 只配置 rate limit 的一半会失败：
 

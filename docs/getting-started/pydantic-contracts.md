@@ -105,7 +105,7 @@ workspace-free task 的顶层 input 只包含 `params`：
 - 删除 Pydantic 自动生成的 `title` 字段，降低 TaskDef 噪声。
 - 给所有 object schema 设置 `additionalProperties: false`，包括嵌套 object。
 
-workspace task 的 TaskDef schema 形状是：
+workspace task 的 TaskDef schema 结构如下：
 
 ```text
 inputSchema.data.properties.workspace = WorkspaceInput schema
@@ -132,9 +132,9 @@ class ParamsWithDefaults(BaseModel):
 
 如果只是想解释字段业务含义，优先写在本地文档、module 注释或 API docstring 中。这样可以补全文档，不改变 Conductor 注册用的 TaskDef JSON。
 
-## 常见拒绝形状
+## 常见拒绝场景
 
-下面这些形状会在 import-time validation、运行时 input validation 或 output validation 阶段失败：
+下面这些写法会在 import-time validation、运行时 input validation 或 output validation 阶段失败：
 
 ```python
 # params 必须是 Pydantic BaseModel 子类，不能是 dict。

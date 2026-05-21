@@ -1,74 +1,35 @@
 # Perago
 
-Perago 是一个内部任务运行时上下文，用于让 typed Python workers 在版本化 workspace 上执行 Conductor tasks。
+Perago 是一个面向 Conductor worker 的 typed Python 运行时层。它把 task module、Pydantic 输入输出契约、Conductor TaskDef、LakeFS workspace 下载与发布，以及运行时 guardrail 校验收敛到同一套模型中。
 
-它把任务契约、Conductor TaskDef、LakeFS workspace 输入输出、attempt-local workspace、发布事务和 guardrail 收敛到同一组边界里。任务作者主要关心函数签名、Pydantic 契约、workspace 注入和 guardrail；运行时维护者主要关心 worker process、Conductor poll/result、LakeFS 同步和 publication fence。
+## 适用范围
 
-## 最小 workspace task
+Perago 适合下面这类任务：
 
-```python
-from pathlib import Path
+- 用 Python 函数实现 Conductor task。
+- 需要把输入输出约束建模为 Pydantic schema。
+- 需要在版本化 LakeFS workspace 上读取、修改并发布结果。
+- 需要把本地校验、TaskDef 生成和 worker 启动放进一条稳定流程。
 
-from pydantic import BaseModel
+## 核心模型
 
-from perago import WorkspaceSpec, require_file, task
+- `task module`：一个 Python module 暴露一个 Perago task。
+- `workspace task`：函数签名是 `(workspace: Path, params: ParamsModel) -> OutputModel`，用于读写 LakeFS workspace。
+- `workspace-free task`：函数签名是 `(params: ParamsModel) -> OutputModel`，不涉及 workspace publication。
+- 三个核心命令：`perago check`、`perago extract`、`perago start`。
 
+## 阅读路径
 
-class Params(BaseModel):
-    source: str
+- {doc}`getting-started/index`：先跑通一个最小 task，理解 `check`、`extract`、`start`、TaskDef、controls、workspace 和 guardrail 的基本分工。
+- {doc}`lakefs-publication-protocol`：理解 workspace task 成功、失败、retry 和 abandoned publication 的协议边界。
+- {doc}`development`：维护 runtime、reference、architecture、concepts 和 API 文档。
 
-
-class Output(BaseModel):
-    rows: int
-
-
-@task(
-    name="features.build",
-    owner_email="data@example.com",
-    workspace=WorkspaceSpec(
-        prefix="/",
-        pre=[require_file("input/data.csv")],
-    )
-)
-def build_features(workspace: Path, params: Params) -> Output:
-    input_path = workspace / "input" / "data.csv"
-    return Output(rows=sum(1 for _ in input_path.open()))
-```
-
-## 最小 workspace-free task
-
-```python
-from pydantic import BaseModel
-
-from perago import task
-
-
-class Params(BaseModel):
-    value: int
-
-
-class Output(BaseModel):
-    doubled: int
-
-
-@task(
-    name="numbers.double",
-    owner_email="data@example.com",
-)
-def double(params: Params) -> Output:
-    return Output(doubled=params.value * 2)
-```
+## 目录
 
 ```{toctree}
 :maxdepth: 2
-:caption: 文档
 
-getting-started
+getting-started/index
 lakefs-publication-protocol
-concepts/index
-task-authoring/index
-runtime/index
-reference/index
-architecture/index
-api/index
+development
 ```

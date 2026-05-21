@@ -6,7 +6,7 @@
 
 Perago 是一个面向 Conductor worker 的 typed Python 运行时层，用来在版本化 workspace 上执行任务。它把任务函数签名、Pydantic 输入输出契约、Conductor TaskDef、LakeFS workspace 下载与发布、guardrail 校验和 worker 启动边界收敛到同一套模型里。
 
-`README.md` 只保留项目概览、安装和最小入口；完整说明以文档站为准。
+本文档提供项目概览、安装方式和最小入口；完整说明见文档站。
 
 ## 安装
 
@@ -84,19 +84,13 @@ perago start app.workers.features_build -j 4
 ## 文档
 
 - 文档首页：https://perago.readthedocs.io/zh-cn/latest/
-- Getting Started：https://perago.readthedocs.io/zh-cn/latest/getting-started.html
-- Task Authoring：https://perago.readthedocs.io/zh-cn/latest/task-authoring/
-- Runtime：https://perago.readthedocs.io/zh-cn/latest/runtime/
-- API Reference：https://perago.readthedocs.io/zh-cn/latest/api/
-- Architecture：https://perago.readthedocs.io/zh-cn/latest/architecture/
+- Getting Started：https://perago.readthedocs.io/zh-cn/latest/getting-started/
+- LakeFS 发布协议：https://perago.readthedocs.io/zh-cn/latest/lakefs-publication-protocol.html
+- Development：https://perago.readthedocs.io/zh-cn/latest/development.html
 
 仓库内的对应内容可从这里继续展开：
 
 - [文档首页](docs/index.md)
-- [Getting Started](docs/getting-started.md)
-- [术语与概念](docs/concepts/index.md)
-- [任务开发](docs/task-authoring/index.md)
-- [运行时说明](docs/runtime/index.md)
-- [参考文档](docs/reference/index.md)
-- [架构与 ADR](docs/architecture/index.md)
-- [API Reference](docs/api/index.rst)
+- [Getting Started](docs/getting-started/index.md)
+- [LakeFS 发布协议](docs/lakefs-publication-protocol.md)
+- [Development](docs/development.md)

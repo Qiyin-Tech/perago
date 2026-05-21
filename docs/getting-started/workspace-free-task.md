@@ -2,7 +2,7 @@
 
 workspace-free task 是不读写 LakeFS workspace 的 Perago worker。它只接收 typed `params`，返回 typed `result`，适合 metadata 校验、轻量规则判断、外部只读查询包装或不需要发布 workspace 变更的节点。
 
-## 最小形状
+## 最小示例
 
 一个 workspace-free task module 仍然只能定义一个 task worker。`@task(...)` 声明 task metadata；函数签名声明唯一的业务 contract。
 
@@ -43,7 +43,7 @@ Required/generated 字段边界：
 
 ## 函数签名规则
 
-workspace-free task 的函数形状固定为一个 positional-or-keyword 参数：
+workspace-free task 的函数签名固定为一个 positional-or-keyword 参数：
 
 ```python
 def task_fn(params: ParamsModel) -> OutputModel:
@@ -73,7 +73,7 @@ workspace-free task 的 Conductor input 只包含一个顶层 key：
 }
 ```
 
-业务字段必须放在 `params` 内。下面这种展开形状会失败：
+业务字段必须放在 `params` 内。下面这种展开写法会失败：
 
 ```json
 {
@@ -95,7 +95,7 @@ workspace-free task 的 Conductor input 只包含一个顶层 key：
 
 `params` 和 `result` 都按对应 Pydantic model 校验。额外字段会被拒绝，包括嵌套 model 内部的额外字段。
 
-## TaskDef 形状
+## TaskDef 结构
 
 workspace-free task 生成的 Conductor TaskDef 不含 workspace key：
 
@@ -106,7 +106,7 @@ workspace-free task 生成的 Conductor TaskDef 不含 workspace key：
 
 `params` schema 来自函数参数类型，`result` schema 来自返回类型。`None` 默认值和 Pydantic 约束会进入 schema；`workspace` 不会出现在 input/output schema 中。
 
-## 常见拒绝形状
+## 常见拒绝场景
 
 下面这些 module 会在 import-time validation、`perago check` 或 worker 启动时失败：
 
@@ -150,4 +150,4 @@ def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
 
 ## 可运行参考
 
-仓库测试夹具中的 `tests/fixtures/app/workers/metadata_validate.py` 是完整 workspace-free task 参考。相关运行时输入、输出和拒绝形状由 `tests/test_execution.py` 与 `tests/test_taskdef.py` 覆盖。
+仓库测试夹具中的 `tests/fixtures/app/workers/metadata_validate.py` 是完整 workspace-free task 参考。相关运行时输入、输出和拒绝场景由 `tests/test_execution.py` 与 `tests/test_taskdef.py` 覆盖。

@@ -1,6 +1,6 @@
 # Examples
 
-本页把 task-authoring 前面几页的规则收束到可运行 module。示例优先来自仓库测试夹具，后续改动应先更新 fixture 和测试，再同步这里的说明。
+本页提供可运行的 task module 示例，覆盖 workspace task、workspace-free task 和带 publish budget 的 workspace task。
 
 ## Workspace task
 
@@ -156,7 +156,7 @@ def render_audio(workspace: Path, params: RenderParams) -> RenderOutput:
 
 ## 本地验证
 
-对一个 module 做 task-authoring 层面的检查：
+对一个 module 做任务声明层面的检查：
 
 ```bash
 PYTHONPATH=tests/fixtures perago check app.workers.features_build
@@ -176,12 +176,12 @@ PYTHONPATH=tests/fixtures perago extract app.workers.metadata_validate --output 
 
 这些 fixture 是文档规则的可执行反例。它们用于测试 `@task(...)` import-time validation 和 CLI 诊断。
 
-| Fixture | 被拒绝的形状 | 对应规则 |
+| Fixture | 被拒绝的写法 | 对应规则 |
 | --- | --- | --- |
 | `bad_signature.py` | workspace 参数名写成 `path` | workspace task 第一个参数必须名为 `workspace` |
 | `bad_async_task.py` | task function 是 `async def` | worker body 必须是同步函数 |
 | `bad_default_param.py` | `params` 声明默认值 | contract 参数不能声明默认值 |
-| `bad_keyword_only_signature.py` | 增加 keyword-only 参数 | contract 只允许固定 positional-or-keyword 形状 |
+| `bad_keyword_only_signature.py` | 增加 keyword-only 参数 | contract 只允许固定 positional-or-keyword 参数 |
 | `bad_missing_params_annotation.py` | `params` 缺少类型注解 | params model 必须来自函数签名注解 |
 | `bad_missing_return_annotation.py` | 缺少返回类型注解 | output model 必须来自返回类型注解 |
 | `bad_variadic_signature.py` | 使用 `*extra` | 不支持 `*args` 或 `**kwargs` |
@@ -192,4 +192,4 @@ PYTHONPATH=tests/fixtures perago extract app.workers.metadata_validate --output 
 | `multi_task.py` | 一个 module 定义两个 task | Perago module 只能定义一个 task worker |
 | `no_task.py` | module 没有 task | CLI 目标必须声明一个 Perago task |
 
-反例不要复制到业务代码里调试。遇到相似错误时，优先运行 `perago check <module>`，然后回到对应规则页确认字段边界和签名形状。
+反例仅用于测试和定位错误。遇到相似错误时，优先运行 `perago check <module>`，然后回到对应规则页确认字段边界和函数签名。

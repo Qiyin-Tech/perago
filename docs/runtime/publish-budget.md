@@ -2,7 +2,7 @@
 
 `PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只适用于 workspace task，用来让 Conductor 的 `responseTimeoutSeconds` 覆盖 LakeFS merge、Conductor completion 阶段预留、worker shutdown grace 和 heartbeat slack。
 
-这个页面面向运行时维护者和需要给 workspace task 配置发布预算的任务作者。TaskDef 字段映射见 `../task-authoring/controls-and-taskdef.md`；LakeFS 发布顺序见 `workspace-publication.md`。
+这个页面面向运行时维护者和需要给 workspace task 配置发布预算的任务作者。TaskDef 字段映射见 `../getting-started/controls-and-taskdef.md`；LakeFS 发布顺序见 `workspace-publication.md`。
 
 ## 何时需要配置
 
@@ -116,9 +116,9 @@ Perago 当前不直接发送 Conductor completion update，也不接管 SDK 的 
 5. 为 Conductor completion 阶段和 worker shutdown 分别设置明确预算。
 6. 运行 `perago check` 验证 task definition，再运行 `perago extract` 检查生成的 `responseTimeoutSeconds`。
 
-不要把 `lakefs_merge_timeout_seconds` 设成远小于观测值的探测性 timeout。publish timeout 或连接错误后，runtime 不能假设 publish 一定没有发生；下一次 retry 按 [LakeFS 发布协议](../lakefs-publication-protocol.md) 检查 target HEAD 状态。
+避免把 `lakefs_merge_timeout_seconds` 设成远小于观测值的探测性 timeout。publish timeout 或连接错误后，runtime 不能假设 publish 一定没有发生；下一次 retry 按 [LakeFS 发布协议](../lakefs-publication-protocol.md) 检查 target HEAD 状态。
 
-## 常见拒绝形状
+## 常见拒绝场景
 
 merge timeout 小于观测值加安全余量会失败：
 
