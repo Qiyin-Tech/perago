@@ -96,15 +96,16 @@ Workspace consumer 和 publisher 都必须从 `workspace.repository` 的 `worksp
 
 任何会推进 `workspace.branch` 的非 Perago 节点都必须实现与 Perago 相同的发布协议：
 
-1. 从 input `workspace.ref` 创建本次 execution 专属 staging branch。
-2. 只在 contract 允许的 prefix 内写入、删除或更新对象。
-3. 提交 staging branch，并写入 `perago.phase=try` metadata。
-4. 重新读取当前 Conductor attempt，确认它仍是 `IN_PROGRESS`，且 `workflow_instance_id`、`task_id`、`retry_count` 与已领取的 attempt 一致。
-5. 读取 target branch 当前 head，并沿 first-parent history 回溯到 input `workspace.ref`。
-6. 仅当 target head 等于 input ref，或这段 history 全部属于同一 `perago.logical_task_key` 时继续发布；否则 fail closed。
-7. 将 staging branch squash merge 到 target branch，并写入 `perago.phase=confirm` metadata。
-8. 用 merge commit id 生成成功 output 的 `workspace.ref`。
-9. 尝试清理 staging branch；cleanup 失败只能记录日志，不能覆盖原始结果。
+1. 重新读取当前 Conductor attempt，确认它仍是 `IN_PROGRESS`，且 `workflow_instance_id`、`task_id`、`retry_count` 与已领取的 attempt 一致；这次 pre-stage attempt fence 必须发生在创建 staging branch、写对象或提交 staging commit 之前。
+2. 从 input `workspace.ref` 创建本次 execution 专属 staging branch。
+3. 只在 contract 允许的 prefix 内写入、删除或更新对象。
+4. 提交 staging branch，并写入 `perago.phase=try` metadata。
+5. 再次重新读取当前 Conductor attempt，并执行同一组 attempt fence 检查。
+6. 读取 target branch 当前 head，并沿 first-parent history 回溯到 input `workspace.ref`。
+7. 仅当 target head 等于 input ref，或这段 history 全部属于同一 `perago.logical_task_key` 时继续发布；否则 fail closed。
+8. 将 staging branch squash merge 到 target branch，并写入 `perago.phase=confirm` metadata。
+9. 用 merge commit id 生成成功 output 的 `workspace.ref`。
+10. 尝试清理 staging branch；cleanup 失败只能记录日志，不能覆盖原始结果。
 
 如果实现无法完成 attempt fence 或 publish fence，就不能直接推进 protected workspace branch。此时应改成 read-only consumer、调用 Perago publisher、或把输出发布到不会被下游当作 workspace truth 的临时位置。
 
