@@ -101,3 +101,21 @@ staging branch cleanup 属于 task publish 路径。
 - 生成 workspace output 前，LakeFS merge、hard reset 或必要前置条件失败。
 
 不要把不确定的 LakeFS 状态包装成成功的 Conductor result。
+
+## 验证入口
+
+旧的 `scripts/real_conductor_lakefs_smoke.py` 只覆盖真实 Conductor + LakeFS 的 happy path。发布协议本身用专门的真实 LakeFS smoke 覆盖：
+
+```bash
+uv run python scripts/real_lakefs_publication_protocol_smoke.py
+```
+
+该脚本从 `.env` 读取 LakeFS 配置，每次创建独立 target branch，并验证：
+
+- `H == A` 时通过 merge 发布 workspace output；
+- `parent(H) == A` 时通过 hard reset 替换废弃发布，最终 target branch 指向本次 staging commit；
+- `parent(H) != A` 时 fail closed，target branch head 不变，workspace output 不发布；
+- merge 或 hard reset 的必要 LakeFS 前置条件失败时不返回成功，target branch head 不变；
+- 每条路径都尽力删除本次创建的 staging branch 和 target branch。
+
+Conductor attempt fence、stale attempt 后 cleanup、cleanup 失败不覆盖原始结果由 `tests/test_execution.py` 覆盖。

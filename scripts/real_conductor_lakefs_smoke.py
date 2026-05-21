@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -301,13 +302,20 @@ def stop_process(proc: subprocess.Popen[str]) -> None:
     if proc.poll() is not None:
         dump_worker_output(proc)
         return
-    proc.terminate()
+    terminate_process_group(proc, signal.SIGTERM)
     try:
         output, _ = proc.communicate(timeout=25)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        terminate_process_group(proc, signal.SIGKILL)
         output, _ = proc.communicate(timeout=5)
     print_worker_output(output)
+
+
+def terminate_process_group(proc: subprocess.Popen[str], sig: signal.Signals) -> None:
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        return
 
 
 def dump_worker_output(proc: subprocess.Popen[str]) -> None:
