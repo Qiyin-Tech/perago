@@ -182,8 +182,7 @@ class FakeClient:
 class FakeRuntime(LakeFSWorkspaceRuntime):
     def __init__(self, repo: FakeRepo, publish_budget: PublishBudget | None = None) -> None:
         self.repo = repo
-        self._client = FakeClient()
-        self._publish_budget = publish_budget
+        super().__init__(client=FakeClient(), publish_budget=publish_budget)
 
     def _repo(self, repository: str):
         assert repository == "song-000123"
@@ -192,6 +191,7 @@ class FakeRuntime(LakeFSWorkspaceRuntime):
 
 class MultiRepoRuntime(LakeFSWorkspaceRuntime):
     def __init__(self, repos: dict[str, FakeRepo]) -> None:
+        super().__init__(client=FakeClient())
         self.repos = repos
 
     def _repo(self, repository: str):
