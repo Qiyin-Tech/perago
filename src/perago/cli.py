@@ -6,6 +6,7 @@ import typer
 from pydantic import ValidationError
 from pydantic.errors import PydanticInvalidForJsonSchema
 
+from perago._version import __version__
 from perago.conductor_runtime import OrkesConductorRuntimeClient
 from perago.config import ExecutionMode, load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
@@ -15,6 +16,20 @@ from perago.taskdef import build_taskdef, write_taskdef
 
 
 app = typer.Typer(no_args_is_help=True)
+
+
+def _version_callback(value: bool) -> None:
+    if not value:
+        return
+    typer.echo(__version__)
+    raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool = typer.Option(False, "--version", is_eager=True, callback=_version_callback),
+) -> None:
+    """Perago CLI."""
 
 
 @app.command()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
-import tomllib
+import runpy
 
 project = "Perago"
 author = "Yikai Liao"
@@ -10,14 +10,13 @@ language = "zh_CN"
 
 
 def _resolve_release() -> str:
-    """Resolve the documentation version from installed metadata or pyproject."""
+    """Resolve the documentation version from installed metadata or source."""
 
     try:
         return package_version("perago")
     except PackageNotFoundError:
-        pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
-        with pyproject.open("rb") as fh:
-            return tomllib.load(fh)["project"]["version"]
+        version_file = Path(__file__).resolve().parents[1] / "src" / "perago" / "_version.py"
+        return str(runpy.run_path(str(version_file))["__version__"])
 
 
 release = _resolve_release()
@@ -44,6 +43,7 @@ html_theme = "pydata_sphinx_theme"
 html_theme_options = {
     "search_as_you_type": True,
     "search_bar_text": "搜索文档...",
+    "header_links_before_dropdown": 8,
 }
 html_title = "Perago"
 html_static_path = ["_static"]

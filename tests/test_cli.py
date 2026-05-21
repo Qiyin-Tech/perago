@@ -3,6 +3,16 @@ import pathlib
 from typer.testing import CliRunner
 
 from perago.cli import app
+from perago._version import __version__
+
+
+def test_cli_reports_version() -> None:
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["--version"])
+
+    assert result.exit_code == 0
+    assert result.output == f"{__version__}\n"
 
 
 def test_check_cli_reports_task(monkeypatch, tmp_path) -> None:
