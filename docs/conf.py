@@ -6,6 +6,7 @@ import tomllib
 
 project = "Perago"
 author = "Yikai Liao"
+language = "zh_CN"
 
 
 def _resolve_release() -> str:
@@ -40,8 +41,13 @@ autodoc_typehints_format = "short"
 templates_path = ["_templates"]
 
 html_theme = "pydata_sphinx_theme"
+html_theme_options = {
+    "search_as_you_type": True,
+    "search_bar_text": "搜索文档...",
+}
 html_title = "Perago"
 html_static_path = ["_static"]
+html_search_language = "zh"
 exclude_patterns = [
     "_build",
     "generated/**",

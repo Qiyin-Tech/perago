@@ -1,6 +1,7 @@
 sphinx>=8
 numpydoc>=1.10
 pydata-sphinx-theme>=0.18
+jieba
 myst-parser
 sphinx-copybutton
 sphinx-design
