@@ -99,7 +99,7 @@ class LakeFSWorkspaceRuntime:
                 phase="try",
             ),
         )
-        return StagedWorkspace(branch=staging_branch, commit=commit_ref.id)
+        return StagedWorkspace(repository=workspace_input.repository, branch=staging_branch, commit=commit_ref.id)
 
     def publish_workspace(
         self,
@@ -139,8 +139,7 @@ class LakeFSWorkspaceRuntime:
         return merge_result.reference
 
     def cleanup_staging(self, staged: StagedWorkspace) -> None:
-        # Repository is intentionally not encoded in StagedWorkspace; the callback is bound per attempt below.
-        raise NotImplementedError("cleanup_staging must be bound with workspace input")
+        self._repo(staged.repository).branch(staged.branch).delete()
 
     def _target_commit_range(
         self,
@@ -175,43 +174,3 @@ class LakeFSWorkspaceRuntime:
 
     def _repo(self, repository: str) -> Repository:
         return Repository(repository, client=self._client)
-
-
-class BoundLakeFSWorkspaceRuntime:
-    def __init__(self, runtime: LakeFSWorkspaceRuntime) -> None:
-        self._runtime = runtime
-        self._last_workspace_input: WorkspaceInput | None = None
-
-    def download_workspace(
-        self,
-        workspace_input: WorkspaceInput,
-        workspace_spec: WorkspaceSpec,
-        workspace_dir: Path,
-    ) -> None:
-        self._last_workspace_input = workspace_input
-        self._runtime.download_workspace(workspace_input, workspace_spec, workspace_dir)
-
-    def stage_workspace(
-        self,
-        workspace_dir: Path,
-        workspace_input: WorkspaceInput,
-        workspace_spec: WorkspaceSpec,
-        attempt: object,
-    ) -> StagedWorkspace:
-        self._last_workspace_input = workspace_input
-        return self._runtime.stage_workspace(workspace_dir, workspace_input, workspace_spec, attempt)
-
-    def publish_workspace(
-        self,
-        staged: StagedWorkspace,
-        workspace_input: WorkspaceInput,
-        workspace_spec: WorkspaceSpec,
-        attempt: object,
-    ) -> str:
-        self._last_workspace_input = workspace_input
-        return self._runtime.publish_workspace(staged, workspace_input, workspace_spec, attempt)
-
-    def cleanup_staging(self, staged: StagedWorkspace) -> None:
-        if self._last_workspace_input is None:
-            raise RuntimeError("workspace input is not available for staging cleanup")
-        self._runtime._repo(self._last_workspace_input.repository).branch(staged.branch).delete()

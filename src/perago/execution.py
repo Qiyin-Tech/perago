@@ -42,13 +42,15 @@ class StagedWorkspace:
     """
     Workspace staging reference returned before publication.
 
-    ``StagedWorkspace`` is the small value object passed from a workspace
-    staging callback to publication and cleanup callbacks. It intentionally
-    contains only the staging branch and commit because repository context is
-    already carried by the bound workspace runtime.
+    ``StagedWorkspace`` is the complete LakeFS staging reference passed from a
+    workspace staging callback to publication and cleanup callbacks. It carries
+    repository, staging branch, and staging commit so cleanup can be driven by
+    the staged reference itself instead of worker-local mutable state.
 
     Parameters
     ----------
+    repository : str
+        LakeFS repository that owns the staging branch.
     branch : str
         LakeFS staging branch that contains the attempted workspace changes.
     commit : str
@@ -56,6 +58,8 @@ class StagedWorkspace:
 
     Attributes
     ----------
+    repository : str
+        LakeFS repository that owns the staging branch.
     branch : str
         LakeFS staging branch that contains the attempted workspace changes.
     commit : str
@@ -73,10 +77,11 @@ class StagedWorkspace:
 
     Examples
     --------
-    >>> StagedWorkspace(branch="perago/staging/wf/task", commit="abc123").branch
+    >>> StagedWorkspace(repository="songs", branch="perago/staging/wf/task", commit="abc123").branch
     'perago/staging/wf/task'
     """
 
+    repository: str
     branch: str
     commit: str
 

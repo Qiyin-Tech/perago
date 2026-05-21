@@ -85,7 +85,9 @@ perago-staging-<workflow>-<reference>-seq-<seq>-iteration-<iteration>-task-id-<t
 
 execution id 表示“一次 executor 实际执行 assignment”，不是 Conductor logical task。它只用于隔离本机 workspace 和 staging branch；publish fence 仍使用不含 `task_id` 和 execution id 的 `perago.logical_task_key` 判断目标 branch 是否仍属于同一个 workflow step。
 
-staging branch 必须是新 branch。如果同名 branch 已存在，stage 会 fail closed，当前 attempt 返回 `FAILED` 并进入正常 cleanup。stage 成功后，runtime 只把 staging branch 和 staging commit id 保存在 `StagedWorkspace` 中，供后续 publish 和 cleanup 使用。
+staging branch 必须是新 branch。如果同名 branch 已存在，stage 会 fail closed，当前 attempt 返回 `FAILED` 并进入正常 cleanup。stage 成功后，runtime 会把 LakeFS repository、staging branch 和 staging commit id 保存在 `StagedWorkspace` 中，供后续 publish 和 cleanup 使用。这个 staged reference 必须完整携带 repository，cleanup、publish 或 retry 不能依赖 worker-local mutable state 来补齐 LakeFS 身份。
+
+这样设计不是为了迁就测试桩，而是为了匹配真实 runtime 形状。默认 `process` 模式下每个 executor process 会各自创建 `LakeFSWorkspaceRuntime`；但显式 `thread` 模式下，当前实现只创建一个 `LakeFSWorkspaceRuntime` 并把它的方法交给 SDK `TaskRunner(thread_count=N)` 的线程池复用。因此 runtime 不能记住“上一轮 stage 用的是哪个 repository”这类 per-attempt 状态；如果 cleanup 需要 repository identity，它必须从 `StagedWorkspace.repository` 这类显式 staged reference 读取，而不能从 runtime 内部猜测。
 
 ## Publish
 

@@ -140,7 +140,11 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         del attempt
         calls.append(f"stage:{workspace_input.branch}:{workspace_spec.prefix}")
         assert (workspace_dir / "features" / "default.parquet").is_file()
-        return StagedWorkspace(branch="perago/staging/wf/build", commit="staging-commit")
+        return StagedWorkspace(
+            repository=workspace_input.repository,
+            branch="perago/staging/wf/build",
+            commit="staging-commit",
+        )
 
     def publish_workspace(staged, workspace_input, workspace_spec, attempt) -> str:
         del workspace_input, workspace_spec, attempt
@@ -159,7 +163,7 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         load_current_attempt=lambda current_attempt: current_attempt,
         stage_workspace=stage_workspace,
         publish_workspace=publish_workspace,
-        cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.branch}"),
+        cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.repository}:{staged.branch}"),
         owner_worker_id="featuresBuild0001",
     )
 
@@ -179,7 +183,7 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         "download:589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3:audio/render",
         "stage:main:audio/render",
         "publish:perago/staging/wf/build:staging-commit",
-        "cleanup:perago/staging/wf/build",
+        "cleanup:song-000123:perago/staging/wf/build",
     ]
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
@@ -206,6 +210,7 @@ def test_run_workspace_task_attempt_registers_owner_token_during_attempt(tmp_pat
         download_workspace=download_workspace,
         load_current_attempt=lambda current_attempt: current_attempt,
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            repository=workspace_input.repository,
             branch="perago/staging/wf/build",
             commit="staging-commit",
         ),
@@ -312,17 +317,18 @@ def test_run_workspace_task_attempt_cleans_staging_when_second_attempt_fence_fai
         download_workspace=download_workspace,
         load_current_attempt=lambda current_attempt: next(fresh_attempts),
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            repository=workspace_input.repository,
             branch="perago/staging/wf/build",
             commit="staging-commit",
         ),
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: calls.append("publish") or "unused",
-        cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.branch}"),
+        cleanup_staging=lambda staged: calls.append(f"cleanup:{staged.repository}:{staged.branch}"),
         owner_worker_id="featuresBuild0001",
     )
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "9b4c"
-    assert calls == ["cleanup:perago/staging/wf/build"]
+    assert calls == ["cleanup:song-000123:perago/staging/wf/build"]
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
 
@@ -350,6 +356,7 @@ def test_run_workspace_task_attempt_preserves_result_when_staging_cleanup_fails(
         download_workspace=download_workspace,
         load_current_attempt=lambda current_attempt: current_attempt,
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            repository=workspace_input.repository,
             branch="perago/staging/wf/build",
             commit="staging-commit",
         ),
@@ -376,6 +383,7 @@ def test_run_workspace_task_attempt_returns_failed_result_for_bad_input(tmp_path
         download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
         load_current_attempt=lambda current_attempt: current_attempt,
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            repository="unused",
             branch="unused",
             commit="unused",
         ),
