@@ -9,8 +9,8 @@ import pytest
 from perago.execution import StagedWorkspace
 from perago.errors import PublishFenceError
 from perago.lakefs_runtime import LakeFSWorkspaceRuntime
-from perago.metadata import logical_task_key, staging_branch_name
 from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
+from perago.staging import staging_branch_name
 
 
 @dataclass
@@ -33,7 +33,7 @@ class FakeItem:
 @dataclass
 class FakeCommit:
     id: str
-    metadata: dict[str, str] = field(default_factory=dict)
+    parents: list[object] = field(default_factory=list)
 
 
 class FakeReader:
@@ -92,6 +92,7 @@ class FakeBranch(FakeRef):
         self.create_exist_ok: bool | None = None
         self.deleted = False
         self.commits: list[FakeCommit] = []
+        self.commit_kwargs: list[dict] = []
         self.merges: list[dict] = []
         self.commit_log = commit_log or [FakeCommit(id="input-commit")]
         self.log_calls: list[dict] = []
@@ -101,9 +102,11 @@ class FakeBranch(FakeRef):
         self.create_exist_ok = exist_ok
         return self
 
-    def commit(self, message: str, metadata: dict[str, str]):
+    def commit(self, message: str, **kwargs):
         assert message == "perago try"
-        commit = FakeCommit(id="staging-commit", metadata=metadata)
+        assert "metadata" not in kwargs
+        self.commit_kwargs.append(kwargs)
+        commit = FakeCommit(id="staging-commit")
         self.commits.append(commit)
         return commit
 
@@ -119,6 +122,7 @@ class FakeBranch(FakeRef):
             yield commit
 
     def merge_into(self, destination_branch, **kwargs):
+        assert "metadata" not in kwargs
         self.merges.append({"destination": destination_branch.id, **kwargs})
         return "published-commit"
 
@@ -172,6 +176,24 @@ class FakeRefsApi:
 class FakeSdkClient:
     def __init__(self) -> None:
         self.refs_api = FakeRefsApi()
+        self.experimental_api = FakeExperimentalApi()
+
+
+class FakeExperimentalApi:
+    def __init__(self) -> None:
+        self.hard_reset_calls: list[dict] = []
+
+    def hard_reset_branch(self, repository, branch, *, ref, force, _request_timeout=None):
+        self.hard_reset_calls.append(
+            {
+                "repository": repository,
+                "branch": branch,
+                "ref": ref,
+                "force": force,
+                "_request_timeout": _request_timeout,
+            }
+        )
+        return SimpleNamespace(reference=ref)
 
 
 class FakeClient:
@@ -227,15 +249,15 @@ def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     assert repo.staging_store["audio/render/raw/input.txt"] == b"updated"
     assert repo.staging_store["audio/render/features/out.txt"] == b"feature"
     assert "audio/render/old.txt" in repo.deleted
-    assert staging_branch.commits[0].metadata["perago.phase"] == "try"
+    assert staging_branch.commits[0].id == "staging-commit"
+    assert staging_branch.commit_kwargs == [{}]
 
     published = runtime.publish_workspace(staged, workspace, spec, attempt)
 
     assert published == "published-commit"
     assert staging_branch.merges[0]["destination"] == "main"
     assert staging_branch.merges[0]["squash_merge"] is True
-    assert staging_branch.merges[0]["metadata"]["perago.phase"] == "confirm"
-    assert staging_branch.merges[0]["metadata"]["perago.staging_commit"] == "staging-commit"
+    assert "metadata" not in staging_branch.merges[0]
 
     runtime.cleanup_staging(StagedWorkspace(repository=staged.repository, branch=staged.branch, commit=staged.commit))
 
@@ -285,17 +307,14 @@ def test_lakefs_publish_uses_merge_request_timeout_from_publish_budget(tmp_path)
     assert merge_call["destination_branch"] == "main"
     assert merge_call["_request_timeout"] == 45
     assert merge_call["merge"].squash_merge is True
-    assert merge_call["merge"].metadata["perago.phase"] == "confirm"
+    assert getattr(merge_call["merge"], "metadata", None) is None
 
 
-def test_lakefs_publish_accepts_same_logical_task_commit_range() -> None:
+def test_lakefs_publish_replaces_abandoned_publication_with_hard_reset() -> None:
     repo = FakeRepo()
     attempt = Attempt()
-    key = logical_task_key(attempt)
     repo.main_commit_log = [
-        FakeCommit(id="head-2", metadata={"perago.logical_task_key": key}),
-        FakeCommit(id="head-1", metadata={"perago.logical_task_key": key}),
-        FakeCommit(id="input-commit"),
+        FakeCommit(id="abandoned-commit", parents=["input-commit"]),
     ]
     runtime = FakeRuntime(repo)
     workspace = _workspace_input()
@@ -304,58 +323,73 @@ def test_lakefs_publish_accepts_same_logical_task_commit_range() -> None:
 
     published = runtime.publish_workspace(staged, workspace, spec, attempt)
 
-    assert published == "published-commit"
-    main_branch = repo.branches["main"]
-    assert main_branch.log_calls == [{"first_parent": True}]
-    staging_branch = repo.branches[staged.branch]
-    assert staging_branch.merges[0]["metadata"]["perago.expected_head"] == "head-2"
-    assert staging_branch.merges[0]["metadata"]["perago.supersedes"] == "head-2"
-
-
-def test_lakefs_publish_rejects_metadata_incomplete_commit_range() -> None:
-    repo = FakeRepo()
-    attempt = Attempt()
-    key = logical_task_key(attempt)
-    repo.main_commit_log = [
-        FakeCommit(id="head-2", metadata={"perago.logical_task_key": key}),
-        FakeCommit(id="head-1"),
-        FakeCommit(id="input-commit"),
-    ]
-    runtime = FakeRuntime(repo)
-    workspace = _workspace_input()
-    spec = WorkspaceSpec(prefix="/audio/render")
-    staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
-
-    with pytest.raises(PublishFenceError, match="main advanced"):
-        runtime.publish_workspace(staged, workspace, spec, attempt)
-
+    assert published == "staging-commit"
     assert staged.branch not in repo.branches
+    assert runtime._client.sdk_client.experimental_api.hard_reset_calls == [
+        {
+            "repository": "song-000123",
+            "branch": "main",
+            "ref": "staging-commit",
+            "force": False,
+            "_request_timeout": None,
+        }
+    ]
 
 
-def test_lakefs_publish_rejects_unreachable_input_ref() -> None:
+def test_lakefs_publish_hard_reset_uses_publish_budget_timeout() -> None:
     repo = FakeRepo()
     attempt = Attempt()
     repo.main_commit_log = [
-        FakeCommit(id="head-2"),
-        FakeCommit(id="head-1"),
+        FakeCommit(id="abandoned-commit", parents=["input-commit"]),
+    ]
+    budget = PublishBudget(
+        observed_merge_p99_seconds=20,
+        safety_margin_seconds=10,
+        lakefs_merge_timeout_seconds=45,
+        conductor_completion_timeout_seconds=15,
+        worker_shutdown_grace_seconds=30,
+        heartbeat_interval_seconds=10,
+    )
+    runtime = FakeRuntime(repo, publish_budget=budget)
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
+
+    published = runtime.publish_workspace(staged, workspace, spec, attempt)
+
+    assert published == "staging-commit"
+    hard_reset_call = runtime._client.sdk_client.experimental_api.hard_reset_calls[0]
+    assert hard_reset_call["_request_timeout"] == 45
+
+
+def test_lakefs_publish_rejects_head_without_input_ref_parent() -> None:
+    repo = FakeRepo()
+    attempt = Attempt()
+    repo.main_commit_log = [
+        FakeCommit(id="head-2", parents=["head-1"]),
     ]
     runtime = FakeRuntime(repo)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
     staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
 
-    with pytest.raises(PublishFenceError, match="no longer contains workspace input ref"):
+    with pytest.raises(PublishFenceError, match="cannot publish from input ref"):
         runtime.publish_workspace(staged, workspace, spec, attempt)
 
 
-def test_lakefs_publish_rejects_oversized_commit_range() -> None:
+@pytest.mark.parametrize("parents", [None, []])
+def test_lakefs_publish_rejects_head_without_parent_metadata(parents) -> None:
     repo = FakeRepo()
     attempt = Attempt()
-    repo.main_commit_log = [FakeCommit(id=f"head-{idx}") for idx in range(2000)] + [FakeCommit(id="input-commit")]
+    if parents is None:
+        head = SimpleNamespace(id="head-without-parents")
+    else:
+        head = FakeCommit(id="head-without-parents", parents=parents)
+    repo.main_commit_log = [head]
     runtime = FakeRuntime(repo)
     workspace = _workspace_input()
     spec = WorkspaceSpec(prefix="/audio/render")
     staged = StagedWorkspace(repository="song-000123", branch=staging_branch_name(attempt), commit="staging-commit")
 
-    with pytest.raises(PublishFenceError, match="advanced beyond supported publish range"):
+    with pytest.raises(PublishFenceError, match="cannot publish from input ref"):
         runtime.publish_workspace(staged, workspace, spec, attempt)

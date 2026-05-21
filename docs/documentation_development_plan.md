@@ -268,7 +268,7 @@ docs/
     models.rst
     runtime.rst
     workspace.rst
-    metadata.rst
+    staging.rst
     config.rst
     results.rst
     errors.rst
@@ -326,14 +326,14 @@ docs/
 
 这些对象应标记为“高级运行时/集成 API”，避免任务作者误以为必须直接调用。
 
-### 7.3 Workspace 同步和 metadata API（第三优先级）
+### 7.3 Workspace 同步和 staging API（第三优先级）
 
 | 类别 | API |
 |---|---|
 | Workspace 文件同步 | `WorkspaceUploadFile`, `WorkspaceDownloadFile`, `WorkspaceSyncPlan`, `build_workspace_sync_plan`, `workspace_upload_files`, `workspace_download_files`, `workspace_delete_object_paths`, `workspace_local_path` |
-| 发布 metadata | `WorkspacePublicationPlan`, `logical_task_key`, `metadata_value`, `perago_metadata`, `confirm_metadata_extra`, `choose_publish_base`, `build_workspace_publication_plan`, `find_matching_publication_commit`, `staging_branch_name` |
+| Staging branch | `staging_branch_name` |
 
-这些对象多数用于运行时维护、测试和高级恢复逻辑，API 页面必须说明调用场景和限制。
+这些对象多数用于运行时维护和测试。Perago 不再公开 LakeFS commit metadata publication helper。
 
 ---
 
@@ -352,7 +352,7 @@ API Reference
    models
    runtime
    workspace
-   metadata
+   staging
    config
    results
    errors

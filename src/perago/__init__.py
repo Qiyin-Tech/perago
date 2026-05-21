@@ -27,17 +27,6 @@ from perago.guards import (
     require_file,
     require_glob,
 )
-from perago.metadata import (
-    WorkspacePublicationPlan,
-    build_workspace_publication_plan,
-    choose_publish_base,
-    confirm_metadata_extra,
-    find_matching_publication_commit,
-    logical_task_key,
-    metadata_value,
-    perago_metadata,
-    staging_branch_name,
-)
 from perago.models import (
     ExecutionLimits,
     PublishBudget,
@@ -48,6 +37,7 @@ from perago.models import (
     WorkspaceOutput,
     WorkspaceSpec,
 )
+from perago.staging import staging_branch_name
 from perago.task import TaskDefinition, load_module_task, task
 from perago.taskdef import build_taskdef, write_taskdef
 from perago.result import (
@@ -96,7 +86,6 @@ __all__ = [
     "WorkerRuntime",
     "WorkspaceInput",
     "WorkspaceOutput",
-    "WorkspacePublicationPlan",
     "WorkspaceSpec",
     "WorkspaceDownloadFile",
     "WorkspaceSyncPlan",
@@ -104,23 +93,16 @@ __all__ = [
     "assert_current_attempt_snapshot",
     "build_taskdef",
     "build_workspace_free_task_output",
-    "build_workspace_publication_plan",
     "build_workspace_sync_plan",
     "build_workspace_task_output",
     "check_guardrails",
-    "choose_publish_base",
-    "confirm_metadata_extra",
     "completed_result",
     "failed_result",
-    "find_matching_publication_commit",
     "forbid_glob",
     "invoke_workspace_free_task",
     "invoke_workspace_task_body",
     "load_module_task",
     "load_runtime_config",
-    "logical_task_key",
-    "metadata_value",
-    "perago_metadata",
     "prepare_worker_runtime",
     "require_dir",
     "require_file",

@@ -134,22 +134,21 @@ class PublishFenceError(RuntimeError):
     Raised when a workspace branch cannot be safely advanced.
 
     Publish fence errors are fail-closed publication failures. They indicate
-    that the target branch advanced in a way Perago cannot attribute to the
-    same logical task key, so the current attempt must not merge its staging
-    branch.
+    that the target branch HEAD is neither the attempt input ref nor a commit
+    whose first parent is the input ref, so the current attempt must not publish
+    its staged workspace.
 
     See Also
     --------
-    choose_publish_base : Decide whether the target branch can be advanced.
-    build_workspace_publication_plan : Assemble a publish plan and fence
-        decision.
+    LakeFSWorkspaceRuntime.publish_workspace : Apply the LakeFS HEAD-state
+        publication protocol.
     failed_result : Build the ordinary failed Conductor result used for this
         exception.
 
     Examples
     --------
-    >>> PublishFenceError("main advanced from old to new")
-    PublishFenceError('main advanced from old to new')
+    >>> PublishFenceError("main cannot publish from input ref old")
+    PublishFenceError('main cannot publish from input ref old')
     """
 
 

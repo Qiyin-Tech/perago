@@ -10,7 +10,7 @@ API Reference
    models
    runtime
    workspace
-   metadata
+   staging
    config
    results
    errors

@@ -1,17 +1,19 @@
 # Project Development TODO
 
-## Publish fence commit-range classification
+## LakeFS publish protocol migration
 
-- [x] Implement the intended publish-fence commit range check, or deliberately narrow the implementation contract.
+- [x] Replace commit metadata classification with the Conductor attempt fence plus LakeFS HEAD-state protocol.
 
-Current state: `LakeFSWorkspaceRuntime.publish_workspace()` passes only the target branch head commit into `build_workspace_publication_plan()`. The intended project behavior is to classify target-branch advancement by checking the commit range from the input workspace ref to the current head, and accepting only commits attributable to the same `perago.logical_task_key`.
+Current state: `LakeFSWorkspaceRuntime.publish_workspace()` does not scan target branch history and does not read or write LakeFS commit metadata. It publishes when `HEAD == input_ref`, relocates the target branch to the staged commit when `parent(HEAD) == input_ref`, and fails closed for other HEAD states.
 
 Acceptance criteria:
 
-- Fetch the relevant LakeFS commit range between `WorkspaceInput.ref` and the observed target branch head.
-- Pass that range to `build_workspace_publication_plan()` instead of a single head commit.
-- Keep unrelated or metadata-incomplete branch advancement fail-closed.
-- Cover the behavior with a runtime-level test, not only metadata helper tests.
+- Do not export publication metadata helpers from `perago.__init__`.
+- Commit staging branches without LakeFS metadata.
+- Merge without LakeFS metadata when `HEAD == input_ref`.
+- Hard-reset / relocate the target branch to the staged commit when `parent(HEAD) == input_ref`.
+- Keep unrelated, missing-parent, or empty-parent HEAD states fail-closed.
+- Cover the behavior with runtime-level tests.
 
 ## Perago Conductor Runtime 重构计划
 

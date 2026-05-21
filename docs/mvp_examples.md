@@ -722,12 +722,12 @@ Perago assumes these LakeFS Community capabilities:
 
 - the target workspace branch can be configured as a protected branch, so direct object writes, deletes, commits, and resets fail;
 - successful workspace publication reaches the protected branch through LakeFS merge from a staging commit;
-- merge metadata can carry Perago transaction fields;
+- replacement publication can relocate the target branch to the current staged commit when the observed HEAD is an abandoned publication;
 - squash merge is available and should be used so the target branch stays linear;
 - pre-merge hooks/actions may be used as fast gates that abort invalid merge attempts;
 - pre-merge hooks/actions must not perform long-running waits or lock acquisition.
 
-Perago does not use LakeFS as a business lock service. LakeFS protects the integrity of branch updates and merge conflict detection. Conductor attempt checks and Perago metadata provide worker-level idempotency. A separate external coordinator or ledger is only needed if Perago must provide strict exactly-once publication or durable result recovery.
+Perago does not use LakeFS as a business lock service. LakeFS protects the integrity of branch updates and merge conflict detection. Conductor attempt checks and the LakeFS HEAD-state publish fence provide worker-level idempotency. A separate external coordinator or ledger is only needed if Perago must provide strict exactly-once publication or durable result recovery.
 
 ## Conductor task input
 
