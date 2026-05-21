@@ -1,0 +1,4 @@
+interface:
+  display_name: "Split Large Python Module"
+  short_description: "Refactor large Python files into packages"
+  default_prompt: "Use $split-large-python-module to refactor this oversized Python module into a package without breaking imports."
