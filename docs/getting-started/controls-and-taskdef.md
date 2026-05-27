@@ -103,13 +103,15 @@ inputKeys = ["params"]
 outputKeys = ["result"]
 ```
 
-`workspace` schema 来自 Perago 的 `WorkspaceInput` / `WorkspaceOutput`，`params` 和 `result` schema 来自任务函数的 Pydantic 类型注解。`perago extract` 还会把嵌套 schema inline，删除 Pydantic `title`，并把 object schema 关闭为 `additionalProperties: false`。
+`workspace` schema 来自 Perago 的 `WorkspaceInput` / `WorkspaceOutput`，`params` 和 `result` schema 来自任务函数的 Pydantic 类型注解。`perago extract` 还会把嵌套 schema inline，删除 Pydantic `title` 和从 `BaseModel` class docstring 自动生成的 object-level `description`，并把 object schema 关闭为 `additionalProperties: false`。
+
+不要在 task 的 `params` / `result` model 中依赖 `ConfigDict`。`perago check` 会对配置了 `ConfigDict` 的 task model 报 warning；Perago 当前不保证这类 model 的 TaskDef schema 或运行时行为。
 
 Perago 不生成 Conductor `inputTemplate`。Pydantic 字段默认值会保留在 JSON Schema 里，但不会被复制到 TaskDef 顶层的 input template 中。
 
 Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_glob` 和 `forbid_glob` 是 Perago runtime metadata，只影响 workspace 准备前后的本地检查。
 
-下面是一个 workspace task 生成的 TaskDef 核心结构示例：
+下面是 `tests/fixtures/app/workers/features_build.py` 通过 `build_taskdef(load_module_task("app.workers.features_build"))` 生成的真实 TaskDef 输出：
 
 ```json
 {
@@ -127,37 +129,72 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
   "responseTimeoutSeconds": 900,
   "pollTimeoutSeconds": 0,
   "concurrentExecLimit": 2,
-  "inputKeys": ["workspace", "params"],
-  "outputKeys": ["workspace", "result"],
+  "inputKeys": [
+    "workspace",
+    "params"
+  ],
+  "outputKeys": [
+    "workspace",
+    "result"
+  ],
   "inputSchema": {
     "name": "features.build.input",
     "version": 1,
     "type": "JSON",
     "data": {
       "type": "object",
-      "required": ["workspace", "params"],
-      "additionalProperties": false,
       "properties": {
         "workspace": {
-          "type": "object",
-          "required": ["repository", "branch", "ref_type", "ref"],
-          "properties": {
-            "repository": {"type": "string"},
-            "branch": {"type": "string"},
-            "ref_type": {"const": "commit", "type": "string"},
-            "ref": {"type": "string"}
-          }
-        },
-        "params": {
-          "type": "object",
-          "required": ["feature_set", "min_rows"],
           "additionalProperties": false,
           "properties": {
-            "feature_set": {"type": "string"},
-            "min_rows": {"type": "integer", "minimum": 1}
-          }
+            "repository": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "branch": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "ref_type": {
+              "const": "commit",
+              "type": "string"
+            },
+            "ref": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "repository",
+            "branch",
+            "ref_type",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "params": {
+          "properties": {
+            "feature_set": {
+              "type": "string"
+            },
+            "min_rows": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "feature_set",
+            "min_rows"
+          ],
+          "type": "object",
+          "additionalProperties": false
         }
-      }
+      },
+      "required": [
+        "workspace",
+        "params"
+      ],
+      "additionalProperties": false
     }
   },
   "outputSchema": {
@@ -166,7 +203,58 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
     "type": "JSON",
     "data": {
       "type": "object",
-      "required": ["workspace", "result"],
+      "properties": {
+        "workspace": {
+          "additionalProperties": false,
+          "properties": {
+            "repository": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "branch": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "ref_type": {
+              "const": "commit",
+              "type": "string"
+            },
+            "ref": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "repository",
+            "branch",
+            "ref_type",
+            "ref"
+          ],
+          "type": "object"
+        },
+        "result": {
+          "properties": {
+            "row_count": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "feature_count": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "row_count",
+            "feature_count"
+          ],
+          "type": "object",
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "workspace",
+        "result"
+      ],
       "additionalProperties": false
     }
   }

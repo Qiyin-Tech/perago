@@ -30,6 +30,19 @@ def test_check_cli_reports_task(monkeypatch, tmp_path) -> None:
     assert "lakefs: not configured" in result.output
 
 
+def test_check_cli_warns_when_task_models_use_configdict(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.config_dict_task"])
+
+    assert result.exit_code == 0
+    assert "ok: tests.config_dict" in result.output
+    assert "warning: Pydantic ConfigDict on task model(s) Params" in result.output
+    assert "not part of the Perago task contract" in result.output
+
+
 def test_check_cli_reports_connection_config_status_without_secrets(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(

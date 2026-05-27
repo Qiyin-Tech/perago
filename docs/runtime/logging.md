@@ -32,7 +32,7 @@ Perago worker 日志是 worker-local 运行时状态。它用于排查 worker pr
 最小结构如下：
 
 ```json
-{"text":"...","record":{"message":"worker started","time":{"repr":"2026-05-20 14:30:15.000000+08:00"},"extra":{"worker_id":"prodAFeaturesBuild0001","module_target":"app.workers.features_build","log_file":"/var/tmp/perago/logs/app.workers.features_build/worker_id=prodAFeaturesBuild0001/pid=42118__started=20260520T143015+0800.jsonl"}}}
+{"text":"...","record":{"message":"process executor started","time":{"repr":"2026-05-20 14:30:15.000000+08:00"},"extra":{"worker_id":"prodAFeaturesBuild0001","module_target":"app.workers.features_build","log_file":"/var/tmp/perago/logs/app.workers.features_build/worker_id=prodAFeaturesBuild0001/pid=42118__started=20260520T143015+0800.jsonl"}}}
 ```
 
 实际 JSON object 还会包含 Loguru 提供的 level、module、function、line、process、thread 和 exception 信息。文档和工具不应依赖字段顺序。
@@ -69,7 +69,7 @@ YYYYMMDDTHHMMSS+0800
 2. 创建 worker 日志目录并配置 JSONL sink。
 3. 返回 `WorkerRuntime(worker_id, log_file, swept_workspaces=[])`。
 
-因此 `WorkerRuntime.log_file` 是当前 child process 的活跃日志文件路径。worker 启动后会记录一条 `worker started` 日志，并把 `worker_id`、`module_target` 和 `log_file` 作为结构化字段写入。
+因此 `WorkerRuntime.log_file` 是当前 child process 的活跃日志文件路径。process mode 的 broker 会记录 `process broker started`，executor 会记录 `process executor started`；thread mode 会记录 `thread runner started`。这些启动日志都会把 `worker_id`、`module_target` 和 `log_file` 作为结构化字段写入。
 
 attempt workspace 清理不在 `prepare_worker_runtime()` 内执行。`perago start` 的 supervisor 负责启动前 sweep、后台 GC loop、dead executor targeted GC 和 shutdown 后最终 sweep。
 

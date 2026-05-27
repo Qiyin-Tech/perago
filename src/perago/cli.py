@@ -12,7 +12,7 @@ from perago.config import ExecutionMode, load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
 from perago.supervisor import run_worker_supervisor
 from perago.task import load_module_task
-from perago.taskdef import build_taskdef, write_taskdef
+from perago.taskdef import build_taskdef, task_models_with_config, write_taskdef
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -42,6 +42,7 @@ def check(module_target: str) -> None:
         config = load_runtime_config(module_target)
         task = load_module_task(module_target)
         _warn_ignored_publish_budget(task)
+        _warn_task_model_config(task)
         build_taskdef(task)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
         _fail(str(exc))
@@ -60,6 +61,7 @@ def extract(module_target: str, output: Path = typer.Option(..., "--output", "-o
         load_runtime_config(module_target)
         task = load_module_task(module_target)
         _warn_ignored_publish_budget(task)
+        _warn_task_model_config(task)
         path = write_taskdef(task, output)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema, ValueError) as exc:
         _fail(str(exc))
@@ -82,6 +84,7 @@ def start(
             raise RuntimeConfigError("LakeFS config is required for perago start")
         task = load_module_task(module_target)
         _warn_ignored_publish_budget(task)
+        _warn_task_model_config(task)
         build_taskdef(task)
         conductor = OrkesConductorRuntimeClient.from_config(config.conductor)
         if not conductor.taskdef_exists(task.name):
@@ -119,6 +122,19 @@ def _warn_ignored_publish_budget(task: object) -> None:
         and getattr(controls, "publish_budget", None) is not None
     ):
         typer.echo(f"warning: {READ_ONLY_PUBLISH_BUDGET_WARNING}", err=True)
+
+
+def _warn_task_model_config(task: object) -> None:
+    models = task_models_with_config(task)
+    if not models:
+        return
+    names = ", ".join(model.__name__ for model in models)
+    typer.echo(
+        "warning: Pydantic ConfigDict on task model(s) "
+        f"{names} is not part of the Perago task contract; Perago does not guarantee "
+        "TaskDef or runtime behavior for ConfigDict-configured task models.",
+        err=True,
+    )
 
 
 if __name__ == "__main__":

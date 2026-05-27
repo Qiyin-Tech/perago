@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from copy import deepcopy
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -13,6 +14,11 @@ from perago.task import TaskDefinition
 
 TASKDEF_SCHEMA_VERSION = 1
 TASKDEF_SCHEMA_TYPE = "JSON"
+
+_MODEL_SCHEMA_STRUCTURAL_KEYS = frozenset({"$defs", "additionalProperties", "properties", "required", "type"})
+_GENERATED_SCHEMA_METADATA_KEYS = frozenset({"title"})
+_SCHEMA_NAME_MAPPING_KEYS = frozenset({"properties"})
+
 
 CONTROL_FIELD_MAP = {
     "retryCount": ("retry", "count"),
@@ -92,24 +98,28 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
     data: dict[str, Any] = {
         "name": task.name,
         "ownerEmail": task.owner_email,
-        **_control_fields(task),
-        "inputKeys": input_required,
-        "outputKeys": output_required,
-        "inputSchema": {
-            "name": f"{task.name}.input",
-            "version": TASKDEF_SCHEMA_VERSION,
-            "type": TASKDEF_SCHEMA_TYPE,
-            "data": _object_schema(input_properties, input_required),
-        },
-        "outputSchema": {
-            "name": f"{task.name}.output",
-            "version": TASKDEF_SCHEMA_VERSION,
-            "type": TASKDEF_SCHEMA_TYPE,
-            "data": _object_schema(output_properties, output_required),
-        },
     }
     if task.description is not None:
         data["description"] = task.description
+    data.update(
+        {
+            **_control_fields(task),
+            "inputKeys": input_required,
+            "outputKeys": output_required,
+            "inputSchema": {
+                "name": f"{task.name}.input",
+                "version": TASKDEF_SCHEMA_VERSION,
+                "type": TASKDEF_SCHEMA_TYPE,
+                "data": _object_schema(input_properties, input_required),
+            },
+            "outputSchema": {
+                "name": f"{task.name}.output",
+                "version": TASKDEF_SCHEMA_VERSION,
+                "type": TASKDEF_SCHEMA_TYPE,
+                "data": _object_schema(output_properties, output_required),
+            },
+        }
+    )
     return data
 
 
@@ -160,10 +170,24 @@ def write_taskdef(task: TaskDefinition, output: Path) -> Path:
 
 def schema_for_model(model: type[BaseModel]) -> dict[str, Any]:
     schema = model.model_json_schema()
+    _strip_model_schema_metadata(schema)
     inlined = _inline_refs(schema)
-    _strip_titles(inlined)
+    _strip_schema_metadata_keys(
+        inlined,
+        _GENERATED_SCHEMA_METADATA_KEYS,
+        preserve_mapping_keys=_SCHEMA_NAME_MAPPING_KEYS,
+    )
     _close_object_schemas(inlined)
     return inlined
+
+
+def task_models_with_config(task: TaskDefinition) -> list[type[BaseModel]]:
+    configured: dict[type[BaseModel], None] = {}
+    for model in (task.params_model, task.output_model):
+        for schema_model in _iter_model_graph(model):
+            if schema_model.model_config:
+                configured[schema_model] = None
+    return list(configured)
 
 
 def _control_fields(task: TaskDefinition) -> dict[str, Any]:
@@ -227,12 +251,59 @@ def _close_object_schemas(schema: Any) -> None:
             _close_object_schemas(value)
 
 
-def _strip_titles(schema: Any, *, in_properties: bool = False) -> None:
-    if isinstance(schema, dict):
-        if not in_properties:
-            schema.pop("title", None)
-        for key, value in schema.items():
-            _strip_titles(value, in_properties=(key == "properties"))
-    elif isinstance(schema, list):
-        for value in schema:
-            _strip_titles(value, in_properties=in_properties)
+def _strip_schema_metadata_keys(schema: Any, keys: Collection[str], *, preserve_mapping_keys: Collection[str]) -> None:
+    def visit(value: Any, *, in_preserved_mapping: bool = False) -> None:
+        if isinstance(value, dict):
+            if not in_preserved_mapping:
+                for key in keys:
+                    value.pop(key, None)
+            for key, item in value.items():
+                visit(item, in_preserved_mapping=(key in preserve_mapping_keys))
+        elif isinstance(value, list):
+            for item in value:
+                visit(item, in_preserved_mapping=in_preserved_mapping)
+
+    visit(schema)
+
+
+def _strip_model_schema_metadata(schema: dict[str, Any]) -> None:
+    _strip_object_schema_metadata(schema)
+    defs = schema.get("$defs", {})
+    if not isinstance(defs, dict):
+        return
+    for definition in defs.values():
+        if isinstance(definition, dict) and definition.get("type") == "object":
+            _strip_object_schema_metadata(definition)
+
+
+def _strip_object_schema_metadata(schema: dict[str, Any]) -> None:
+    for key in list(schema):
+        if key not in _MODEL_SCHEMA_STRUCTURAL_KEYS:
+            schema.pop(key, None)
+
+
+def _iter_model_graph(model: type[BaseModel]) -> list[type[BaseModel]]:
+    seen: set[type[BaseModel]] = set()
+    pending = [model]
+    ordered: list[type[BaseModel]] = []
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        ordered.append(current)
+        for field in current.model_fields.values():
+            pending.extend(_iter_annotation_models(field.annotation))
+    return ordered
+
+
+def _iter_annotation_models(annotation: Any) -> list[type[BaseModel]]:
+    models: list[type[BaseModel]] = []
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        models.append(annotation)
+    for argument in get_args(annotation):
+        models.extend(_iter_annotation_models(argument))
+    origin = get_origin(annotation)
+    if isinstance(origin, type) and issubclass(origin, BaseModel):
+        models.append(origin)
+    return models
