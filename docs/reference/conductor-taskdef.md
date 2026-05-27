@@ -132,14 +132,14 @@ workspace task 的 output 顶层字段固定为：
 `PublishBudget` 不会作为字段写入 TaskDef，也不会覆盖生成出来的 `responseTimeoutSeconds`。它的派生值用于检查 task timeout 是否明显短于 publication budget：
 
 ```text
-responseTimeoutSeconds =
+PublishBudget.response_timeout_seconds =
   lakefs_merge_timeout_seconds
   + conductor_completion_timeout_seconds
   + worker_shutdown_grace_seconds
   + heartbeat_interval_seconds
 ```
 
-`responseTimeoutSeconds` 始终来自 `controls.timeout.response_seconds`，默认是 `600`。如果可写 workspace task 的 `controls.timeout.response_seconds` 小于上面的派生值，TaskDef 生成会发出 warning。task 声明 `WorkspaceSpec(read_only=True)` 时 publish budget 会被忽略。
+TaskDef 的 `responseTimeoutSeconds` 始终来自 `controls.timeout.response_seconds`，默认是 `600`。如果可写 workspace task 的 `controls.timeout.response_seconds` 小于上面的 publish-budget 派生值，TaskDef 生成会发出 warning。task 声明 `WorkspaceSpec(read_only=True)` 时 publish budget 会被忽略。
 
 ## 不写入 TaskDef 的 Perago 信息
 

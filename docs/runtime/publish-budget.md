@@ -99,7 +99,7 @@ lakefs_merge_timeout_seconds
 
 | 位置 | 使用字段 | 行为 |
 | --- | --- | --- |
-| TaskDef generation | `response_timeout_seconds` | 只用于 warning：当 `TimeoutPolicy.response_seconds` 小于派生值时提示配置过短。 |
+| TaskDef generation | `PublishBudget.response_timeout_seconds` | 派生值只用于 warning：当 `TimeoutPolicy.response_seconds` 小于该值时提示配置过短；TaskDef 字段 `responseTimeoutSeconds` 仍来自 `TimeoutPolicy.response_seconds`。 |
 | LakeFS publish | `lakefs_merge_timeout_seconds` | 作为 merge request timeout 传给 LakeFS SDK。 |
 | Conductor completion reserve | `conductor_completion_timeout_seconds` | 作为 publication 预算预留；SDK `TaskRunner` 当前 owns completion result update。 |
 

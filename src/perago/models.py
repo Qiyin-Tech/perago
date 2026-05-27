@@ -284,8 +284,8 @@ class TaskControls(BaseModel):
     Attributes
     ----------
     response_timeout_seconds : int
-        Effective response timeout used for TaskDef generation. This comes from
-        ``timeout.response_seconds``.
+        Alias for ``timeout.response_seconds``. It is not influenced by
+        ``publish_budget``.
 
     Examples
     --------
@@ -306,7 +306,7 @@ class TaskControls(BaseModel):
 
     @property
     def response_timeout_seconds(self) -> int:
-        """Effective response timeout for the generated Conductor TaskDef."""
+        """Alias for timeout.response_seconds; publish_budget does not override it."""
         return self.timeout.response_seconds
 
 
