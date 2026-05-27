@@ -274,7 +274,7 @@ Fields set to `None` are omitted from the extracted TaskDef JSON.
 
 If `controls.publish_budget` is set, Perago still writes `responseTimeoutSeconds` from `controls.timeout.response_seconds`. If the configured response timeout is shorter than `PublishBudget.response_timeout_seconds`, TaskDef generation warns but does not override the task timeout. At runtime, the same budget provides the LakeFS merge request timeout and a Conductor completion reserve; it is not wired to the SDK `TaskRunner` result-update HTTP timeout. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
 
-`TaskControls.response_timeout_seconds` is the single local source used for the generated TaskDef `responseTimeoutSeconds` value.
+The generated TaskDef `responseTimeoutSeconds` value comes from `controls.timeout.response_seconds`; `PublishBudget.response_timeout_seconds` is only compared for warnings and does not override the emitted task timeout.
 
 `workspace` is required for workspace task workers and forbidden for workspace-free task workers.
 `controls.publish_budget` is valid only for workspace task workers.
