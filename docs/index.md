@@ -20,9 +20,10 @@ Perago 适合下面这类任务：
 
 ## 阅读路径
 
-- {doc}`getting-started/index`：先跑通一个最小 task，理解 `check`、`extract`、`start`、TaskDef、controls、workspace 和 guardrail 的基本分工。
+- {doc}`getting-started/index`：从简短入口进入 task 类型、CLI、TaskDef、controls、workspace 和 guardrail 专题。
 - {doc}`lakefs-publication-protocol`：理解 workspace task 成功、失败、retry 和 abandoned publication 的协议边界。
-- {doc}`development`：维护 runtime、reference、architecture、concepts 和 API 文档。
+- {doc}`development`：维护 runtime、architecture、concepts 和 API 文档。
+- {doc}`reference/index`：核对 input/output contract、TaskDef 字段、环境变量、失败分类和 troubleshooting。
 
 ## 目录
 
@@ -32,4 +33,5 @@ Perago 适合下面这类任务：
 getting-started/index
 lakefs-publication-protocol
 development
+reference/index
 ```

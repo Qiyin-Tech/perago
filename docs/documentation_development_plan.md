@@ -223,6 +223,8 @@ docs/
     pydantic-contracts.md
     guardrails.md
     controls-and-taskdef.md
+    commands.md
+    failure-signaling.md
     examples.md
 
   concepts/
@@ -510,6 +512,8 @@ class PublishBudget(BaseModel):
 - `getting-started/pydantic-contracts.md`：Pydantic params/output 模型、extra field 拒绝、JSON Schema 生成。
 - `getting-started/guardrails.md`：`require_file`、`require_dir`、`require_glob`、`forbid_glob`，pre/post 失败分类。
 - `getting-started/controls-and-taskdef.md`：`TaskControls` 到 Conductor TaskDef 字段映射，publish budget 如何影响 `responseTimeoutSeconds`。
+- `getting-started/commands.md`：`perago check`、`perago extract`、`perago start` 的命令流和 fixture 验证路径。
+- `getting-started/failure-signaling.md`：业务分支、retryable failure、terminal failure 和 guardrail 失败的选择边界。
 - `getting-started/examples.md`：从 `tests/fixtures/app/workers/` 选 3 个正例和若干反例。
 
 验收标准：一个新任务作者可以照文档写出 task module，运行 `perago check`，再运行 `perago extract`。

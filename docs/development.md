@@ -1,6 +1,6 @@
 # Development
 
-Development 文档汇总 Getting Started 之外的维护资料，包括概念词表、runtime 配置、reference、架构取舍和公开 API。
+Development 文档汇总 Getting Started 之外的维护资料，包括概念词表、runtime 配置、架构取舍和公开 API。
 
 ## 维护入口
 
@@ -8,19 +8,20 @@ Development 文档汇总 Getting Started 之外的维护资料，包括概念词
 | --- | --- |
 | {doc}`concepts/index` | 对齐 task module、workspace model、task contract 和 glossary。 |
 | {doc}`runtime/index` | 维护 `perago start`、worker process、Conductor poll/result、LakeFS workspace publication。 |
-| {doc}`reference/index` | 核对 input/output contract、TaskDef 字段、环境变量、失败分类和 troubleshooting。 |
 | {doc}`architecture/index` | 理解 transaction model、publication fence 和 ADR 背后的取舍。 |
 | {doc}`api/index` | 查看公开 Python API、类型签名和 docstring。 |
 
 (development-getting-started)=
 ## Getting Started 深入
 
-- {doc}`getting-started/index`：任务声明总入口，包含最小 workspace task、核心命令、生成的 TaskDef 和 controls。
+- {doc}`getting-started/index`：简短入口和阅读路线，不承载长篇规则细节。
 - {doc}`getting-started/workspace-task`：workspace task 的签名、字段边界和约束。
 - {doc}`getting-started/workspace-free-task`：workspace-free task 的 contract 和限制。
 - {doc}`getting-started/pydantic-contracts`：Pydantic params/result contract 的精确规则。
 - {doc}`getting-started/guardrails`：pre/post guardrail 的写法和约束。
 - {doc}`getting-started/controls-and-taskdef`：controls 到 TaskDef 字段的映射。
+- {doc}`getting-started/commands`：`check`、`extract`、`start` 的本地使用路径。
+- {doc}`getting-started/failure-signaling`：业务分支、retryable failure 和 terminal failure 的选择边界。
 - {doc}`getting-started/examples`：可运行示例和反例索引。
 
 (development-runtime)=
@@ -35,16 +36,6 @@ Development 文档汇总 Getting Started 之外的维护资料，包括概念词
 - {doc}`runtime/publish-budget`：publish budget 与 `responseTimeoutSeconds` 的关系。
 - {doc}`runtime/logging`：worker 日志目录和日志字段。
 - {doc}`runtime/worker-processes`：supervisor、broker、executor 和 execution mode。
-
-(development-reference)=
-## Reference 深入
-
-- {doc}`reference/index`：reference 总入口。
-- {doc}`reference/input-output-contract`：Conductor input/output contract。
-- {doc}`reference/conductor-taskdef`：TaskDef 字段参考。
-- {doc}`reference/environment-variables`：环境变量参考。
-- {doc}`reference/failure-classification`：失败分类和结果状态。
-- {doc}`reference/troubleshooting`：故障排查入口。
 
 (development-architecture)=
 ## Architecture 深入
@@ -65,7 +56,6 @@ Development 文档汇总 Getting Started 之外的维护资料，包括概念词
 
 concepts/index
 runtime/index
-reference/index
 architecture/index
 api/index
 ```

@@ -190,18 +190,20 @@ def render_audio(workspace: Path, params: RenderParams) -> RenderOutput:
 对一个 module 做任务声明层面的检查：
 
 ```bash
-PYTHONPATH=tests/fixtures perago check app.workers.features_build
-PYTHONPATH=tests/fixtures perago check app.workers.metadata_validate
+PYTHONPATH=tests/fixtures uv run perago check app.workers.features_build
+PYTHONPATH=tests/fixtures uv run perago check app.workers.metadata_validate
 ```
 
 生成 Conductor TaskDef JSON：
 
 ```bash
-PYTHONPATH=tests/fixtures perago extract app.workers.features_build --output /tmp/features.build.json
-PYTHONPATH=tests/fixtures perago extract app.workers.metadata_validate --output /tmp/metadata.validate.json
+PYTHONPATH=tests/fixtures uv run perago extract app.workers.features_build --output /tmp/features.build.json
+PYTHONPATH=tests/fixtures uv run perago extract app.workers.metadata_validate --output /tmp/metadata.validate.json
 ```
 
 `perago check` 和 `perago extract` 都以 Python import path 指向单个 module。不要传文件路径，也不要把多个 task 放进同一个 module。
+
+三个核心命令的分工见 {doc}`commands`。
 
 ## 反例索引
 
