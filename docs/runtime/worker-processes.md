@@ -84,11 +84,11 @@ supervisor 会把每个 executor 的 `PERAGO_WORKER_ID` 写入 child environment
 | 条件 | 失败边界 |
 | --- | --- |
 | `CONDUCTOR_SERVER_URL` 已配置 | 缺失时报 `CONDUCTOR_SERVER_URL is required for perago start`。 |
-| LakeFS endpoint、access key id、secret access key 已完整配置 | 缺失时报 `LakeFS config is required for perago start` 或列出缺失变量。 |
+| workspace task 的 LakeFS endpoint、access key id、secret access key 已完整配置 | 缺失时报 `LakeFS config is required for workspace tasks` 或列出缺失变量；workspace-free task 不需要 LakeFS。 |
 | task module 可导入并能生成 TaskDef | 失败时按 task definition 或 schema 错误退出。 |
 | Conductor 已注册同名 TaskDef | 缺失时报 `Conductor TaskDef '<name>' is not registered; run perago extract and register it before start`。 |
 
-broker child process 内也会再次检查 Conductor config；executor child process 只检查 LakeFS config，因为默认 process 模式下只有 broker 持有 Conductor client。这个重复检查是进程边界内的防护，不能替代启动前的发布流程。
+broker child process 内也会再次检查 Conductor config；executor child process 只在执行 workspace task 时检查 LakeFS config，因为默认 process 模式下只有 broker 持有 Conductor client。这个重复检查是进程边界内的防护，不能替代启动前的发布流程。
 
 ## 重启和停止
 

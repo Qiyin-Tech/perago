@@ -21,9 +21,10 @@ Perago 会读取当前工作目录下的 `.env`，再用真实进程环境变量
 ```text
 CONDUCTOR_SERVER_URL=http://localhost:8080/api
 
-LAKECTL_SERVER_ENDPOINT_URL=http://localhost:8000
-LAKECTL_CREDENTIALS_ACCESS_KEY_ID=replace-me
-LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=replace-me
+# Required only when starting workspace tasks.
+# LAKECTL_SERVER_ENDPOINT_URL=http://localhost:8000
+# LAKECTL_CREDENTIALS_ACCESS_KEY_ID=replace-with-real-access-key
+# LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=replace-with-real-secret-key
 
 PERAGO_WORKSPACE_ROOT=/var/tmp/perago/workspaces
 PERAGO_LOG_ROOT=/var/tmp/perago/logs
@@ -37,7 +38,7 @@ PERAGO_WORKSPACE_GC_INTERVAL=1h
 PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 ```
 
-`replace-me` 属于占位值。Perago 看到未替换的连接密钥占位值时会拒绝启动。
+`replace-me` 属于占位值。Perago 看到未替换的连接密钥占位值时会拒绝启动。workspace-free task 不需要 LakeFS 连接变量；不要为了启动 workspace-free worker 配置占位 LakeFS 值。
 
 ## 变量表
 
@@ -54,9 +55,9 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_WORKSPACE_GC_INTERVAL` | optional | `1h` | supervisor 后台 workspace GC loop 的运行间隔。接受正整数加 `s`、`m`、`h` 或 `d`。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` | optional | unset | shutdown drain 的可选强制 kill deadline。未配置时 Perago 不调用 `process.kill()`；配置后接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30s`。 |
 | `CONDUCTOR_SERVER_URL` | required for `perago start` | 无 | Conductor API endpoint。`perago check` 和 `perago extract` 可在未配置时运行并报告 `not configured`。 |
-| `LAKECTL_SERVER_ENDPOINT_URL` | required for `perago start` | 无 | LakeFS endpoint。LakeFS 三个变量必须同时配置或同时省略。 |
-| `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for `perago start` | 无 | LakeFS access key id。 |
-| `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for `perago start` | 无 | LakeFS secret access key。 |
+| `LAKECTL_SERVER_ENDPOINT_URL` | required for workspace-task `perago start` | 无 | LakeFS endpoint。LakeFS 三个变量必须同时配置或同时省略；workspace-free `perago start` 不需要 LakeFS。 |
+| `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for workspace-task `perago start` | 无 | LakeFS access key id。 |
+| `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for workspace-task `perago start` | 无 | LakeFS secret access key。 |
 
 Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。Conductor auth key/secret 可以由底层 SDK 或部署环境使用；Perago `RuntimeConfig` 暂不建模这两个字段。
 
@@ -123,7 +124,7 @@ PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits
 `perago start` 会额外要求：
 
 - `CONDUCTOR_SERVER_URL` 已配置。
-- LakeFS endpoint、access key id 和 secret access key 已完整配置。
+- workspace task 需要 LakeFS endpoint、access key id 和 secret access key 已完整配置；workspace-free task 不需要 LakeFS 连接变量。
 - Conductor 中已经注册了对应 TaskDef。
 
 推荐流程是先运行 `perago check`，再运行 `perago extract` 并注册 TaskDef，最后启动 worker。

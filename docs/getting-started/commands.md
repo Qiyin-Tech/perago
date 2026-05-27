@@ -14,7 +14,7 @@ perago start app.workers.features_build -j 2
 
 `perago extract` 使用同一套校验，把 generated Conductor TaskDef 写到指定 `.json` 文件。它不会注册 TaskDef。
 
-`perago start` 是长运行 worker 入口。启动前需要 `CONDUCTOR_SERVER_URL`、LakeFS endpoint、LakeFS access key、LakeFS secret key 已配置，并且 Conductor 中已经注册同名 TaskDef。
+`perago start` 是长运行 worker 入口。启动前始终需要 `CONDUCTOR_SERVER_URL` 已配置，并且 Conductor 中已经注册同名 TaskDef。workspace task 还需要 LakeFS endpoint、LakeFS access key 和 LakeFS secret key；workspace-free task 不需要 LakeFS 连接变量。
 
 ## 本仓库 fixture
 

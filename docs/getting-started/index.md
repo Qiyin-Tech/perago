@@ -1,6 +1,6 @@
 # Getting Started
 
-Perago 的上手路径分两步：先写一个 single-task Python module，再用 CLI 校验、导出 Conductor TaskDef，并在准备好 Conductor/LakeFS 配置后启动 worker。
+Perago 的上手路径分两步：先写一个 single-task Python module，再用 CLI 校验、导出 Conductor TaskDef，并在准备好 task 类型需要的外部服务配置后启动 worker。
 
 本页只作为入口。具体规则分散在子页面中，避免把 workspace、Pydantic contract、guardrail、TaskDef、CLI 和失败语义混在同一个长页面里。
 

@@ -171,4 +171,4 @@ LakeFS runtime 的常见失败边界是：
 | cleanup staging | staging branch 删除失败 | 保留原始结果，只写日志 |
 | cleanup local workspace | 本机临时目录删除失败 | 保留原始结果，只写日志 |
 
-LakeFS 连接配置缺失不会等到第一个 attempt 才暴露。`perago start` 在启动 worker 前就要求 LakeFS endpoint、access key id 和 secret access key 完整存在。
+workspace task 的 LakeFS 连接配置缺失不会等到第一个 attempt 才暴露。`perago start` 在启动 workspace task worker 前就要求 LakeFS endpoint、access key id 和 secret access key 完整存在。

@@ -79,7 +79,7 @@ perago start app.workers.features_build -j 4
 
 - `perago check`：导入模块并校验任务声明与本地 runtime config。
 - `perago extract`：生成带嵌入 schema 的 Conductor TaskDef JSON。
-- `perago start`：在真实 Conductor 和 LakeFS 配置下启动 supervisor-managed worker processes。
+- `perago start`：在真实 Conductor 配置下启动 supervisor-managed worker processes；workspace task 还需要 LakeFS 配置。
 
 ## 文档
 
