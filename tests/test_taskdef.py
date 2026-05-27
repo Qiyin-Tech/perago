@@ -255,6 +255,7 @@ def test_taskdef_warns_when_publish_budget_exceeds_response_timeout() -> None:
     assert taskdef["responseTimeoutSeconds"] == 60
     assert "publish_budget" not in taskdef
     assert "lakefs_merge_timeout_seconds" not in json.dumps(taskdef)
+    assert short_timeout_task(Path("."), BudgetParams(value=3)) == BudgetOutput(value=3)
 
 
 def test_taskdef_ignores_publish_budget_for_read_only_workspace_task() -> None:
