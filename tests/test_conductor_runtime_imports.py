@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import perago.conductor_runtime as conductor_runtime
+
+
+def test_conductor_runtime_old_public_import_surface_is_reexported() -> None:
+    expected = {
+        "Any",
+        "CleanupStaging",
+        "CompleteNoOpWorkspace",
+        "ConductorConfig",
+        "ConductorRuntimeClient",
+        "ConductorTaskAttempt",
+        "Configuration",
+        "DownloadWorkspace",
+        "Empty",
+        "FrameType",
+        "LoadCurrentAttempt",
+        "Mapping",
+        "OrkesConductorRuntimeClient",
+        "OrkesMetadataClient",
+        "OrkesTaskClient",
+        "PROCESS_QUEUE_POLL_INTERVAL_SECONDS",
+        "PeragoProcessDispatchWorker",
+        "PeragoThreadWorker",
+        "ProcessAttemptFenceRequest",
+        "ProcessAttemptFenceResponse",
+        "ProcessExecutorExited",
+        "ProcessExecutorSlot",
+        "ProcessExecutorStarted",
+        "ProcessTaskAssignment",
+        "ProcessTaskCompletion",
+        "Protocol",
+        "PublishWorkspace",
+        "Queue",
+        "RuntimeConfigError",
+        "RuntimeTaskResult",
+        "StageWorkspace",
+        "StopProcessExecutor",
+        "Task",
+        "TaskDefinition",
+        "TaskResult",
+        "TaskResultStatus",
+        "TaskRunner",
+        "WorkerInterface",
+        "WorkspaceRuntime",
+        "annotations",
+        "conductor_task_to_attempt",
+        "dataclass",
+        "execute_polled_task",
+        "failed_result",
+        "load_current_attempt_via_broker",
+        "logger",
+        "run_conductor_process_broker",
+        "run_conductor_thread_runner",
+        "run_process_executor_loop",
+        "run_workspace_free_task_attempt",
+        "run_workspace_task_attempt",
+        "runtime_result_to_sdk_task_result",
+        "signal",
+        "threading",
+        "time",
+        "uuid4",
+    }
+
+    assert set(conductor_runtime.__all__) == expected
+    for name in expected:
+        assert hasattr(conductor_runtime, name)

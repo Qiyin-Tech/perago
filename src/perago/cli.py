@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from pydantic.errors import PydanticInvalidForJsonSchema
 
 from perago._version import __version__
-from perago.conductor_runtime import OrkesConductorRuntimeClient
+from perago.conductor_runtime.client import OrkesConductorRuntimeClient
 from perago.config import ExecutionMode, load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
 from perago.supervisor import run_worker_supervisor

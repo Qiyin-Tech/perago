@@ -323,7 +323,7 @@ def test_thread_worker_passes_failure_reason_limit_to_execution(monkeypatch) -> 
         captured.update(kwargs)
         return completed_result({"result": {"valid": True, "reason": None}})
 
-    monkeypatch.setattr("perago.conductor_runtime.execute_polled_task", fake_execute_polled_task)
+    monkeypatch.setattr("perago.conductor_runtime.workers.execute_polled_task", fake_execute_polled_task)
     worker = PeragoThreadWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
@@ -1135,7 +1135,7 @@ def test_process_executor_loop_passes_failure_reason_limit_to_execution(monkeypa
         captured.update(kwargs)
         return completed_result({"result": {"valid": True, "reason": None}})
 
-    monkeypatch.setattr("perago.conductor_runtime.execute_polled_task", fake_execute_polled_task)
+    monkeypatch.setattr("perago.conductor_runtime.process_executor.execute_polled_task", fake_execute_polled_task)
 
     run_process_executor_loop(
         task=load_module_task("app.workers.metadata_validate"),
@@ -1164,7 +1164,7 @@ def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monk
     import signal
 
     monkeypatch.setattr("perago.conductor_runtime.signal.signal", fake_signal)
-    monkeypatch.setattr("perago.conductor_runtime.execute_polled_task", fake_execute_polled_task)
+    monkeypatch.setattr("perago.conductor_runtime.process_executor.execute_polled_task", fake_execute_polled_task)
     connection = _FakeProcessConnection([ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1")])
 
     run_process_executor_loop(
@@ -1251,7 +1251,7 @@ def test_execute_polled_task_uses_workspace_attempt_runner(monkeypatch, tmp_path
         calls["kwargs"] = kwargs
         return completed_result({"ok": True})
 
-    monkeypatch.setattr("perago.conductor_runtime.run_workspace_task_attempt", fake_run_workspace_task_attempt)
+    monkeypatch.setattr("perago.conductor_runtime.execution.run_workspace_task_attempt", fake_run_workspace_task_attempt)
 
     result = execute_polled_task(
         task=task,

@@ -14,17 +14,15 @@ from typing import Any
 
 from loguru import logger
 
-from perago.conductor_runtime import (
-    OrkesConductorRuntimeClient,
+from perago.conductor_runtime.client import OrkesConductorRuntimeClient
+from perago.conductor_runtime.process_executor import load_current_attempt_via_broker, run_process_executor_loop
+from perago.conductor_runtime.process_ipc import (
     ProcessExecutorExited,
     ProcessExecutorSlot,
     ProcessExecutorStarted,
     StopProcessExecutor,
-    load_current_attempt_via_broker,
-    run_conductor_process_broker,
-    run_conductor_thread_runner,
-    run_process_executor_loop,
 )
+from perago.conductor_runtime.runners import run_conductor_process_broker, run_conductor_thread_runner
 from perago.config import ExecutionMode, RuntimeConfig, child_environment
 from perago.errors import RuntimeConfigError
 from perago.lakefs_runtime import LakeFSWorkspaceRuntime
