@@ -1,0 +1,4 @@
+interface:
+  display_name: "Perago Runtime Configuration"
+  short_description: "Manage Perago runtime config boundaries"
+  default_prompt: "Use $perago-runtime-configuration to add or review a Perago runtime configuration setting without scattering defaults."
