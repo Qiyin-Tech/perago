@@ -1,0 +1,4 @@
+interface:
+  display_name: "Perago Release"
+  short_description: "Publish Perago versions safely"
+  default_prompt: "Use $perago-release to prepare and publish the next Perago release."
