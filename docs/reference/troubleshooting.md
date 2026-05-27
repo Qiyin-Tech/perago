@@ -16,7 +16,7 @@ PYTHONPATH=tests/fixtures uv run perago start app.workers.features_build -j 1
 | --- | --- | --- |
 | `check` 失败 | task module、Pydantic contract、WorkspaceSpec、TaskControls 或本机 runtime config | 先看 stderr 的 `error: ...`；修正代码或 `.env` 后重跑 `check`。 |
 | `extract` 失败 | `check` 覆盖的范围，或输出路径缺少 `.json` 后缀 | 确认输出路径指向 JSON 文件。 |
-| `start` 失败 | Conductor/LakeFS 连接变量、Conductor TaskDef 注册、worker supervisor 启动前检查 | 先确认 `.env` 完整，再确认 TaskDef 已注册到 Conductor。 |
+| `start` 失败 | Conductor 连接变量、workspace task 的 LakeFS 连接变量、Conductor TaskDef 注册、worker supervisor 启动前检查 | 先确认 `.env` 满足 task 类型要求，再确认 TaskDef 已注册到 Conductor。 |
 | attempt 运行中失败 | Conductor input、LakeFS workspace、Workspace Check、task body、publish fence 或 cleanup | 结合 Conductor result status、`reasonForIncompletion` 和 worker JSONL 日志排查。 |
 
 ## Task Module Cannot Load
@@ -90,8 +90,8 @@ pre check 和任务显式抛出的 `TaskTerminalError` 会映射为 `FAILED_WITH
 | 错误文本 | 常见原因 | 修复 |
 | --- | --- | --- |
 | `CONDUCTOR_SERVER_URL is required for perago start` | `perago start` 没有 Conductor endpoint。 | 在 `.env` 或进程环境配置真实 `CONDUCTOR_SERVER_URL`。 |
-| `LakeFS config is required for perago start` | 三个 LakeFS 变量都没配置。 | 配置 `LAKECTL_SERVER_ENDPOINT_URL`、`LAKECTL_CREDENTIALS_ACCESS_KEY_ID`、`LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY`。 |
-| `LakeFS config is incomplete; missing ...` | 只配置了部分 LakeFS 变量。 | 三个 LakeFS 变量同时配置，或在非 `start` 调试时全部省略。 |
+| `LakeFS config is required for workspace tasks` | 启动 workspace task worker 时三个 LakeFS 变量都没配置。 | workspace task 需要配置 `LAKECTL_SERVER_ENDPOINT_URL`、`LAKECTL_CREDENTIALS_ACCESS_KEY_ID`、`LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY`；workspace-free task 不需要 LakeFS。 |
+| `LakeFS config is incomplete; missing ...` | 只配置了部分 LakeFS 变量。 | 三个 LakeFS 变量同时配置；如果当前命令和 task 类型不需要 LakeFS，就三个变量全部省略。 |
 | `<NAME> must be replaced with a real value` | 连接变量仍是 `replace-me`。 | 用真实部署值替换占位值。 |
 | `<path> is not writable: ...` | workspace/log root 不可创建或不可写。 | 修正 `PERAGO_WORKSPACE_ROOT` 或 `PERAGO_LOG_ROOT` 的目录权限。 |
 | `PERAGO_LOG_FILE_MAX_SIZE must be a positive size ...` | 日志大小格式错误。 | 使用 `512KB`、`100MB` 或 `1.5GB`。 |
@@ -101,7 +101,7 @@ pre check 和任务显式抛出的 `TaskTerminalError` 会映射为 `FAILED_WITH
 | `PERAGO_WORKSPACE_GC_INTERVAL must be a positive duration ...` | workspace GC interval 格式错误。 | 使用 `30s`、`5m`、`1h` 这类正数 duration。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER must be a positive duration ...` | shutdown force-kill deadline 格式错误。 | 使用 `30s`、`5m`、`1h` 这类正数 duration，或不配置该变量。 |
 
-`perago check` 和 `perago extract` 不要求 Conductor/LakeFS 连接变量完整，但会拒绝半套 LakeFS 配置和不可写本机目录。
+`perago check` 和 `perago extract` 不要求 Conductor/LakeFS 连接变量完整，但会拒绝半套 LakeFS 配置和不可写本机目录。`perago start` 始终要求 Conductor endpoint；只有 workspace task start 要求完整 LakeFS 配置。
 
 ## TaskDef Registration
 

@@ -80,9 +80,9 @@ def start(
         resolved_execution_mode = execution_mode or config.execution_mode
         if config.conductor is None:
             raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
-        if config.lakefs is None:
-            raise RuntimeConfigError("LakeFS config is required for perago start")
         task = load_module_task(module_target)
+        if task.has_workspace and config.lakefs is None:
+            raise RuntimeConfigError("LakeFS config is required for workspace tasks")
         _warn_ignored_publish_budget(task)
         _warn_task_model_config(task)
         build_taskdef(task)

@@ -9,7 +9,7 @@ Perago 默认 `process` runtime 由一个 Conductor broker process 拉取单个 
 | 配置 | Required | 说明 |
 | --- | --- | --- |
 | `CONDUCTOR_SERVER_URL` | required for `perago start` | Orkes/Conductor API endpoint。 |
-| LakeFS endpoint 和 credentials | required for `perago start` | workspace task 和当前 worker runtime 统一要求完整 LakeFS config。 |
+| LakeFS endpoint 和 credentials | required for workspace-task `perago start` | workspace task 需要完整 LakeFS config；workspace-free task 不需要 LakeFS 连接变量。 |
 | generated TaskDef | required before worker starts | 必须已经注册到 Conductor；`perago start` 只验证存在，不自动注册。 |
 
 如果 Conductor 中没有同名 TaskDef，启动会失败：
@@ -44,7 +44,7 @@ process mode 不会在一个 Python module 内路由多个 task。并发来自 b
 
 显式 `thread` runtime 使用 SDK `TaskRunner` 和 `PeragoThreadWorker`。`-j N` 会传给 SDK worker 的 `thread_count`，`lease_extend_enabled=True`，并且 `register_task_def=False`、`register_schema=False`。在这个模式下，SDK thread pool 负责 poll、LeaseManager 追踪和 result update；Perago adapter 只把 SDK `Task` 转成 `ConductorTaskAttempt`，执行现有 task body/workspace 流程，再把 `RuntimeTaskResult` 转回 SDK `TaskResult`。thread mode 的 Conductor 可见 worker id 当前由 `PERAGO_WORKER_ID_PREFIX + "Broker"` 派生。
 
-thread mode 使用一个 `PeragoThreadWorker`、一个 `LakeFSWorkspaceRuntime` 和 SDK `ThreadPoolExecutor(max_workers=N)`。同一个 runtime 实例的方法会被多个 SDK worker thread 并发调用，因此 `LakeFSWorkspaceRuntime` 只持有共享 client 和 publish budget，不缓存上一轮 attempt 的 repository、branch 或其他 per-attempt 可变状态；每次执行需要的 LakeFS 身份都来自当前 `workspace input` 或 `StagedWorkspace` 这类显式参数。
+thread mode 对 workspace task 使用一个 `PeragoThreadWorker`、一个 `LakeFSWorkspaceRuntime` 和 SDK `ThreadPoolExecutor(max_workers=N)`；workspace-free task 不创建 LakeFS runtime。同一个 runtime 实例的方法会被多个 SDK worker thread 并发调用，因此 `LakeFSWorkspaceRuntime` 只持有共享 client 和 publish budget，不缓存上一轮 attempt 的 repository、branch 或其他 per-attempt 可变状态；每次执行需要的 LakeFS 身份都来自当前 `workspace input` 或 `StagedWorkspace` 这类显式参数。
 
 process broker 由 `PeragoProcessDispatchWorker` 与 `run_conductor_process_broker(...)` 组成。它同样满足 SDK worker contract：`thread_count=N`、`lease_extend_enabled=True`、`register_task_def=False`、`register_schema=False`，并用 broker worker id 作为 Conductor 可见 identity。和 thread worker 不同，它不会在 SDK worker thread 内执行 task body；`execute(...)` 会把 SDK `Task` 转成 `ConductorTaskAttempt`，生成本次 execution id，放入 broker-to-executor assignment queue，等待 executor 返回同一个 `task_id` 和同一个 `execution_id` 的 `RuntimeTaskResult` completion，再映射成 SDK `TaskResult`。SDK `TaskRunner` 仍负责 broker 侧 poll、LeaseManager tracking 和 result update。
 

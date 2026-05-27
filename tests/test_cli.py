@@ -471,16 +471,35 @@ def test_start_cli_requires_runtime_service_config_before_importing_task(monkeyp
     assert "Cannot generate a JsonSchema" not in result.output
 
 
-def test_start_cli_requires_lakefs_config_before_importing_task(monkeypatch, tmp_path) -> None:
+def test_start_cli_requires_lakefs_config_for_workspace_tasks(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text("CONDUCTOR_SERVER_URL=http://conductor.local/api", encoding="utf-8")
     runner = CliRunner()
 
-    result = runner.invoke(app, ["start", "app.workers.bad_schema"])
+    result = runner.invoke(app, ["start", "app.workers.features_build"])
 
     assert result.exit_code == 1
     assert "LakeFS config is required" in result.output
-    assert "Cannot generate a JsonSchema" not in result.output
+
+
+def test_start_cli_allows_workspace_free_task_without_lakefs_config(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("CONDUCTOR_SERVER_URL=http://conductor.local/api", encoding="utf-8")
+
+    class FakeConductor:
+        def taskdef_exists(self, task_name: str) -> bool:
+            return task_name == "metadata.validate"
+
+    started = {}
+
+    monkeypatch.setattr("perago.cli.OrkesConductorRuntimeClient.from_config", lambda config: FakeConductor())
+    monkeypatch.setattr("perago.cli.run_worker_supervisor", lambda **kwargs: started.update(kwargs))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.metadata_validate"])
+
+    assert result.exit_code == 0
+    assert started["module_target"] == "app.workers.metadata_validate"
 
 
 def test_start_cli_wraps_unexpected_taskdef_validation_errors(monkeypatch, tmp_path) -> None:

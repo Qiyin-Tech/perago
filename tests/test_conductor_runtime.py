@@ -1,5 +1,6 @@
 from queue import Empty
 import signal
+from types import SimpleNamespace
 
 import pytest
 from conductor.client.configuration.configuration import Configuration
@@ -224,10 +225,6 @@ def test_thread_worker_configures_sdk_worker_contract() -> None:
         thread_count=4,
         client=object(),
         workspace_root="unused",
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -263,10 +260,6 @@ def test_thread_worker_executes_polled_task_and_maps_result() -> None:
         thread_count=1,
         client=object(),
         workspace_root="unused",
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -293,10 +286,6 @@ def test_thread_worker_passes_failure_reason_limit_to_execution(monkeypatch) -> 
         thread_count=1,
         client=object(),
         workspace_root="unused",
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=37,
     )
 
@@ -817,10 +806,6 @@ def test_thread_runner_signal_handler_stops_runner_and_restores_handlers(monkeyp
         conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
         client=object(),
         workspace_root="unused",
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )
@@ -965,10 +950,6 @@ def test_process_executor_loop_executes_assignment_and_returns_completion() -> N
         assignment_queue=FakeAssignmentQueue(),
         completion_queue=completion_queue,
         load_current_attempt=lambda current_attempt: current_attempt,
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -1013,10 +994,6 @@ def test_process_executor_loop_passes_failure_reason_limit_to_execution(monkeypa
         assignment_queue=FakeAssignmentQueue(),
         completion_queue=FakeCompletionQueue(),
         load_current_attempt=lambda current_attempt: current_attempt,
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=41,
     )
 
@@ -1065,10 +1042,6 @@ def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monk
         assignment_queue=FakeAssignmentQueue(),
         completion_queue=completion_queue,
         load_current_attempt=lambda current_attempt: current_attempt,
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -1110,10 +1083,6 @@ def test_idle_process_executor_loop_exits_after_signal(monkeypatch) -> None:
         assignment_queue=assignment_queue,
         completion_queue=FakeCompletionQueue(),
         load_current_attempt=lambda current_attempt: current_attempt,
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -1147,10 +1116,6 @@ def test_process_executor_loop_ignores_invalid_assignments() -> None:
         assignment_queue=FakeAssignmentQueue(),
         completion_queue=completion_queue,
         load_current_attempt=lambda current_attempt: current_attempt,
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -1178,11 +1143,14 @@ def test_execute_polled_task_uses_workspace_attempt_runner(monkeypatch, tmp_path
         task=task,
         attempt=attempt,
         workspace_root=tmp_path,
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
         load_current_attempt=lambda current_attempt: current_attempt,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
+        workspace_runtime=SimpleNamespace(
+            download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+            stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+            publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+            cleanup_staging=lambda staged: None,
+            complete_noop_workspace=lambda workspace_input, workspace_spec, attempt: workspace_input.ref,
+        ),
         owner_worker_id="featuresBuild0001",
         failure_reason_max_length=321,
     )
@@ -1214,10 +1182,6 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
         conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
         client=object(),
         workspace_root="unused",
-        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
-        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
-        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
-        cleanup_staging=lambda staged: None,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )

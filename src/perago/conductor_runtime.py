@@ -30,6 +30,7 @@ from perago.execution import (
     run_workspace_free_task_attempt,
     run_workspace_task_attempt,
 )
+from perago.errors import RuntimeConfigError
 from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
 
@@ -89,6 +90,14 @@ class ConductorRuntimeClient(Protocol):
     def get_task(self, task_id: str) -> ConductorTaskAttempt: ...
 
 
+class WorkspaceRuntime(Protocol):
+    download_workspace: DownloadWorkspace
+    stage_workspace: StageWorkspace
+    publish_workspace: PublishWorkspace
+    cleanup_staging: CleanupStaging
+    complete_noop_workspace: CompleteNoOpWorkspace
+
+
 class OrkesConductorRuntimeClient:
     def __init__(
         self,
@@ -129,12 +138,8 @@ class PeragoThreadWorker(WorkerInterface):
         thread_count: int,
         client: ConductorRuntimeClient,
         workspace_root: Any,
-        download_workspace: DownloadWorkspace,
-        stage_workspace: StageWorkspace,
-        publish_workspace: PublishWorkspace,
-        cleanup_staging: CleanupStaging,
-        complete_noop_workspace: CompleteNoOpWorkspace | None = None,
         failure_reason_max_length: int,
+        workspace_runtime: WorkspaceRuntime | None = None,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -145,11 +150,7 @@ class PeragoThreadWorker(WorkerInterface):
         self.lease_extend_enabled = True
         self._client = client
         self._workspace_root = workspace_root
-        self._download_workspace = download_workspace
-        self._stage_workspace = stage_workspace
-        self._publish_workspace = publish_workspace
-        self._cleanup_staging = cleanup_staging
-        self._complete_noop_workspace = complete_noop_workspace
+        self._workspace_runtime = workspace_runtime
         self._failure_reason_max_length = failure_reason_max_length
 
     def get_identity(self) -> str:
@@ -162,12 +163,8 @@ class PeragoThreadWorker(WorkerInterface):
             task=self.task,
             attempt=attempt,
             workspace_root=self._workspace_root,
-            download_workspace=self._download_workspace,
             load_current_attempt=lambda current_attempt: self._client.get_task(current_attempt.task_id),
-            stage_workspace=self._stage_workspace,
-            publish_workspace=self._publish_workspace,
-            cleanup_staging=self._cleanup_staging,
-            complete_noop_workspace=self._complete_noop_workspace,
+            workspace_runtime=self._workspace_runtime,
             owner_worker_id=self.worker_id,
             execution_id=execution_id,
             failure_reason_max_length=self._failure_reason_max_length,
@@ -298,12 +295,8 @@ def run_conductor_thread_runner(
     conductor_config: ConductorConfig,
     client: ConductorRuntimeClient,
     workspace_root: Any,
-    download_workspace: DownloadWorkspace,
-    stage_workspace: StageWorkspace,
-    publish_workspace: PublishWorkspace,
-    cleanup_staging: CleanupStaging,
-    complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     failure_reason_max_length: int,
+    workspace_runtime: WorkspaceRuntime | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoThreadWorker(
@@ -312,12 +305,8 @@ def run_conductor_thread_runner(
         thread_count=thread_count,
         client=client,
         workspace_root=workspace_root,
-        download_workspace=download_workspace,
-        stage_workspace=stage_workspace,
-        publish_workspace=publish_workspace,
-        cleanup_staging=cleanup_staging,
-        complete_noop_workspace=complete_noop_workspace,
         failure_reason_max_length=failure_reason_max_length,
+        workspace_runtime=workspace_runtime,
     )
     runner = runner_cls(
         worker,
@@ -392,12 +381,8 @@ def run_process_executor_loop(
     assignment_queue: Any,
     completion_queue: Any,
     load_current_attempt: LoadCurrentAttempt,
-    download_workspace: DownloadWorkspace,
-    stage_workspace: StageWorkspace,
-    publish_workspace: PublishWorkspace,
-    cleanup_staging: CleanupStaging,
-    complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     failure_reason_max_length: int,
+    workspace_runtime: WorkspaceRuntime | None = None,
 ) -> None:
     logger.bind(worker_id=worker_id).info("process executor started")
     shutdown_requested = False
@@ -432,12 +417,8 @@ def run_process_executor_loop(
                 task=task,
                 attempt=attempt,
                 workspace_root=workspace_root,
-                download_workspace=download_workspace,
                 load_current_attempt=load_current_attempt,
-                stage_workspace=stage_workspace,
-                publish_workspace=publish_workspace,
-                cleanup_staging=cleanup_staging,
-                complete_noop_workspace=complete_noop_workspace,
+                workspace_runtime=workspace_runtime,
                 owner_worker_id=worker_id,
                 execution_id=assignment.execution_id,
                 failure_reason_max_length=failure_reason_max_length,
@@ -516,28 +497,25 @@ def execute_polled_task(
     task: TaskDefinition,
     attempt: ConductorTaskAttempt,
     workspace_root: Any,
-    download_workspace: DownloadWorkspace,
     load_current_attempt: LoadCurrentAttempt,
-    stage_workspace: StageWorkspace,
-    publish_workspace: PublishWorkspace,
-    cleanup_staging: CleanupStaging,
-    complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
     failure_reason_max_length: int,
+    workspace_runtime: WorkspaceRuntime | None = None,
 ) -> RuntimeTaskResult:
     if task.has_workspace:
+        workspace_runtime = _require_workspace_runtime(workspace_runtime)
         return run_workspace_task_attempt(
             task,
             attempt.input_data,
             attempt,
             workspace_root,
-            download_workspace=download_workspace,
+            download_workspace=workspace_runtime.download_workspace,
             load_current_attempt=load_current_attempt,
-            stage_workspace=stage_workspace,
-            publish_workspace=publish_workspace,
-            cleanup_staging=cleanup_staging,
-            complete_noop_workspace=complete_noop_workspace,
+            stage_workspace=workspace_runtime.stage_workspace,
+            publish_workspace=workspace_runtime.publish_workspace,
+            cleanup_staging=workspace_runtime.cleanup_staging,
+            complete_noop_workspace=workspace_runtime.complete_noop_workspace,
             owner_worker_id=owner_worker_id,
             execution_id=execution_id,
             failure_reason_max_length=failure_reason_max_length,
@@ -547,6 +525,12 @@ def execute_polled_task(
         attempt.input_data,
         failure_reason_max_length=failure_reason_max_length,
     )
+
+
+def _require_workspace_runtime(workspace_runtime: WorkspaceRuntime | None) -> WorkspaceRuntime:
+    if workspace_runtime is None:
+        raise RuntimeConfigError("workspace runtime is required for workspace tasks")
+    return workspace_runtime
 
 
 def _required_task_attr(task: object, name: str) -> Any:
