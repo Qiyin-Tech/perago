@@ -19,7 +19,7 @@ from perago import (
     require_glob,
     task,
 )
-from perago.guards import _WorkspaceGuardrail
+from perago.guards import DEFAULT_REQUIRE_GLOB_MIN_COUNT, _WorkspaceGuardrail
 
 
 class Params(BaseModel):
@@ -259,7 +259,7 @@ def test_guardrail_count_bound_validation() -> None:
 
     guardrail = _WorkspaceGuardrail(kind="require_glob", path="raw/*.parquet", min_count=None)
 
-    assert guardrail.min_count == 1
+    assert guardrail.min_count == DEFAULT_REQUIRE_GLOB_MIN_COUNT
 
 
 def test_workspace_prefix_validation() -> None:

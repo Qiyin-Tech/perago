@@ -11,6 +11,7 @@ from perago.errors import GuardrailViolation, TaskDefinitionError
 
 
 GuardrailKind = Literal["require_file", "require_dir", "require_glob", "forbid_glob"]
+DEFAULT_REQUIRE_GLOB_MIN_COUNT = 1
 _WINDOWS_DRIVE_PREFIX_RE = re.compile(r"^[A-Za-z]:")
 
 
@@ -35,7 +36,7 @@ class _WorkspaceGuardrail(BaseModel):
             return self
 
         if self.kind == "require_glob" and self.min_count is None:
-            object.__setattr__(self, "min_count", 1)
+            object.__setattr__(self, "min_count", DEFAULT_REQUIRE_GLOB_MIN_COUNT)
 
         if (
             self.min_count is not None
@@ -122,7 +123,7 @@ def require_dir(path: str | PathLike[str]) -> _WorkspaceGuardrail:
 def require_glob(
     pattern: str | PathLike[str],
     *,
-    min_count: int = 1,
+    min_count: int = DEFAULT_REQUIRE_GLOB_MIN_COUNT,
     max_count: int | None = None,
 ) -> _WorkspaceGuardrail:
     """Require a bounded number of workspace files matching a glob pattern.

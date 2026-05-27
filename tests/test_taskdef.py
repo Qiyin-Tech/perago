@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from perago import (
     PublishBudget,
+    RetryPolicy,
     TaskControls,
     TimeoutPolicy,
     WorkspaceSpec,
@@ -14,7 +15,13 @@ from perago import (
     task,
     write_taskdef,
 )
-from perago.taskdef import schema_for_model
+from perago.models import (
+    DEFAULT_RETRY_COUNT,
+    DEFAULT_RETRY_DELAY_SECONDS,
+    DEFAULT_TIMEOUT_RESPONSE_SECONDS,
+    MAX_RETRY_COUNT,
+)
+from perago.taskdef import TASKDEF_SCHEMA_TYPE, TASKDEF_SCHEMA_VERSION, schema_for_model
 
 
 class NestedSettings(BaseModel):
@@ -114,6 +121,10 @@ def test_builds_workspace_taskdef() -> None:
     assert taskdef["concurrentExecLimit"] == 2
     assert taskdef["inputKeys"] == ["workspace", "params"]
     assert taskdef["outputKeys"] == ["workspace", "result"]
+    assert taskdef["inputSchema"]["version"] == TASKDEF_SCHEMA_VERSION
+    assert taskdef["inputSchema"]["type"] == TASKDEF_SCHEMA_TYPE
+    assert taskdef["outputSchema"]["version"] == TASKDEF_SCHEMA_VERSION
+    assert taskdef["outputSchema"]["type"] == TASKDEF_SCHEMA_TYPE
     assert "inputTemplate" not in taskdef
     assert taskdef["inputSchema"]["data"]["additionalProperties"] is False
     workspace_input = taskdef["inputSchema"]["data"]["properties"]["workspace"]
@@ -124,6 +135,18 @@ def test_builds_workspace_taskdef() -> None:
     assert "guardrail" not in serialized
     assert "require_glob" not in serialized
     assert "forbid_glob" not in serialized
+
+
+def test_task_control_defaults_and_limits_are_named_contract_values() -> None:
+    retry = RetryPolicy()
+    timeout = TimeoutPolicy()
+
+    assert retry.count == DEFAULT_RETRY_COUNT
+    assert retry.delay_seconds == DEFAULT_RETRY_DELAY_SECONDS
+    assert timeout.response_seconds == DEFAULT_TIMEOUT_RESPONSE_SECONDS
+
+    with pytest.raises(ValueError):
+        RetryPolicy(count=MAX_RETRY_COUNT + 1)
 
 
 def test_taskdef_derives_response_timeout_from_publish_budget() -> None:

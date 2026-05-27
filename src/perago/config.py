@@ -18,8 +18,13 @@ LOG_SIZE_UNITS = {
     "MB": 1024 * 1024,
     "GB": 1024 * 1024 * 1024,
 }
-DEFAULT_FAILURE_REASON_MAX_LENGTH = 500
 ExecutionMode = Literal["process", "thread"]
+DEFAULT_LOG_FILE_MAX_SIZE = 100 * LOG_SIZE_UNITS["MB"]
+DEFAULT_LOG_RETENTION = timedelta(days=30)
+DEFAULT_EXECUTION_MODE: ExecutionMode = "process"
+DEFAULT_WORKSPACE_GC_TTL = timedelta(hours=24)
+DEFAULT_WORKSPACE_GC_INTERVAL = timedelta(hours=1)
+DEFAULT_FAILURE_REASON_MAX_LENGTH = 500
 
 
 class ConductorConfig(BaseModel):
@@ -196,9 +201,9 @@ class RuntimeConfig(BaseModel):
     log_file_max_size: int
     log_retention: timedelta
     worker_id_prefix: str
-    execution_mode: ExecutionMode = "process"
-    workspace_gc_ttl: timedelta = timedelta(hours=24)
-    workspace_gc_interval: timedelta = timedelta(hours=1)
+    execution_mode: ExecutionMode = DEFAULT_EXECUTION_MODE
+    workspace_gc_ttl: timedelta = DEFAULT_WORKSPACE_GC_TTL
+    workspace_gc_interval: timedelta = DEFAULT_WORKSPACE_GC_INTERVAL
     shutdown_force_kill_after: timedelta | None = None
     failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH
     conductor: ConductorConfig | None = None
@@ -284,12 +289,12 @@ def load_runtime_config(
         execution_mode=parse_execution_mode(env.get("PERAGO_EXECUTION_MODE")),
         workspace_gc_ttl=parse_duration(
             env.get("PERAGO_WORKSPACE_GC_TTL"),
-            default=timedelta(hours=24),
+            default=DEFAULT_WORKSPACE_GC_TTL,
             name="PERAGO_WORKSPACE_GC_TTL",
         ),
         workspace_gc_interval=parse_duration(
             env.get("PERAGO_WORKSPACE_GC_INTERVAL"),
-            default=timedelta(hours=1),
+            default=DEFAULT_WORKSPACE_GC_INTERVAL,
             name="PERAGO_WORKSPACE_GC_INTERVAL",
         ),
         shutdown_force_kill_after=parse_optional_duration(
@@ -342,7 +347,7 @@ def check_writable_root(path: Path) -> None:
 
 def parse_log_file_max_size(value: str | None) -> int:
     if value is None or value.strip() == "":
-        return 100 * 1024 * 1024
+        return DEFAULT_LOG_FILE_MAX_SIZE
 
     match = re.fullmatch(
         r"((?:0|[1-9][0-9]*)(?:\.[0-9]+)?)\s*(KB|MB|GB)",
@@ -363,7 +368,7 @@ def parse_log_file_max_size(value: str | None) -> int:
 
 def parse_log_retention(value: str | None) -> timedelta:
     if value is None or value.strip() == "":
-        return timedelta(days=30)
+        return DEFAULT_LOG_RETENTION
     match = re.fullmatch(r"([1-9][0-9]*)d", value.strip(), flags=re.IGNORECASE)
     if not match:
         raise RuntimeConfigError("PERAGO_LOG_RETENTION must be a positive day count such as '7d' or '30d'")
@@ -372,7 +377,7 @@ def parse_log_retention(value: str | None) -> timedelta:
 
 def parse_execution_mode(value: str | None) -> ExecutionMode:
     if value is None or value.strip() == "":
-        return "process"
+        return DEFAULT_EXECUTION_MODE
     mode = value.strip().lower()
     if mode not in {"process", "thread"}:
         raise RuntimeConfigError("PERAGO_EXECUTION_MODE must be either 'process' or 'thread'")

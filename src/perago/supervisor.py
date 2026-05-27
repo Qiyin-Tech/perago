@@ -33,6 +33,10 @@ from perago.workspace import garbage_collect_workspace_owner, sweep_abandoned_at
 RESTART_BACKOFF_SECONDS = (1, 2, 4, 8, 16)
 MAX_RESTART_BACKOFF_SECONDS = 30
 SUPERVISOR_WORKSPACE_LOCK_FILE = ".perago-supervisor.lock"
+SUPERVISOR_PROCESS_POLL_INTERVAL_SECONDS = 0.5
+PROCESS_JOIN_TIMEOUT_SECONDS = 5
+WORKSPACE_GC_THREAD_JOIN_TIMEOUT_SECONDS = 5
+MIN_DURATION_SECONDS = 0.001
 
 
 @dataclass(frozen=True)
@@ -308,7 +312,7 @@ def _run_worker_supervisor_locked(
                     attempt_fence_response_queue=attempt_fence_response_queues[spec.worker_id],
                 )
                 executors[slot] = (spec, replacement, restart_count + 1)
-            stop.wait(0.5)
+            stop.wait(SUPERVISOR_PROCESS_POLL_INTERVAL_SECONDS)
     finally:
         stop.set()
         gc_loop.stop()
@@ -439,7 +443,7 @@ def _stop_worker_processes(
             )
             process.kill()
     for process in processes:
-        process.join(timeout=5)
+        process.join(timeout=PROCESS_JOIN_TIMEOUT_SECONDS)
 
 
 def _targeted_workspace_gc(*, config: RuntimeConfig, worker_id: str, process: multiprocessing.Process) -> None:
@@ -492,7 +496,7 @@ class WorkspaceGCLoop:
 
     def stop(self) -> None:
         self._stop.set()
-        self._thread.join(timeout=5)
+        self._thread.join(timeout=WORKSPACE_GC_THREAD_JOIN_TIMEOUT_SECONDS)
 
     def run_once(self) -> list[object]:
         return garbage_collect_attempt_workspaces(
@@ -535,7 +539,7 @@ def _active_process_workspace_owners(
 
 
 def _duration_seconds(value: timedelta) -> float:
-    return max(value.total_seconds(), 0.001)
+    return max(value.total_seconds(), MIN_DURATION_SECONDS)
 
 
 def _start_broker_process(

@@ -7,6 +7,8 @@ import pytest
 
 from perago import ConductorConfig, LakeFSConfig, RuntimeConfig, RuntimeConfigError, restart_backoff_seconds, worker_child_specs
 from perago.supervisor import (
+    MIN_DURATION_SECONDS,
+    PROCESS_JOIN_TIMEOUT_SECONDS,
     SUPERVISOR_WORKSPACE_LOCK_FILE,
     SupervisorWorkspaceLock,
     WorkspaceGCLoop,
@@ -918,7 +920,7 @@ def test_stop_worker_processes_kills_only_after_configured_deadline(tmp_path) ->
     assert process.events == [
         ("join", 3.0),
         ("kill", None),
-        ("join", 5),
+        ("join", PROCESS_JOIN_TIMEOUT_SECONDS),
     ]
 
 
@@ -1035,7 +1037,7 @@ def test_workspace_gc_loop_run_logs_removed_workspaces_and_errors(monkeypatch, t
             return self.waits >= 2
 
         def wait(self, interval: float) -> bool:
-            assert interval == 0.001
+            assert interval == MIN_DURATION_SECONDS
             self.waits += 1
             return self.waits >= 2
 
@@ -1054,4 +1056,4 @@ def test_workspace_gc_loop_run_logs_removed_workspaces_and_errors(monkeypatch, t
 
 
 def test_duration_seconds_never_returns_zero() -> None:
-    assert _duration_seconds(timedelta(seconds=-1)) == 0.001
+    assert _duration_seconds(timedelta(seconds=-1)) == MIN_DURATION_SECONDS

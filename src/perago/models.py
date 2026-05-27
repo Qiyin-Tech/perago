@@ -9,6 +9,19 @@ from perago.errors import TaskDefinitionError
 from perago.guards import _WorkspaceGuardrail
 
 
+DEFAULT_RETRY_COUNT = 3
+MAX_RETRY_COUNT = 10
+DEFAULT_RETRY_LOGIC: Literal["FIXED", "EXPONENTIAL_BACKOFF", "LINEAR_BACKOFF"] = "FIXED"
+DEFAULT_RETRY_DELAY_SECONDS = 60
+DEFAULT_RETRY_MAX_DELAY_SECONDS = 0
+DEFAULT_RETRY_JITTER_MS = 0
+DEFAULT_TIMEOUT_POLICY: Literal["RETRY", "TIME_OUT_WF", "ALERT_ONLY"] = "TIME_OUT_WF"
+DEFAULT_TIMEOUT_SECONDS = 0
+DEFAULT_TIMEOUT_RESPONSE_SECONDS = 600
+DEFAULT_TIMEOUT_POLL_SECONDS = 0
+DEFAULT_TIMEOUT_TOTAL_SECONDS = 0
+
+
 class RetryPolicy(BaseModel):
     """Retry controls copied into the generated Conductor TaskDef.
 
@@ -43,11 +56,11 @@ class RetryPolicy(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    count: int = Field(default=3, ge=0, le=10)
-    logic: Literal["FIXED", "EXPONENTIAL_BACKOFF", "LINEAR_BACKOFF"] = "FIXED"
-    delay_seconds: int = Field(default=60, ge=0)
-    max_delay_seconds: int = Field(default=0, ge=0)
-    jitter_ms: int = Field(default=0, ge=0)
+    count: int = Field(default=DEFAULT_RETRY_COUNT, ge=0, le=MAX_RETRY_COUNT)
+    logic: Literal["FIXED", "EXPONENTIAL_BACKOFF", "LINEAR_BACKOFF"] = DEFAULT_RETRY_LOGIC
+    delay_seconds: int = Field(default=DEFAULT_RETRY_DELAY_SECONDS, ge=0)
+    max_delay_seconds: int = Field(default=DEFAULT_RETRY_MAX_DELAY_SECONDS, ge=0)
+    jitter_ms: int = Field(default=DEFAULT_RETRY_JITTER_MS, ge=0)
 
 
 class TimeoutPolicy(BaseModel):
@@ -84,11 +97,11 @@ class TimeoutPolicy(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    policy: Literal["RETRY", "TIME_OUT_WF", "ALERT_ONLY"] = "TIME_OUT_WF"
-    seconds: int = Field(default=0, ge=0)
-    response_seconds: int = Field(default=600, ge=0)
-    poll_seconds: int = Field(default=0, ge=0)
-    total_seconds: int = Field(default=0, ge=0)
+    policy: Literal["RETRY", "TIME_OUT_WF", "ALERT_ONLY"] = DEFAULT_TIMEOUT_POLICY
+    seconds: int = Field(default=DEFAULT_TIMEOUT_SECONDS, ge=0)
+    response_seconds: int = Field(default=DEFAULT_TIMEOUT_RESPONSE_SECONDS, ge=0)
+    poll_seconds: int = Field(default=DEFAULT_TIMEOUT_POLL_SECONDS, ge=0)
+    total_seconds: int = Field(default=DEFAULT_TIMEOUT_TOTAL_SECONDS, ge=0)
 
 
 class ExecutionLimits(BaseModel):

@@ -34,6 +34,9 @@ from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
 
 
+PROCESS_QUEUE_POLL_INTERVAL_SECONDS = 0.1
+
+
 @dataclass(frozen=True)
 class ConductorTaskAttempt:
     workflow_instance_id: str
@@ -222,7 +225,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
             self._drain_attempt_fence_requests()
             try:
                 if deadline is None:
-                    completion = self._completion_queue.get(timeout=0.1)
+                    completion = self._completion_queue.get(timeout=PROCESS_QUEUE_POLL_INTERVAL_SECONDS)
                 else:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -230,7 +233,9 @@ class PeragoProcessDispatchWorker(WorkerInterface):
                             f"executor did not return result for task {attempt.task_id}",
                             max_length=self._failure_reason_max_length,
                         )
-                    completion = self._completion_queue.get(timeout=min(0.1, remaining))
+                    completion = self._completion_queue.get(
+                        timeout=min(PROCESS_QUEUE_POLL_INTERVAL_SECONDS, remaining)
+                    )
             except Empty:
                 continue
             break
@@ -408,7 +413,7 @@ def run_process_executor_loop(
         while not shutdown_requested:
             try:
                 try:
-                    assignment = assignment_queue.get(timeout=0.1)
+                    assignment = assignment_queue.get(timeout=PROCESS_QUEUE_POLL_INTERVAL_SECONDS)
                 except TypeError:
                     assignment = assignment_queue.get()
             except Empty:

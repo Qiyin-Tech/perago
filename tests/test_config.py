@@ -5,7 +5,12 @@ from pydantic import BaseModel, ValidationError
 
 from perago.config import (
     ConductorConfig,
+    DEFAULT_EXECUTION_MODE,
     DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    DEFAULT_LOG_FILE_MAX_SIZE,
+    DEFAULT_LOG_RETENTION,
+    DEFAULT_WORKSPACE_GC_TTL,
+    DEFAULT_WORKSPACE_GC_INTERVAL,
     LakeFSConfig,
     RuntimeConfig,
     child_environment,
@@ -157,6 +162,9 @@ def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
     )
 
     assert isinstance(config, BaseModel)
+    assert config.execution_mode == DEFAULT_EXECUTION_MODE
+    assert config.workspace_gc_ttl == DEFAULT_WORKSPACE_GC_TTL
+    assert config.workspace_gc_interval == DEFAULT_WORKSPACE_GC_INTERVAL
     assert config.failure_reason_max_length == DEFAULT_FAILURE_REASON_MAX_LENGTH
     with pytest.raises(ValidationError):
         config.worker_id_prefix = "other"
@@ -172,7 +180,7 @@ def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
 
 
 def test_parse_log_file_max_size() -> None:
-    assert parse_log_file_max_size(None) == 100 * 1024 * 1024
+    assert parse_log_file_max_size(None) == DEFAULT_LOG_FILE_MAX_SIZE
     assert parse_log_file_max_size("512KB") == 512 * 1024
     assert parse_log_file_max_size("1.5 mb") == 1_572_864
 
@@ -183,7 +191,7 @@ def test_parse_log_file_max_size() -> None:
 
 
 def test_parse_log_retention() -> None:
-    assert parse_log_retention(None) == timedelta(days=30)
+    assert parse_log_retention(None) == DEFAULT_LOG_RETENTION
     assert parse_log_retention("7D") == timedelta(days=7)
 
     with pytest.raises(RuntimeConfigError, match="PERAGO_LOG_RETENTION"):
@@ -191,8 +199,8 @@ def test_parse_log_retention() -> None:
 
 
 def test_parse_execution_mode_defaults_and_normalizes() -> None:
-    assert parse_execution_mode(None) == "process"
-    assert parse_execution_mode("") == "process"
+    assert parse_execution_mode(None) == DEFAULT_EXECUTION_MODE
+    assert parse_execution_mode("") == DEFAULT_EXECUTION_MODE
     assert parse_execution_mode(" thread ") == "thread"
     assert parse_execution_mode("PROCESS") == "process"
 
@@ -201,14 +209,21 @@ def test_parse_execution_mode_defaults_and_normalizes() -> None:
 
 
 def test_parse_duration_defaults_units_and_errors() -> None:
-    assert parse_duration(None, default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(hours=24)
-    assert parse_duration("30s", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(seconds=30)
-    assert parse_duration("5M", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(minutes=5)
-    assert parse_duration("1h", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(hours=1)
-    assert parse_duration("2d", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL") == timedelta(days=2)
+    assert (
+        parse_duration(None, default=DEFAULT_WORKSPACE_GC_TTL, name="PERAGO_WORKSPACE_GC_TTL")
+        == DEFAULT_WORKSPACE_GC_TTL
+    )
+    assert parse_duration("30s", default=DEFAULT_WORKSPACE_GC_TTL, name="PERAGO_WORKSPACE_GC_TTL") == timedelta(
+        seconds=30
+    )
+    assert parse_duration("5M", default=DEFAULT_WORKSPACE_GC_TTL, name="PERAGO_WORKSPACE_GC_TTL") == timedelta(
+        minutes=5
+    )
+    assert parse_duration("1h", default=DEFAULT_WORKSPACE_GC_TTL, name="PERAGO_WORKSPACE_GC_TTL") == timedelta(hours=1)
+    assert parse_duration("2d", default=DEFAULT_WORKSPACE_GC_TTL, name="PERAGO_WORKSPACE_GC_TTL") == timedelta(days=2)
 
     with pytest.raises(RuntimeConfigError, match="PERAGO_WORKSPACE_GC_TTL"):
-        parse_duration("0s", default=timedelta(hours=24), name="PERAGO_WORKSPACE_GC_TTL")
+        parse_duration("0s", default=DEFAULT_WORKSPACE_GC_TTL, name="PERAGO_WORKSPACE_GC_TTL")
 
 
 def test_parse_optional_duration_defaults_to_none() -> None:

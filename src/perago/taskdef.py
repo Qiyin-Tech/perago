@@ -11,6 +11,9 @@ from perago.models import WorkspaceInput, WorkspaceOutput
 from perago.task import TaskDefinition
 
 
+TASKDEF_SCHEMA_VERSION = 1
+TASKDEF_SCHEMA_TYPE = "JSON"
+
 CONTROL_FIELD_MAP = {
     "retryCount": ("retry", "count"),
     "retryLogic": ("retry", "logic"),
@@ -94,14 +97,14 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
         "outputKeys": output_required,
         "inputSchema": {
             "name": f"{task.name}.input",
-            "version": 1,
-            "type": "JSON",
+            "version": TASKDEF_SCHEMA_VERSION,
+            "type": TASKDEF_SCHEMA_TYPE,
             "data": _object_schema(input_properties, input_required),
         },
         "outputSchema": {
             "name": f"{task.name}.output",
-            "version": 1,
-            "type": "JSON",
+            "version": TASKDEF_SCHEMA_VERSION,
+            "type": TASKDEF_SCHEMA_TYPE,
             "data": _object_schema(output_properties, output_required),
         },
     }
