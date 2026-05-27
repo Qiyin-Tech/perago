@@ -1,4 +1,5 @@
 from queue import Empty
+import signal
 
 import pytest
 from conductor.client.configuration.configuration import Configuration
@@ -177,6 +178,13 @@ def test_orkes_conductor_runtime_client_wraps_metadata_and_task_clients() -> Non
     attempt = client.get_task("task-9b4c")
     assert attempt.task_id == "task-9b4c"
     assert attempt.input_data == {"params": {"value": 1}}
+
+
+def test_orkes_conductor_runtime_client_from_config_builds_sdk_clients() -> None:
+    client = OrkesConductorRuntimeClient.from_config(ConductorConfig(server_url="http://conductor.local/api"))
+
+    assert client._task_client is not None
+    assert client._metadata_client is not None
 
 
 def test_runtime_result_to_sdk_task_result_maps_completed_and_failures() -> None:
@@ -487,6 +495,55 @@ def test_process_dispatch_worker_times_out_waiting_for_completion() -> None:
     assert result.reason_for_incompletion == "executor did not return result for task task-9b4c"
 
 
+def test_process_dispatch_worker_retries_empty_completion_queue_before_success() -> None:
+    class FakeAssignmentQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeCompletionQueue:
+        def __init__(self, assignment_queue) -> None:
+            self.assignment_queue = assignment_queue
+            self.calls = 0
+
+        def get(self, timeout=None):
+            assert timeout is not None
+            self.calls += 1
+            if self.calls == 1:
+                raise Empty
+            return ProcessTaskCompletion(
+                task_id="task-9b4c",
+                execution_id=self.assignment_queue.item.execution_id,
+                result=completed_result({"result": {"valid": True, "reason": None}}),
+            )
+
+    assignment_queue = FakeAssignmentQueue()
+    completion_queue = FakeCompletionQueue(assignment_queue)
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=assignment_queue,
+        completion_queue=completion_queue,
+        completion_timeout_seconds=1,
+    )
+
+    result = worker.execute(
+        Task(
+            workflow_instance_id="wf-7f3d",
+            task_id="task-9b4c",
+            retry_count=2,
+            task_def_name="metadata.validate",
+            reference_task_name="validate_metadata",
+            seq=3,
+            status="IN_PROGRESS",
+            input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+        )
+    )
+
+    assert completion_queue.calls == 2
+    assert result.status == "COMPLETED"
+
+
 def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting() -> None:
     fresh_attempt = _attempt()
     assignment_queue = None
@@ -609,6 +666,118 @@ def test_process_dispatch_worker_reports_attempt_fence_reload_errors() -> None:
     worker._handle_attempt_fence_request(ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c"))
 
     assert response_queue.items == [ProcessAttemptFenceResponse(task_id="task-9b4c", error="conductor unavailable")]
+
+
+def test_process_dispatch_worker_rejects_invalid_attempt_fence_request() -> None:
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=object(),
+        completion_queue=object(),
+    )
+
+    worker._handle_attempt_fence_request(object())
+
+
+def test_process_dispatch_worker_rejects_attempt_fence_request_without_response_queue() -> None:
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=object(),
+        completion_queue=object(),
+        attempt_fence_response_queues={},
+    )
+
+    worker._handle_attempt_fence_request(ProcessAttemptFenceRequest(worker_id="missing", task_id="task-9b4c"))
+
+
+def test_thread_runner_signal_handler_stops_runner_and_restores_handlers(monkeypatch) -> None:
+    handlers = {}
+    restored = []
+
+    class FakeRunner:
+        def __init__(self, worker, *, configuration) -> None:
+            self.worker = worker
+            self.configuration = configuration
+            self.stop_calls = 0
+
+        def run(self) -> None:
+            handlers[signal.SIGINT](signal.SIGINT, None)
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+    def fake_signal(signum, handler):
+        previous = f"previous-{signum}"
+        if callable(handler):
+            handlers[signum] = handler
+        else:
+            restored.append((signum, handler))
+        return previous
+
+    monkeypatch.setattr("perago.conductor_runtime.signal.signal", fake_signal)
+
+    run_conductor_thread_runner(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
+        client=object(),
+        workspace_root="unused",
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+        runner_cls=FakeRunner,
+    )
+
+    assert restored == [
+        (signal.SIGINT, f"previous-{signal.SIGINT}"),
+        (signal.SIGTERM, f"previous-{signal.SIGTERM}"),
+    ]
+
+
+def test_process_broker_signal_handler_stops_runner_and_restores_handlers(monkeypatch) -> None:
+    handlers = {}
+    restored = []
+
+    class FakeRunner:
+        def __init__(self, worker, *, configuration) -> None:
+            self.worker = worker
+            self.configuration = configuration
+
+        def run(self) -> None:
+            handlers[signal.SIGTERM](signal.SIGTERM, None)
+
+        def stop(self) -> None:
+            pass
+
+    def fake_signal(signum, handler):
+        previous = f"previous-{signum}"
+        if callable(handler):
+            handlers[signum] = handler
+        else:
+            restored.append((signum, handler))
+        return previous
+
+    monkeypatch.setattr("perago.conductor_runtime.signal.signal", fake_signal)
+
+    run_conductor_process_broker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        process_count=1,
+        conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
+        assignment_queue=object(),
+        completion_queue=object(),
+        runner_cls=FakeRunner,
+    )
+
+    assert restored == [
+        (signal.SIGINT, f"previous-{signal.SIGINT}"),
+        (signal.SIGTERM, f"previous-{signal.SIGTERM}"),
+    ]
 
 
 def test_load_current_attempt_via_broker_round_trips_request_and_response() -> None:

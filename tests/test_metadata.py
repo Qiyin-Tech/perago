@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import pytest
+
 from perago import staging_branch_name
 
 
@@ -51,3 +53,15 @@ def test_staging_branch_name_uses_lakefs_branch_id_safe_characters() -> None:
     )
     assert not branch.startswith("-")
     assert all(char.isalnum() or char in {"_", "-"} for char in branch)
+
+
+def test_staging_branch_name_reports_missing_required_identity() -> None:
+    with pytest.raises(AttributeError, match="workflow_instance_id"):
+        staging_branch_name(object())
+
+
+def test_staging_branch_name_uses_unknown_for_blank_safe_segments() -> None:
+    branch = staging_branch_name(Attempt(task_id="///", execution_id="___"))
+
+    assert "-task-id-unknown-" in branch
+    assert branch.endswith("-exec-unknown")

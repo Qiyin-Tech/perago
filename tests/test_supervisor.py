@@ -8,15 +8,22 @@ import pytest
 from perago import ConductorConfig, LakeFSConfig, RuntimeConfig, RuntimeConfigError, restart_backoff_seconds, worker_child_specs
 from perago.supervisor import (
     SUPERVISOR_WORKSPACE_LOCK_FILE,
+    SupervisorWorkspaceLock,
     WorkspaceGCLoop,
     _active_process_workspace_owners,
     _broker_environment,
     _broker_process_main,
+    _duration_seconds,
+    _pid_is_alive,
     _process_executor_main,
+    _read_supervisor_workspace_lock,
     _start_broker_process,
     _start_process_executor,
     _stop_worker_processes,
+    _targeted_workspace_gc,
     _thread_runner_main,
+    _unlink_supervisor_workspace_lock_if_same,
+    acquire_supervisor_workspace_lock,
     run_worker_supervisor,
 )
 
@@ -233,6 +240,106 @@ def test_run_worker_supervisor_replaces_stale_workspace_lock(monkeypatch, tmp_pa
 
     assert started["config"] is config
     assert not lock_path.exists()
+
+
+def test_acquire_supervisor_workspace_lock_recovers_when_lock_disappears_before_stat(monkeypatch, tmp_path) -> None:
+    real_open = os.open
+    real_stat = type(tmp_path).stat
+    lock_path = tmp_path / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text(json.dumps({"supervisor_pid": os.getpid()}), encoding="utf-8")
+    open_calls = {"count": 0}
+
+    def fake_open(path, flags, mode=0o777, *, dir_fd=None):
+        del flags, mode, dir_fd
+        if Path(path) == lock_path and open_calls["count"] == 0:
+            open_calls["count"] += 1
+            raise FileExistsError
+        return real_open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+
+    def fake_stat(self, *args, **kwargs):
+        if self == lock_path and open_calls["count"] == 1:
+            open_calls["count"] += 1
+            lock_path.unlink()
+            raise FileNotFoundError
+        return real_stat(self, *args, **kwargs)
+
+    from pathlib import Path
+
+    monkeypatch.setattr("perago.supervisor.os.open", fake_open)
+    monkeypatch.setattr(type(tmp_path), "stat", fake_stat)
+
+    lock = acquire_supervisor_workspace_lock(tmp_path)
+    lock.release()
+
+    assert open_calls["count"] == 2
+
+
+def test_acquire_supervisor_workspace_lock_recovers_when_lock_disappears_before_read(monkeypatch, tmp_path) -> None:
+    real_open = os.open
+    lock_path = tmp_path / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text(json.dumps({"supervisor_pid": os.getpid()}), encoding="utf-8")
+    open_calls = {"count": 0}
+    read_calls = {"count": 0}
+
+    def fake_open(path, flags, mode=0o777, *, dir_fd=None):
+        del flags, mode, dir_fd
+        if Path(path) == lock_path and open_calls["count"] == 0:
+            open_calls["count"] += 1
+            raise FileExistsError
+        return real_open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+
+    def fake_read(path):
+        if path == lock_path and read_calls["count"] == 0:
+            read_calls["count"] += 1
+            lock_path.unlink()
+            raise FileNotFoundError
+        return {"supervisor_pid": os.getpid()}
+
+    from pathlib import Path
+
+    monkeypatch.setattr("perago.supervisor.os.open", fake_open)
+    monkeypatch.setattr("perago.supervisor._read_supervisor_workspace_lock", fake_read)
+
+    lock = acquire_supervisor_workspace_lock(tmp_path)
+    lock.release()
+
+    assert open_calls["count"] == 1
+    assert read_calls["count"] == 1
+
+
+def test_supervisor_workspace_lock_release_ignores_unreadable_lock(tmp_path) -> None:
+    lock_path = tmp_path / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text("{bad-json", encoding="utf-8")
+    lock = SupervisorWorkspaceLock(path=lock_path, supervisor_pid=os.getpid())
+
+    lock.release()
+
+    assert lock_path.exists()
+
+
+def test_supervisor_workspace_lock_release_ignores_concurrent_unlink(monkeypatch, tmp_path) -> None:
+    lock_path = tmp_path / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text(json.dumps({"supervisor_pid": os.getpid()}), encoding="utf-8")
+    lock = SupervisorWorkspaceLock(path=lock_path, supervisor_pid=os.getpid())
+
+    def fake_unlink(self) -> None:
+        if self == lock_path:
+            raise FileNotFoundError
+        Path.unlink(self)
+
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "unlink", fake_unlink)
+
+    lock.release()
+
+
+def test_read_supervisor_workspace_lock_rejects_non_object(tmp_path) -> None:
+    lock_path = tmp_path / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text("[]", encoding="utf-8")
+
+    with pytest.raises(RuntimeConfigError, match="must contain an object"):
+        _read_supervisor_workspace_lock(lock_path)
 
 
 def test_run_worker_supervisor_rejects_invalid_process_count(tmp_path) -> None:
@@ -810,3 +917,138 @@ def test_stop_worker_processes_kills_only_after_configured_deadline(tmp_path) ->
         ("kill", None),
         ("join", 5),
     ]
+
+
+def test_unlink_supervisor_workspace_lock_handles_races(monkeypatch, tmp_path) -> None:
+    lock_path = tmp_path / SUPERVISOR_WORKSPACE_LOCK_FILE
+    lock_path.write_text("lock", encoding="utf-8")
+    lock_stat = lock_path.stat()
+    lock_path.unlink()
+
+    _unlink_supervisor_workspace_lock_if_same(lock_path, lock_stat)
+
+    lock_path.write_text("lock", encoding="utf-8")
+    other_path = tmp_path / "other.lock"
+    other_path.write_text("other", encoding="utf-8")
+
+    _unlink_supervisor_workspace_lock_if_same(lock_path, other_path.stat())
+
+    assert lock_path.exists()
+
+    lock_stat = lock_path.stat()
+    original_unlink = type(lock_path).unlink
+
+    def fake_unlink(self) -> None:
+        if self == lock_path:
+            raise FileNotFoundError
+        original_unlink(self)
+
+    monkeypatch.setattr(type(lock_path), "unlink", fake_unlink)
+
+    _unlink_supervisor_workspace_lock_if_same(lock_path, lock_stat)
+
+
+def test_pid_is_alive_handles_missing_invalid_and_permission_denied(monkeypatch) -> None:
+    def fake_kill(pid: int, signal_number: int) -> None:
+        assert signal_number == 0
+        if pid == 111:
+            raise ProcessLookupError
+        if pid == 222:
+            raise PermissionError
+
+    monkeypatch.setattr("perago.supervisor.os.kill", fake_kill)
+
+    assert _pid_is_alive(0) is False
+    assert _pid_is_alive(111) is False
+    assert _pid_is_alive(222) is True
+    assert _pid_is_alive(333) is True
+
+
+def test_targeted_workspace_gc_skips_process_without_pid(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+    )
+    monkeypatch.setattr(
+        "perago.supervisor.garbage_collect_workspace_owner",
+        lambda *args, **kwargs: pytest.fail("processes without pids must not trigger targeted GC"),
+    )
+
+    _targeted_workspace_gc(config=config, worker_id="worker0001", process=SimpleNamespace(pid=None))
+
+
+def test_targeted_workspace_gc_collects_dead_process_owner(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+    )
+    removed_workspace = tmp_path / "workspaces" / "task_id=1"
+    called = {}
+
+    def fake_gc(workspace_root, *, owner_worker_id, owner_pid):
+        called.update(
+            {
+                "workspace_root": workspace_root,
+                "owner_worker_id": owner_worker_id,
+                "owner_pid": owner_pid,
+            }
+        )
+        return [removed_workspace]
+
+    monkeypatch.setattr("perago.supervisor.garbage_collect_workspace_owner", fake_gc)
+
+    _targeted_workspace_gc(config=config, worker_id="worker0001", process=SimpleNamespace(pid=4321))
+
+    assert called == {
+        "workspace_root": config.workspace_root,
+        "owner_worker_id": "worker0001",
+        "owner_pid": 4321,
+    }
+
+
+def test_workspace_gc_loop_run_logs_removed_workspaces_and_errors(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        workspace_gc_interval=timedelta(seconds=0),
+    )
+    loop = WorkspaceGCLoop(config=config, active_process_owners=lambda: set())
+    calls = []
+
+    class FakeStop:
+        def __init__(self) -> None:
+            self.waits = 0
+
+        def is_set(self) -> bool:
+            return self.waits >= 2
+
+        def wait(self, interval: float) -> bool:
+            assert interval == 0.001
+            self.waits += 1
+            return self.waits >= 2
+
+    def fake_run_once():
+        calls.append("run")
+        if len(calls) == 1:
+            return [tmp_path / "removed"]
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(loop, "_stop", FakeStop())
+    monkeypatch.setattr(loop, "run_once", fake_run_once)
+
+    loop._run()
+
+    assert calls == ["run", "run"]
+
+
+def test_duration_seconds_never_returns_zero() -> None:
+    assert _duration_seconds(timedelta(seconds=-1)) == 0.001

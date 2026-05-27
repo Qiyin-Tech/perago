@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from perago.workspace import (
     cleanup_attempt_workspace_safely,
     prepare_attempt_workspace,
 )
+from perago.workspace._internal import optional_task_attr, task_attr
 
 
 @dataclass(frozen=True)
@@ -91,3 +93,13 @@ def test_safe_cleanup_logs_and_preserves_cleanup_failure(tmp_path) -> None:
 
     assert cleaned is False
     assert workspace_dir.exists()
+
+
+def test_workspace_internal_task_attr_reports_missing_attribute() -> None:
+    with pytest.raises(AttributeError, match="execution_id"):
+        task_attr(object(), "execution_id")
+
+
+def test_workspace_internal_optional_task_attr_returns_none_for_absent_or_none() -> None:
+    assert optional_task_attr(object(), "execution_id") is None
+    assert optional_task_attr(SimpleNamespace(execution_id=None), "execution_id") is None

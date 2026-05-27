@@ -8,7 +8,8 @@ import pytest
 
 from perago.execution import StagedWorkspace
 from perago.errors import PublishFenceError
-from perago.lakefs_runtime import LakeFSWorkspaceRuntime
+from perago.lakefs_runtime import LakeFSWorkspaceRuntime, _commit_parents, _first_parent_id
+from perago.config import LakeFSConfig
 from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
 from perago.staging import staging_branch_name
 
@@ -264,6 +265,27 @@ def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:
     assert staging_branch.deleted is True
 
 
+def test_lakefs_runtime_from_config_builds_client(monkeypatch) -> None:
+    created = {}
+
+    class FakeLakeFSClient:
+        def __init__(self, *, host, username, password) -> None:
+            created.update({"host": host, "username": username, "password": password})
+
+    monkeypatch.setattr("perago.lakefs_runtime.Client", FakeLakeFSClient)
+
+    runtime = LakeFSWorkspaceRuntime.from_config(
+        LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key="lakefs-secret",
+        )
+    )
+
+    assert isinstance(runtime, LakeFSWorkspaceRuntime)
+    assert created == {"host": "http://lakefs.local", "username": "lakefs-key", "password": "lakefs-secret"}
+
+
 def test_lakefs_cleanup_uses_staged_repository_without_prior_runtime_state() -> None:
     shared_branch = "perago-staging-shared"
     repo_a = FakeRepo()
@@ -444,3 +466,19 @@ def test_lakefs_publish_rejects_head_without_parent_metadata(parents) -> None:
 
     with pytest.raises(PublishFenceError, match="cannot publish from input ref"):
         runtime.publish_workspace(staged, workspace, spec, attempt)
+
+
+@pytest.mark.parametrize(
+    ("commit", "expected"),
+    [
+        ({"parents": [{"id": "input-commit"}]}, "input-commit"),
+        ({"parents": [SimpleNamespace(id="input-commit")]}, "input-commit"),
+        ({"parents": [{}]}, None),
+    ],
+)
+def test_first_parent_id_handles_mapping_and_object_parent_shapes(commit, expected) -> None:
+    assert _first_parent_id(commit) == expected
+
+
+def test_commit_parents_ignores_string_parent_payload() -> None:
+    assert _commit_parents({"parents": "input-commit"}) == []

@@ -8,6 +8,7 @@ from perago.config import (
     LakeFSConfig,
     RuntimeConfig,
     child_environment,
+    check_writable_root,
     load_runtime_config,
     load_runtime_env,
     parse_conductor_config,
@@ -115,6 +116,17 @@ def test_load_runtime_config_empty_process_env_does_not_read_os_environ(monkeypa
     assert config.worker_id_prefix == "dotenvPrefix"
 
 
+def test_check_writable_root_wraps_os_errors(monkeypatch, tmp_path) -> None:
+    def fail_mkdir(*args, **kwargs) -> None:
+        del args, kwargs
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("perago.config.Path.mkdir", fail_mkdir)
+
+    with pytest.raises(RuntimeConfigError, match="not writable"):
+        check_writable_root(tmp_path / "workspaces")
+
+
 def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
     config = RuntimeConfig(
         workspace_root=tmp_path / "workspaces",
@@ -198,6 +210,8 @@ def test_parse_connection_configs_are_optional() -> None:
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID": "key",
             }
         )
+    with pytest.raises(RuntimeConfigError, match="CONDUCTOR_SERVER_URL"):
+        parse_conductor_config({"CONDUCTOR_SERVER_URL": "replace-me"})
 
 
 def test_child_environment_derives_worker_id_from_module_target() -> None:
@@ -225,6 +239,8 @@ def test_child_environment_uses_configured_prefix() -> None:
 def test_child_environment_rejects_invalid_configured_prefix() -> None:
     with pytest.raises(RuntimeConfigError, match="PERAGO_WORKER_ID_PREFIX"):
         child_environment({"PERAGO_WORKER_ID_PREFIX": "bad-prefix"}, "app.workers.features_build", 1)
+    with pytest.raises(RuntimeConfigError, match="must not be empty"):
+        child_environment({"PERAGO_WORKER_ID_PREFIX": "   "}, "app.workers.features_build", 1)
 
 
 def test_resolve_worker_id_prefers_configured_value() -> None:

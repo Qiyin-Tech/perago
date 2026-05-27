@@ -456,3 +456,43 @@ def test_start_cli_requires_runtime_service_config_before_importing_task(monkeyp
     assert result.exit_code == 1
     assert "CONDUCTOR_SERVER_URL is required" in result.output
     assert "Cannot generate a JsonSchema" not in result.output
+
+
+def test_start_cli_requires_lakefs_config_before_importing_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("CONDUCTOR_SERVER_URL=http://conductor.local/api", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.bad_schema"])
+
+    assert result.exit_code == 1
+    assert "LakeFS config is required" in result.output
+    assert "Cannot generate a JsonSchema" not in result.output
+
+
+def test_start_cli_wraps_unexpected_taskdef_validation_errors(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
+                "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
+                "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class BrokenConductor:
+        def taskdef_exists(self, task_name: str) -> bool:
+            del task_name
+            raise RuntimeError("metadata endpoint unavailable")
+
+    monkeypatch.setattr("perago.cli.OrkesConductorRuntimeClient.from_config", lambda config: BrokenConductor())
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.features_build"])
+
+    assert result.exit_code == 1
+    assert "failed to validate Conductor TaskDef: metadata endpoint unavailable" in result.output

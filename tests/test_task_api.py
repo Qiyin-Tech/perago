@@ -1,3 +1,4 @@
+import importlib
 from pathlib import Path, PurePath, PureWindowsPath
 
 import pytest
@@ -139,6 +140,78 @@ def test_rejects_invalid_task_decorator_option_types() -> None:
             return Output(value=params.value)
 
 
+def test_task_decorator_wraps_pydantic_validation_errors(monkeypatch) -> None:
+    task_module = importlib.import_module("perago.task")
+    validation_error = ValidationError.from_exception_data(
+        "TaskDefinition",
+        [
+            {
+                "type": "value_error",
+                "loc": ("name",),
+                "input": "bad",
+                "ctx": {"error": ValueError("invalid task definition")},
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        task_module,
+        "_build_task_definition",
+        lambda **kwargs: (_ for _ in ()).throw(validation_error),
+    )
+
+    with pytest.raises(TaskDefinitionError, match="invalid task definition"):
+
+        @task(name="bad.validation", owner_email="data@example.com")
+        def bad_validation(params: Params) -> Output:
+            return Output(value=params.value)
+
+
+def test_rejects_unresolvable_task_type_hints() -> None:
+    with pytest.raises(TaskDefinitionError, match="failed to resolve task type hints"):
+
+        @task(name="bad.forward_ref", owner_email="data@example.com")
+        def bad_forward_ref(params: "MissingParams") -> Output:
+            return Output(value=params.value)
+
+
+def test_rejects_invalid_task_parameter_count() -> None:
+    with pytest.raises(TaskDefinitionError, match="must be exactly"):
+
+        @task(name="bad.no_params", owner_email="data@example.com")
+        def bad_no_params() -> Output:
+            return Output(value=1)
+
+
+def test_rejects_workspace_signature_without_path_annotation_or_spec() -> None:
+    with pytest.raises(TaskDefinitionError, match="pathlib.Path"):
+
+        @task(name="bad.workspace_annotation", owner_email="data@example.com", workspace=WorkspaceSpec())
+        def bad_workspace_annotation(workspace: str, params: Params) -> Output:
+            del workspace
+            return Output(value=params.value)
+
+    with pytest.raises(TaskDefinitionError, match="require workspace=WorkspaceSpec"):
+
+        @task(name="bad.workspace_missing_spec", owner_email="data@example.com")
+        def bad_workspace_missing_spec(workspace: Path, params: Params) -> Output:
+            del workspace
+            return Output(value=params.value)
+
+
+def test_rejects_workspace_free_signature_name_and_workspace_spec() -> None:
+    with pytest.raises(TaskDefinitionError, match="parameter must be named params"):
+
+        @task(name="bad.workspace_free_param_name", owner_email="data@example.com")
+        def bad_workspace_free_param_name(input_params: Params) -> Output:
+            return Output(value=input_params.value)
+
+    with pytest.raises(TaskDefinitionError, match="must not declare workspace"):
+
+        @task(name="bad.workspace_free_with_spec", owner_email="data@example.com", workspace=WorkspaceSpec())
+        def bad_workspace_free_with_spec(params: Params) -> Output:
+            return Output(value=params.value)
+
+
 def test_rejects_publish_budget_on_workspace_free_tasks() -> None:
     budget = PublishBudget(
         observed_merge_p99_seconds=1,
@@ -193,6 +266,10 @@ def test_workspace_prefix_validation() -> None:
     assert WorkspaceSpec(prefix="/audio/render").prefix == "audio/render"
     assert WorkspaceSpec(prefix="/audio/render").read_only is False
     assert WorkspaceSpec(prefix="/audio/render", read_only=True).read_only is True
+    with pytest.raises(ValidationError, match="must use '/'"):
+        WorkspaceSpec(prefix=r"audio\render")
+    with pytest.raises(ValidationError, match="must not be empty"):
+        WorkspaceSpec(prefix="///")
     with pytest.raises(ValidationError, match="stay inside"):
         WorkspaceSpec(prefix="../raw")
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):

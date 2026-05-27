@@ -175,6 +175,12 @@ def test_write_taskdef_requires_json_file_path(tmp_path) -> None:
     with pytest.raises(ValueError, match="output must be a JSON file path"):
         write_taskdef(load_module_task("app.workers.metadata_validate"), tmp_path / "generated")
 
+    directory_with_json_suffix = tmp_path / "generated.json"
+    directory_with_json_suffix.mkdir()
+
+    with pytest.raises(ValueError, match="not a directory"):
+        write_taskdef(load_module_task("app.workers.metadata_validate"), directory_with_json_suffix)
+
 
 
 def test_schema_preserves_fields_named_title() -> None:
