@@ -14,7 +14,7 @@ Perago 的运行时结果只有三个状态：
 
 ## Classification Rule
 
-`result_for_exception(...)` 当前运行时只有一条特殊规则：
+运行时的内部异常 classifier 当前有这些规则：
 
 | 异常类型 | Result status | 说明 |
 | --- | --- | --- |

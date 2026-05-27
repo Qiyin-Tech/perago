@@ -1,10 +1,13 @@
-from perago import (
+from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
+from perago.errors import (
     PostGuardrailViolation,
     PreGuardrailViolation,
     PublishFenceError,
-    RuntimeTaskResult,
     TaskFailed,
     TaskTerminalError,
+)
+from perago.result import (
+    RuntimeTaskResult,
     completed_result,
     failed_result,
     result_for_exception,
@@ -25,7 +28,7 @@ def test_completed_result_payload_contains_output() -> None:
 
 
 def test_failed_result_payload_contains_reason() -> None:
-    result = failed_result("post failed")
+    result = failed_result("post failed", max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH)
 
     assert result.conductor_payload() == {
         "status": "FAILED",
@@ -34,7 +37,7 @@ def test_failed_result_payload_contains_reason() -> None:
 
 
 def test_terminal_failed_result_payload_contains_reason() -> None:
-    result = terminal_failed_result("pre failed")
+    result = terminal_failed_result("pre failed", max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH)
 
     assert result.conductor_payload() == {
         "status": "FAILED_WITH_TERMINAL_ERROR",
@@ -43,14 +46,29 @@ def test_terminal_failed_result_payload_contains_reason() -> None:
 
 
 def test_result_for_exception_classifies_guardrail_failures_by_phase() -> None:
-    assert result_for_exception(PreGuardrailViolation("missing input")).status == "FAILED_WITH_TERMINAL_ERROR"
-    assert result_for_exception(PostGuardrailViolation("missing output")).status == "FAILED"
-    assert result_for_exception(RuntimeError("transient")).status == "FAILED"
+    assert (
+        result_for_exception(
+            PreGuardrailViolation("missing input"),
+            max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        ).status
+        == "FAILED_WITH_TERMINAL_ERROR"
+    )
+    assert (
+        result_for_exception(
+            PostGuardrailViolation("missing output"),
+            max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        ).status
+        == "FAILED"
+    )
+    assert (
+        result_for_exception(RuntimeError("transient"), max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH).status
+        == "FAILED"
+    )
 
 
 def test_result_for_exception_classifies_task_execution_errors() -> None:
-    retryable = result_for_exception(TaskFailed("retry later"))
-    terminal = result_for_exception(TaskTerminalError("invalid input"))
+    retryable = result_for_exception(TaskFailed("retry later"), max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH)
+    terminal = result_for_exception(TaskTerminalError("invalid input"), max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH)
 
     assert retryable.conductor_payload() == {
         "status": "FAILED",
@@ -79,7 +97,10 @@ def test_failure_reason_is_truncated_without_output() -> None:
 
 
 def test_result_for_exception_fails_closed_on_publish_fence_errors() -> None:
-    result = result_for_exception(PublishFenceError("main advanced from old to new"))
+    result = result_for_exception(
+        PublishFenceError("main advanced from old to new"),
+        max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    )
 
     assert result.conductor_payload() == {
         "status": "FAILED",

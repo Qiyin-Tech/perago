@@ -18,9 +18,12 @@ from perago import (
     invoke_workspace_task_body,
     load_module_task,
     require_dir,
-    run_workspace_free_task_attempt,
-    run_workspace_task_attempt,
     task,
+)
+from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
+from perago.execution import (
+    run_workspace_free_task_attempt as _run_workspace_free_task_attempt,
+    run_workspace_task_attempt as _run_workspace_task_attempt,
 )
 from perago.workspace import attempt_workspace_dir
 from perago.workspace import active_workspace_owner_tokens
@@ -129,6 +132,16 @@ WORKSPACE_INPUT = {
 
 def _attempt() -> Attempt:
     return Attempt()
+
+
+def run_workspace_task_attempt(*args, **kwargs):
+    kwargs.setdefault("failure_reason_max_length", DEFAULT_FAILURE_REASON_MAX_LENGTH)
+    return _run_workspace_task_attempt(*args, **kwargs)
+
+
+def run_workspace_free_task_attempt(*args, **kwargs):
+    kwargs.setdefault("failure_reason_max_length", DEFAULT_FAILURE_REASON_MAX_LENGTH)
+    return _run_workspace_free_task_attempt(*args, **kwargs)
 
 
 def test_invokes_workspace_task_body_with_guardrails(tmp_path) -> None:

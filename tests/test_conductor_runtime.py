@@ -23,7 +23,7 @@ from perago.conductor_runtime import (
     run_conductor_thread_runner,
     runtime_result_to_sdk_task_result,
 )
-from perago.config import ConductorConfig
+from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH, ConductorConfig
 from perago.result import completed_result, failed_result, terminal_failed_result
 from perago.task import load_module_task
 
@@ -195,10 +195,14 @@ def test_runtime_result_to_sdk_task_result_maps_completed_and_failures() -> None
         completed_result({"result": {"valid": True}}),
         worker_id="worker-1",
     )
-    failed = runtime_result_to_sdk_task_result(attempt, failed_result("bad input"), worker_id="worker-1")
+    failed = runtime_result_to_sdk_task_result(
+        attempt,
+        failed_result("bad input", max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH),
+        worker_id="worker-1",
+    )
     terminal = runtime_result_to_sdk_task_result(
         attempt,
-        terminal_failed_result("pre guardrail"),
+        terminal_failed_result("pre guardrail", max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH),
         worker_id="worker-1",
     )
 
@@ -224,6 +228,7 @@ def test_thread_worker_configures_sdk_worker_contract() -> None:
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     assert worker.get_identity() == "metadataBroker"
@@ -262,6 +267,7 @@ def test_thread_worker_executes_polled_task_and_maps_result() -> None:
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     result = worker.execute(task)
@@ -317,6 +323,7 @@ def test_process_dispatch_worker_configures_sdk_worker_contract() -> None:
         thread_count=4,
         assignment_queue=object(),
         completion_queue=object(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     assert worker.get_identity() == "metadataBroker"
@@ -354,6 +361,7 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
         thread_count=1,
         assignment_queue=assignment_queue,
         completion_queue=FakeCompletionQueue(assignment_queue),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
     task = Task(
         workflow_instance_id="wf-7f3d",
@@ -407,6 +415,7 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None
         thread_count=1,
         assignment_queue=assignment_queue,
         completion_queue=FakeCompletionQueue(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
     task = Task(
         workflow_instance_id="wf-7f3d",
@@ -445,6 +454,7 @@ def test_process_dispatch_worker_fails_closed_on_mismatched_execution_completion
         thread_count=1,
         assignment_queue=FakeAssignmentQueue(),
         completion_queue=FakeCompletionQueue(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
     task = Task(
         workflow_instance_id="wf-7f3d",
@@ -479,6 +489,7 @@ def test_process_dispatch_worker_fails_closed_on_invalid_completion() -> None:
         thread_count=1,
         assignment_queue=FakeAssignmentQueue(),
         completion_queue=FakeCompletionQueue(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
     task = Task(
         workflow_instance_id="wf-7f3d",
@@ -550,6 +561,7 @@ def test_process_dispatch_worker_times_out_waiting_for_completion() -> None:
         assignment_queue=FakeAssignmentQueue(),
         completion_queue=FakeCompletionQueue(),
         completion_timeout_seconds=0,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
     task = Task(
         workflow_instance_id="wf-7f3d",
@@ -598,6 +610,7 @@ def test_process_dispatch_worker_retries_empty_completion_queue_before_success()
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
         completion_timeout_seconds=1,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     result = worker.execute(
@@ -669,6 +682,7 @@ def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting()
         attempt_fence_request_queue=FakeRequestQueue(),
         attempt_fence_response_queues={"metadata0001": response_queue},
         client=FakeClient(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
     task = Task(
         workflow_instance_id="wf-7f3d",
@@ -703,6 +717,7 @@ def test_process_dispatch_worker_reports_attempt_fence_client_errors() -> None:
         assignment_queue=object(),
         completion_queue=object(),
         attempt_fence_response_queues={"metadata0001": response_queue},
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     worker._handle_attempt_fence_request(ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c"))
@@ -734,6 +749,7 @@ def test_process_dispatch_worker_reports_attempt_fence_reload_errors() -> None:
         completion_queue=object(),
         attempt_fence_response_queues={"metadata0001": response_queue},
         client=FakeClient(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     worker._handle_attempt_fence_request(ProcessAttemptFenceRequest(worker_id="metadata0001", task_id="task-9b4c"))
@@ -748,6 +764,7 @@ def test_process_dispatch_worker_rejects_invalid_attempt_fence_request() -> None
         thread_count=1,
         assignment_queue=object(),
         completion_queue=object(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     worker._handle_attempt_fence_request(object())
@@ -761,6 +778,7 @@ def test_process_dispatch_worker_rejects_attempt_fence_request_without_response_
         assignment_queue=object(),
         completion_queue=object(),
         attempt_fence_response_queues={},
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     worker._handle_attempt_fence_request(ProcessAttemptFenceRequest(worker_id="missing", task_id="task-9b4c"))
@@ -803,6 +821,7 @@ def test_thread_runner_signal_handler_stops_runner_and_restores_handlers(monkeyp
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )
 
@@ -844,6 +863,7 @@ def test_process_broker_signal_handler_stops_runner_and_restores_handlers(monkey
         conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
         assignment_queue=object(),
         completion_queue=object(),
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )
 
@@ -949,6 +969,7 @@ def test_process_executor_loop_executes_assignment_and_returns_completion() -> N
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     assert len(completion_queue.items) == 1
@@ -1048,6 +1069,7 @@ def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monk
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     assert len(completion_queue.items) == 1
@@ -1092,6 +1114,7 @@ def test_idle_process_executor_loop_exits_after_signal(monkeypatch) -> None:
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     assert assignment_queue.calls == 1
@@ -1128,6 +1151,7 @@ def test_process_executor_loop_ignores_invalid_assignments() -> None:
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
     assert completion_queue.items == []
@@ -1194,6 +1218,7 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
         stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )
 
@@ -1230,6 +1255,7 @@ def test_run_conductor_process_broker_builds_sdk_runner() -> None:
         conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
         assignment_queue=assignment_queue,
         completion_queue=completion_queue,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )
 

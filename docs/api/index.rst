@@ -12,5 +12,4 @@ API Reference
    workspace
    staging
    config
-   results
    errors

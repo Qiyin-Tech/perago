@@ -5,7 +5,6 @@ from typing import Any, Literal
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
 from perago.errors import PreGuardrailViolation, TaskFailed, TaskTerminalError
 
 
@@ -153,7 +152,7 @@ def completed_result(output: dict[str, Any]) -> RuntimeTaskResult:
 def failed_result(
     reason: object,
     *,
-    max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    max_length: int,
 ) -> RuntimeTaskResult:
     """
     Build a failed worker attempt result.
@@ -166,7 +165,7 @@ def failed_result(
     reason : object
         Failure reason converted with :class:`str` for Conductor's
         ``reasonForIncompletion`` field.
-    max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+    max_length : int
         Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
@@ -186,7 +185,7 @@ def failed_result(
 
     Examples
     --------
-    >>> failed_result("post guardrail failed").conductor_payload()
+    >>> failed_result("post guardrail failed", max_length=500).conductor_payload()
     {'status': 'FAILED', 'reasonForIncompletion': 'post guardrail failed'}
     """
     return RuntimeTaskResult(
@@ -198,7 +197,7 @@ def failed_result(
 def terminal_failed_result(
     reason: object,
     *,
-    max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    max_length: int,
 ) -> RuntimeTaskResult:
     """
     Build a terminal failed worker attempt result.
@@ -211,7 +210,7 @@ def terminal_failed_result(
     reason : object
         Failure reason converted with :class:`str` for Conductor's
         ``reasonForIncompletion`` field.
-    max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+    max_length : int
         Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
@@ -233,7 +232,7 @@ def terminal_failed_result(
 
     Examples
     --------
-    >>> terminal_failed_result("missing input").status
+    >>> terminal_failed_result("missing input", max_length=500).status
     'FAILED_WITH_TERMINAL_ERROR'
     """
     return RuntimeTaskResult(
@@ -245,7 +244,7 @@ def terminal_failed_result(
 def result_for_exception(
     exc: Exception,
     *,
-    max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    max_length: int,
 ) -> RuntimeTaskResult:
     """
     Classify an exception into a worker attempt result.
@@ -259,7 +258,7 @@ def result_for_exception(
         Exception raised while validating input, running the task body,
         checking guardrails, staging workspace changes, publishing, or cleaning
         up an attempt.
-    max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+    max_length : int
         Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
@@ -283,9 +282,9 @@ def result_for_exception(
 
     Examples
     --------
-    >>> result_for_exception(PreGuardrailViolation("missing raw file")).status
+    >>> result_for_exception(PreGuardrailViolation("missing raw file"), max_length=500).status
     'FAILED_WITH_TERMINAL_ERROR'
-    >>> result_for_exception(RuntimeError("body failed")).status
+    >>> result_for_exception(RuntimeError("body failed"), max_length=500).status
     'FAILED'
     """
     if isinstance(exc, TaskTerminalError):

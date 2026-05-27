@@ -12,7 +12,6 @@ from loguru import logger
 from pydantic import BaseModel
 
 from perago.attempt import assert_current_attempt_snapshot
-from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
@@ -114,7 +113,7 @@ def run_workspace_task_attempt(
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
-    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    failure_reason_max_length: int,
 ) -> RuntimeTaskResult:
     """
     Run one workspace task attempt.
@@ -166,7 +165,7 @@ def run_workspace_task_attempt(
     execution_id : str or None, default=None
         Execution-scoped id used to isolate local attempt workspace and LakeFS
         staging branch names. A new id is generated when omitted.
-    failure_reason_max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+    failure_reason_max_length : int
         Maximum number of characters written to ``reasonForIncompletion`` for
         failed attempts.
 
@@ -286,7 +285,7 @@ def run_workspace_free_task_attempt(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
     *,
-    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    failure_reason_max_length: int,
 ) -> RuntimeTaskResult:
     """
     Run one workspace-free task attempt.
@@ -303,7 +302,7 @@ def run_workspace_free_task_attempt(
     input_data : mapping of str to Any
         Conductor task input. Workspace-free attempts must contain exactly
         ``"params"``.
-    failure_reason_max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+    failure_reason_max_length : int
         Maximum number of characters written to ``reasonForIncompletion`` for
         failed attempts.
 

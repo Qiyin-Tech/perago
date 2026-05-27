@@ -19,7 +19,7 @@ from conductor.client.orkes.orkes_task_client import OrkesTaskClient
 from conductor.client.worker.worker_interface import WorkerInterface
 from loguru import logger
 
-from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH, ConductorConfig
+from perago.config import ConductorConfig
 from perago.execution import (
     CleanupStaging,
     CompleteNoOpWorkspace,
@@ -131,7 +131,7 @@ class PeragoThreadWorker(WorkerInterface):
         publish_workspace: PublishWorkspace,
         cleanup_staging: CleanupStaging,
         complete_noop_workspace: CompleteNoOpWorkspace | None = None,
-        failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        failure_reason_max_length: int,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -185,7 +185,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         attempt_fence_response_queues: Mapping[str, Any] | None = None,
         client: ConductorRuntimeClient | None = None,
         completion_timeout_seconds: float | None = None,
-        failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        failure_reason_max_length: int,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -298,7 +298,7 @@ def run_conductor_thread_runner(
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
-    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    failure_reason_max_length: int,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoThreadWorker(
@@ -345,7 +345,7 @@ def run_conductor_process_broker(
     attempt_fence_response_queues: Mapping[str, Any] | None = None,
     client: ConductorRuntimeClient | None = None,
     completion_timeout_seconds: float | None = None,
-    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    failure_reason_max_length: int,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoProcessDispatchWorker(
@@ -392,7 +392,7 @@ def run_process_executor_loop(
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
-    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    failure_reason_max_length: int,
 ) -> None:
     logger.bind(worker_id=worker_id).info("process executor started")
     shutdown_requested = False
@@ -519,7 +519,7 @@ def execute_polled_task(
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
-    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    failure_reason_max_length: int,
 ) -> RuntimeTaskResult:
     if task.has_workspace:
         return run_workspace_task_attempt(

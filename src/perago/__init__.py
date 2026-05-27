@@ -44,13 +44,6 @@ from perago.models import (
 from perago.staging import staging_branch_name
 from perago.task import TaskDefinition, load_module_task, task
 from perago.taskdef import build_taskdef, write_taskdef
-from perago.result import (
-    RuntimeTaskResult,
-    completed_result,
-    failed_result,
-    result_for_exception,
-    terminal_failed_result,
-)
 from perago.supervisor import WorkerChildSpec, restart_backoff_seconds, worker_child_specs
 from perago.worker_runtime import WorkerRuntime, prepare_worker_runtime
 from perago.workspace import (
@@ -78,7 +71,6 @@ __all__ = [
     "LakeFSConfig",
     "RuntimeConfig",
     "RuntimeConfigError",
-    "RuntimeTaskResult",
     "StagedWorkspace",
     "StaleAttemptError",
     "TaskControls",
@@ -104,8 +96,6 @@ __all__ = [
     "build_workspace_sync_plan",
     "build_workspace_task_output",
     "check_guardrails",
-    "completed_result",
-    "failed_result",
     "forbid_glob",
     "invoke_workspace_free_task",
     "invoke_workspace_task_body",
@@ -115,13 +105,11 @@ __all__ = [
     "require_dir",
     "require_file",
     "require_glob",
-    "result_for_exception",
     "run_workspace_free_task_attempt",
     "run_workspace_task_attempt",
     "restart_backoff_seconds",
     "staging_branch_name",
     "task",
-    "terminal_failed_result",
     "worker_child_specs",
     "workspace_delete_object_paths",
     "workspace_download_files",
