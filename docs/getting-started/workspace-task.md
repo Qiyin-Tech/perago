@@ -130,7 +130,7 @@ def inspect_metadata(workspace: Path, params: InspectParams) -> InspectOutput:
     return InspectOutput(found=manifest.exists())
 ```
 
-`read_only=True` 的成功 output 保留 input workspace ref。runtime 不检查 target branch HEAD、不创建 staging branch、不提交 LakeFS commit，也不发布新 ref。它不是 OS-level readonly mount；如果函数误写了本机 attempt workspace，这些写入会随 cleanup 丢弃。
+`read_only=True` 的成功 output 保留 input workspace ref。runtime 不检查 target branch HEAD、不创建 staging branch、不提交 LakeFS commit，也不发布新 ref；因此它也不进入 Perago 为可写 LakeFS 路径设置的 attempt fence。最终 `COMPLETED` result 按普通 Conductor worker completion 回写。它不是 OS-level readonly mount；如果函数误写了本机 attempt workspace，这些写入会随 cleanup 丢弃。
 
 默认 `read_only=False`。可写 workspace task 执行后如果没有任何 workspace diff，Perago 不会创建 empty commit；runtime 会按 publish fence 检查 target branch 状态，并保持 output ref 与 target branch 可见 head 一致。
 

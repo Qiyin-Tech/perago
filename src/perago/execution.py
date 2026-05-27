@@ -236,6 +236,10 @@ def run_workspace_task_attempt(
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
 
         if workspace.read_only:
+            # Read-only completion has no LakeFS side effect to fence. The final
+            # TaskResult update follows Conductor's normal task completion
+            # contract; Perago's attempt fence is reserved for writable
+            # workspace publication and no-op branch relocation.
             output_workspace = workspace_input.published_output(workspace_input.ref)
             return completed_result(
                 {

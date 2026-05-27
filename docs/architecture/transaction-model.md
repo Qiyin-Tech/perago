@@ -14,7 +14,7 @@ Perago 的事务模型解决 workspace task attempt 的发布安全问题：
 | 未确认写入不直接污染目标 branch | 所有写入先进入 execution-scoped staging branch。 |
 | stale attempt 不应继续写 LakeFS | runtime 在可写路径的 stage 或 no-op branch relocation 前检查 attempt fence；stage 后、publish 前再检查一次。 |
 | retry 可以处理一个 abandoned publication | 当 target head 是 input ref 的直接子提交时，runtime 使用 replacement publication。 |
-| read-only 节点不制造 workspace 历史 | `WorkspaceSpec(read_only=True)` 不检查 HEAD、不 stage、不 publish，output ref 保持 input ref。 |
+| read-only 节点不制造 workspace 历史 | `WorkspaceSpec(read_only=True)` 不检查 HEAD、不 stage、不 publish，也不进入可写路径 attempt fence；output ref 保持 input ref，result 按普通 Conductor worker completion 回写。 |
 | 可写 no-op 不制造 empty commit | diff 为空时不创建 staging branch；如果需要处理 abandoned publication，则将 target branch relocate 回 input ref。 |
 | 不确定状态 fail closed | 无法用 Conductor attempt 状态和 LakeFS HEAD 状态解释时，让当前 attempt 失败。 |
 

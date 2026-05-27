@@ -39,7 +39,7 @@ audio/render/features/out.txt -> features/out.txt
 
 当 `prefix="/"` 时，LakeFS repository 根目录映射为本机 workspace 根目录。非根 prefix 只允许 task 看到该 prefix 下的对象。
 
-`WorkspaceSpec(read_only=True)` 属于 task module metadata，不来自 Conductor input，也不写入 TaskDef。它禁止 workspace publication：runtime 不检查 diff、不检查 target HEAD、不创建 staging branch，也不提交 LakeFS commit。
+`WorkspaceSpec(read_only=True)` 属于 task module metadata，不来自 Conductor input，也不写入 TaskDef。它禁止 workspace publication：runtime 不检查 diff、不检查 target HEAD、不创建 staging branch，也不提交 LakeFS commit。因为没有 LakeFS 写入或 branch relocation，read-only completion 不进入 Perago 的可写路径 attempt fence；最终 result 按普通 Conductor worker completion 回写。
 
 ## Download
 

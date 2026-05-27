@@ -8,10 +8,10 @@ Perago 有两类 fence：
 
 | Fence | 判断对象 | 运行位置 | 失败结果 |
 | --- | --- | --- | --- |
-| Attempt fence | Conductor 当前 attempt snapshot | task body 后、stage 前；stage 后、publish 前 | `FAILED` |
+| Attempt fence | Conductor 当前 attempt snapshot | 可写路径：task body 后、stage/no-op relocation 前；stage 后、publish 前 | `FAILED` |
 | Publish fence | LakeFS target branch HEAD 状态 | staging branch publish 前；可写 no-op completion 前 | `FAILED` |
 
-Attempt fence 看 Conductor 侧的 task 权限。Publish fence 看 LakeFS 侧的 HEAD 状态。任一侧不满足，runtime 都不会生成 workspace output。
+Attempt fence 看 Conductor 侧的 task 权限。Publish fence 看 LakeFS 侧的 HEAD 状态。任一侧不满足，可写 workspace runtime 都不会生成 workspace output。Read-only workspace completion 不进入这些 publication fence；它没有 LakeFS 写入，最终 result 按普通 Conductor worker completion 回写。
 
 ## Attempt Fence
 

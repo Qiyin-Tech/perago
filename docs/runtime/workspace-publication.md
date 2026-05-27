@@ -39,6 +39,8 @@ Workspace completion 是 Perago 对一次 workspace task attempt 的运行时边
 
 `WorkspaceSpec(read_only=True)` 声明 read-only workspace task。它下载 workspace 并执行 task body，但不检查 workspace diff、不读取 target branch HEAD、不创建 staging branch、不提交 LakeFS commit，也不发布新 ref。成功 output 的 `workspace.ref` 等于 input `workspace.ref`。
 
+Read-only completion 没有 LakeFS 写入或 branch relocation，因此不调用 Perago 的 attempt fence。最终 `TaskResult` 仍按 Conductor worker 的普通 completion contract 回写；旧 `task_id`、已 terminal task 或 retry 后的新 attempt 是否接受 completion，由 Conductor 服务端的 task update 语义处理。
+
 `read_only=True` 不是 OS-level readonly mount。如果业务函数写了本机 attempt workspace，这些写入不会发布，会随 attempt-local cleanup 丢弃。
 
 默认 `read_only=False`。可写 workspace task 执行完 task body 和 post guardrails 后，runtime 根据 workspace diff 决定：

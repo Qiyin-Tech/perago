@@ -1206,7 +1206,7 @@ def assert_current_attempt(task_client, task) -> None:
         raise StaleAttemptError(task.task_id)
 ```
 
-Perago 在可写路径的 stage 或 no-op branch relocation 前检查一次；如果已经创建 staging branch，则在 publish 前再检查一次。检查失败时，attempt 返回 `FAILED`，并执行 cleanup。
+Perago 在可写路径的 stage 或 no-op branch relocation 前检查一次；如果已经创建 staging branch，则在 publish 前再检查一次。检查失败时，attempt 返回 `FAILED`，并执行 cleanup。Read-only workspace completion 不进入这些 LakeFS 写入 fence；它没有 staging、publish 或 branch relocation，最终 result 按普通 Conductor worker completion 回写。
 
 ### LakeFS publish protocol
 

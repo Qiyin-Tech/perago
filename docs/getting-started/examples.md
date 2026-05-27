@@ -99,7 +99,7 @@ def inspect_metadata(workspace: Path, params: InspectParams) -> InspectOutput:
     return InspectOutput(exists=(workspace / params.manifest_name).exists())
 ```
 
-read-only task 不检查 target branch HEAD、不创建 staging branch、不提交 LakeFS commit。即使函数写了本机 attempt workspace，写入也会随 cleanup 丢弃，不会成为 LakeFS output。
+read-only task 不检查 target branch HEAD、不创建 staging branch、不提交 LakeFS commit，也不进入 Perago 的可写 workspace attempt fence。即使函数写了本机 attempt workspace，写入也会随 cleanup 丢弃，不会成为 LakeFS output；最终 result 按普通 Conductor worker completion 回写。
 
 ## Workspace-free task
 

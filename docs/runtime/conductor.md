@@ -79,7 +79,9 @@ Conductor task 会被映射成 Perago attempt snapshot：
 - `task_id` 与已 poll 到的 attempt 一致。
 - `retry_count` 与已 poll 到的 attempt 一致。
 
-Perago 当前在可写路径的两个位置检查 attempt fence：执行 task body 后、stage workspace 或 no-op branch relocation 前检查一次；stage workspace 后、publish workspace 前再检查一次。任一检查失败都会返回普通 `FAILED`，并清理 attempt-local workspace；如果 staging 已经创建，还会尝试清理 staging branch。`WorkspaceSpec(read_only=True)` 不进入这些 LakeFS 写入 fence，Conductor result 接受与幂等性由 Conductor 负责。
+Perago 当前在可写路径的两个位置检查 attempt fence：执行 task body 后、stage workspace 或 no-op branch relocation 前检查一次；stage workspace 后、publish workspace 前再检查一次。任一检查失败都会返回普通 `FAILED`，并清理 attempt-local workspace；如果 staging 已经创建，还会尝试清理 staging branch。
+
+`WorkspaceSpec(read_only=True)` 不进入这些 LakeFS 写入 fence。Read-only completion 没有 staging、publish 或 target branch relocation，runtime 会直接生成 `COMPLETED` result，按普通 Conductor worker completion 回写；Perago 不在 complete 前额外 `get_task` 自查 `IN_PROGRESS`。旧 `task_id`、已 terminal task 或 retry 后的新 attempt 的 result 接受与幂等性由 Conductor 服务端负责。
 
 ## Result update
 
