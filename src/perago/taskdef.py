@@ -6,8 +6,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, get_args, get_origin
 
-from pydantic import BaseModel
+from pydantic import BaseModel, RootModel
 
+from perago.errors import TaskDefinitionError
 from perago.models import WorkspaceInput, WorkspaceOutput
 from perago.task import TaskDefinition
 
@@ -79,6 +80,8 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
     >>> task_def["name"]
     'features.build'
     """
+    validate_no_root_task_models(task)
+
     input_properties: dict[str, Any] = {}
     output_properties: dict[str, Any] = {}
     input_required: list[str] = []
@@ -188,6 +191,26 @@ def task_models_with_config(task: TaskDefinition) -> list[type[BaseModel]]:
             if schema_model.model_config:
                 configured[schema_model] = None
     return list(configured)
+
+
+def task_models_with_root_model(task: TaskDefinition) -> list[type[BaseModel]]:
+    root_models: dict[type[BaseModel], None] = {}
+    for model in (task.params_model, task.output_model):
+        for schema_model in _iter_model_graph(model):
+            if issubclass(schema_model, RootModel):
+                root_models[schema_model] = None
+    return list(root_models)
+
+
+def validate_no_root_task_models(task: TaskDefinition) -> None:
+    root_models = task_models_with_root_model(task)
+    if not root_models:
+        return
+    names = ", ".join(model.__name__ for model in root_models)
+    raise TaskDefinitionError(
+        "Pydantic RootModel on task model(s) "
+        f"{names} is not supported; Perago task contracts must use ordinary BaseModel object models."
+    )
 
 
 def _control_fields(task: TaskDefinition) -> dict[str, Any]:

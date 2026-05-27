@@ -8,6 +8,7 @@ from perago import (
     PublishBudget,
     RetryPolicy,
     TaskControls,
+    TaskDefinitionError,
     TimeoutPolicy,
     WorkspaceSpec,
     build_taskdef,
@@ -253,6 +254,11 @@ def test_builds_workspace_free_taskdef() -> None:
     assert taskdef["outputKeys"] == ["result"]
     assert "workspace" not in taskdef["inputSchema"]["data"]["properties"]
     assert "workspace" not in taskdef["outputSchema"]["data"]["properties"]
+
+
+def test_taskdef_rejects_root_model_task_contracts() -> None:
+    with pytest.raises(TaskDefinitionError, match="RootModel"):
+        build_taskdef(load_module_task("app.workers.root_model_task"))
 
 
 def test_writes_taskdef_json(tmp_path) -> None:
