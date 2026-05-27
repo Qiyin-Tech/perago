@@ -36,7 +36,7 @@ class LakeFSWorkspaceRuntime:
             client=Client(
                 host=config.endpoint_url,
                 username=config.access_key_id,
-                password=config.secret_access_key,
+                password=config.secret_access_key.get_secret_value(),
             ),
             publish_budget=publish_budget,
         )

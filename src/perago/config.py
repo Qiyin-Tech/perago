@@ -8,7 +8,7 @@ from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SecretStr
 
 from perago.errors import RuntimeConfigError
 
@@ -81,9 +81,10 @@ class LakeFSConfig(BaseModel):
     access_key_id : str
         LakeFS access key id read from
         ``LAKECTL_CREDENTIALS_ACCESS_KEY_ID``.
-    secret_access_key : str
+    secret_access_key : pydantic.SecretStr
         LakeFS secret access key read from
-        ``LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY``.
+        ``LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY``. Pydantic redacts this value
+        from model reprs and JSON dumps.
 
     Raises
     ------
@@ -117,7 +118,7 @@ class LakeFSConfig(BaseModel):
 
     endpoint_url: str
     access_key_id: str
-    secret_access_key: str
+    secret_access_key: SecretStr
 
 
 class RuntimeConfig(BaseModel):

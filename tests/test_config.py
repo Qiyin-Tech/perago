@@ -106,6 +106,27 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
         access_key_id="lakefs-key",
         secret_access_key="lakefs-secret",
     )
+    assert config.lakefs.secret_access_key.get_secret_value() == "lakefs-secret"
+
+
+def test_runtime_config_redacts_lakefs_secret_in_printable_forms(tmp_path) -> None:
+    raw_secret = "LAKEFS_SECRET_CANARY_67890"
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        lakefs=LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key=raw_secret,
+        ),
+    )
+
+    assert raw_secret not in repr(config)
+    assert raw_secret not in str(config.model_dump())
+    assert raw_secret not in config.model_dump_json()
 
 
 def test_load_runtime_config_empty_process_env_does_not_read_os_environ(monkeypatch, tmp_path) -> None:
