@@ -19,12 +19,14 @@ Perago 的运行时结果只有三个状态：
 | 异常类型 | Result status | 说明 |
 | --- | --- | --- |
 | `PreGuardrailViolation` | `FAILED_WITH_TERMINAL_ERROR` | task body 尚未运行，输入 workspace 未满足 task 的 pre guardrail。 |
-| 其他异常 | `FAILED` | 包括 bad input、Pydantic 校验失败、业务异常、post guardrail、attempt fence、publish fence 和 LakeFS 操作失败。 |
+| `TaskTerminalError` | `FAILED_WITH_TERMINAL_ERROR` | 任务函数显式声明同一 input 自动重试没有意义。 |
+| `TaskFailed` | `FAILED` | 任务函数显式声明该 attempt 失败，但同一 input 稍后重跑可能成功。 |
+| 其他异常 | `FAILED` | 包括 bad input、Pydantic 校验失败、未知业务异常、post guardrail、attempt fence、publish fence 和 LakeFS 操作失败。 |
 
-Perago 把这个分类扩展为显式 task failure API：
+任务作者应使用显式 failure API 表达业务执行失败：
 
-- `raise TaskFailed("...")` 表示可自动恢复、值得重试的执行失败，映射为 `FAILED`。
-- `raise TaskTerminalError("...")` 表示同一 input 自动重试没有意义的执行失败，映射为 `FAILED_WITH_TERMINAL_ERROR`。
+- `raise TaskFailed("...")` 表示可自动恢复、值得重试的执行失败。
+- `raise TaskTerminalError("...")` 表示同一 input 自动重试没有意义的执行失败。
 - 未知、未处理的普通异常仍映射为 `FAILED`，让 Conductor 按 retry policy 处理。
 
 业务可恢复但不应自动重试的情况不使用 Conductor failed 机制。业务函数应返回成功的 `Result Output`，例如 `status="REJECTED"` 或 `status="NEEDS_ACTION"`，再由 WorkflowDef 的分支逻辑处理。

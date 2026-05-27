@@ -138,7 +138,7 @@ Abandoned target commits 不在 task publish 路径中删除。replacement publi
 | staging cleanup | staging branch 删除失败 | 保留原始 result | 保留原始 result |
 | local cleanup | 本机 workspace 删除失败 | 保留原始 result | 保留原始 result |
 
-`FAILED_WITH_TERMINAL_ERROR` 目前只用于 pre guardrail 这类上游输入 workspace 契约错误。post guardrail、stale attempt 和 publish 失败都是普通 `FAILED`，由 Conductor 按 TaskDef retry 策略处理。
+`FAILED_WITH_TERMINAL_ERROR` 用于 pre guardrail 这类上游输入 workspace 契约错误，以及任务函数显式抛出的 `TaskTerminalError`。post guardrail、`TaskFailed`、未知业务异常、stale attempt 和 publish 失败都是普通 `FAILED`，由 Conductor 按 TaskDef retry 策略处理。
 
 ## 运维边界
 

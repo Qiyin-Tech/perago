@@ -15,6 +15,10 @@ def test_env_example_contains_runtime_connection_keys() -> None:
         "PERAGO_LOG_ROOT": "/var/tmp/perago/logs",
         "PERAGO_LOG_FILE_MAX_SIZE": "100MB",
         "PERAGO_LOG_RETENTION": "30d",
+        "PERAGO_EXECUTION_MODE": "process",
+        "PERAGO_FAILURE_REASON_MAX_LENGTH": "500",
+        "PERAGO_WORKSPACE_GC_TTL": "24h",
+        "PERAGO_WORKSPACE_GC_INTERVAL": "1h",
         "PERAGO_WORKER_ID_PREFIX": "peragoLocalWorker",
     }
 

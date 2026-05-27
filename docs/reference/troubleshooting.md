@@ -83,7 +83,7 @@ Perago 的 worker 单元是 exactly one task per Python module。一个 worker p
 | `pre guardrail require_glob('...') matched 0 files; min_count=1` | `FAILED_WITH_TERMINAL_ERROR` | 输入 workspace glob 数量不足。 |
 | `post guardrail forbid_glob('...') matched N files` | `FAILED` | task body 产出的 workspace 文件未通过 post check。 |
 
-只有 pre check 被映射为 `FAILED_WITH_TERMINAL_ERROR`。post check、业务异常和 publish 失败都会映射为普通 `FAILED`。
+pre check 和任务显式抛出的 `TaskTerminalError` 会映射为 `FAILED_WITH_TERMINAL_ERROR`。post check、`TaskFailed`、未知业务异常和 publish 失败都会映射为普通 `FAILED`。
 
 ## Runtime Configuration
 
@@ -130,9 +130,8 @@ Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`ref_type`
 | 错误文本或现象 | 常见原因 | 修复 |
 | --- | --- | --- |
 | `workspace publication does not support symlinks: ...` | attempt-local workspace 中包含 symlink。 | 输出真实文件；不要把 symlink 发布到 LakeFS。 |
-| `<branch> advanced from <input-ref> to <current-head>` | publish fence 发现 target branch 被无关提交推进。 | 不要手动重试同一 attempt；从当前 protected branch head 发起新的 workflow。 |
-| `<branch> advanced beyond supported publish range (1024 commits)` | target branch 从 current head 回溯到 input ref 的 first-parent range 超过上限。 | 从当前 protected branch head 发起新的 workflow，或人工确认历史后处理。 |
-| `<branch> no longer contains workspace input ref <ref>` | target branch first-parent history 中找不到本次 input ref，通常表示 branch 被重写或 input ref 不再属于当前线性历史。 | 不要继续当前 attempt；从当前 branch head 重新发起 workflow。 |
+| `cannot publish from input ref <input-ref>; target branch <branch> current head is <current-head>` | diff 非空 publication 前，target branch HEAD 既不是 input ref，也不是 input ref 的直接子提交。 | 不要手动重试同一 attempt；从当前 target branch head 发起新的 workflow。 |
+| `cannot complete no-op from input ref <input-ref>; target branch <branch> current head is <current-head>` | 可写 no-op completion 前，target branch HEAD 不符合 `HEAD == input_ref` 或 `parent(HEAD) == input_ref` 协议。 | 不要把当前 no-op attempt 包装成成功；从当前 target branch head 重新发起 workflow。 |
 | 可写 task 没有产生新 commit | `read_only=False` 但 workspace diff 为空。 | 这是 no-op completion；Perago 不会创建 empty commit，output ref 保持 input ref。 |
 | LakeFS download/stage/merge SDK 异常 | repository/ref 不存在、凭证错误、网络失败或 LakeFS 服务异常。 | 检查 LakeFS 连接变量、repository、input commit 和 worker JSONL。 |
 | staging branch create 失败且 branch 已存在 | 同一个 execution id 的 staging branch 已存在，或远端残留与当前 execution id 冲突。 | 当前 attempt 会 fail closed。正常情况下每次 execution 都有唯一 branch；排查 worker 日志中的 `execution_id`，必要时清理残留 `perago-staging-...-exec-...` branch。 |

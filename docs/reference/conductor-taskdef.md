@@ -103,7 +103,9 @@ workspace-free task 没有 `workspace` 字段：
 }
 ```
 
-`params` schema 来自任务函数第二个参数或唯一参数的 Pydantic 类型注解。Perago 会 inline `$ref`、删除 Pydantic `title`，并把所有 object schema 设置为 `additionalProperties: false`。
+`params` schema 来自任务函数第二个参数或唯一参数的 Pydantic 类型注解。Perago 会 inline `$ref`、删除 Pydantic `title` 和从 `BaseModel` class docstring 自动生成的 object-level `description`，并把所有 object schema 设置为 `additionalProperties: false`。
+
+TaskDef schema 不支持依赖 task model 的 `ConfigDict`。`perago check` 会对配置了 `ConfigDict` 的 task model 报 warning；Perago 当前不保证这类 model 的 TaskDef schema 或运行时行为。使用 `Field(...)` 表达字段级 schema metadata。
 
 ## Output keys and schema
 

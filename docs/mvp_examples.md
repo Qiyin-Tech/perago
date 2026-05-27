@@ -359,22 +359,28 @@ For every command above, Perago imports the module and expects exactly one regis
 
 ## Worker process count
 
-`perago start` defaults to one worker process. Passing `-j` starts that many independent worker processes under a supervisor.
+`perago start` defaults to one execution slot. Passing `-j` sets the concurrency for the selected execution mode.
 
 ```bash
 perago start app.workers.features_build
 perago start app.workers.features_build -j 1
 perago start app.workers.features_build -j 4
+perago start app.workers.features_build -j 4 --execution-mode process
+perago start app.workers.features_build -j 8 --execution-mode thread
 ```
 
-Each worker process loads the same task module and polls Conductor independently. The supervisor does not dispatch tasks internally; Conductor remains the only task source.
+In the default `process` mode, the supervisor starts one Conductor broker process plus N executor processes. The broker loads the same task module, polls Conductor, extends leases, updates results, and dispatches assignments to executors over local IPC. Executors run task bodies, LakeFS workspace download/stage/publish, and local cleanup; they do not poll Conductor or update task results directly.
 
-If a child worker process exits unexpectedly, the supervisor restarts that child. Other worker processes keep running. A single child failure must not terminate the whole `perago start -j` process group.
+In explicit `thread` mode, the supervisor starts one runner process and passes `-j N` to the SDK `TaskRunner(thread_count=N)`. The SDK worker threads poll and execute in the same process, and Perago reuses the same task runtime path without executor child processes.
+
+Conductor remains the only durable task source in both modes. `process` mode is the default isolation model; `thread` mode is a lighter single-process path.
+
+If an executor process exits unexpectedly in `process` mode, the supervisor restarts that executor slot. If the broker exits, the supervisor stops the current process runtime set because Conductor communication is no longer owned by a live broker.
 
 Supervisor restart behavior:
 
-- restart only the failed child process
-- keep other child processes running
+- restart failed executor slots with the same `PERAGO_WORKER_ID`
+- stop the runtime set if the broker process exits
 - use restart backoff of `1s`, `2s`, `4s`, `8s`, `16s`, then max `30s`
 - restart indefinitely until the supervisor is stopped
 - on `SIGTERM` or `SIGINT`, stop restarting and gracefully terminate all child processes
@@ -382,15 +388,19 @@ Supervisor restart behavior:
 
 ## Worker identity
 
-The Worker Supervisor assigns one `PERAGO_WORKER_ID` to each child Worker Process before launch. `PERAGO_WORKER_ID` is used as:
+The Worker Supervisor derives process identities from `PERAGO_WORKER_ID_PREFIX`. In default `process` mode, the broker receives `PERAGO_WORKER_ID=<prefix>Broker`, and each executor receives a slot-local id such as `<prefix>0001`.
 
-- the Conductor worker id when polling and extending leases;
+The broker id is the Conductor-visible worker id for polling, lease extension, and result update. Executor ids are local runtime identities used as:
+
 - the log directory segment under `PERAGO_LOG_ROOT`;
-- a stable label for process-level operational diagnostics.
+- the active workspace owner marker for local GC;
+- a stable label for executor-level operational diagnostics.
+
+In explicit `thread` mode, the single runner process also uses `<prefix>Broker` as its Conductor-visible worker id.
 
 `PERAGO_WORKER_ID` is a process identity, not a task identity. It must not be used as a Task Attempt id, Logical Task Key, or workspace publication key.
 
-The supervisor derives `PERAGO_WORKER_ID` from `PERAGO_WORKER_ID_PREFIX` plus the child slot index. `PERAGO_WORKER_ID_PREFIX` is configurable in `.env` to avoid collisions across hosts, deployments, or repeated local runs.
+The supervisor derives executor `PERAGO_WORKER_ID` from `PERAGO_WORKER_ID_PREFIX` plus the child slot index. `PERAGO_WORKER_ID_PREFIX` is configurable in `.env` to avoid collisions across hosts, deployments, or repeated local runs.
 
 `PERAGO_WORKER_ID_PREFIX` must be a non-empty alphanumeric string: `A-Z`, `a-z`, and `0-9` only. Perago must not normalize, slugify, or replace invalid characters. If the configured prefix contains punctuation, separators, whitespace, or non-ASCII characters, `perago start` and `perago check` fail with a clear runtime configuration error.
 

@@ -102,8 +102,10 @@ workspace-free task 的顶层 input 只包含 `params`：
 `perago extract` 生成 Conductor TaskDef 时，会对 `params` model 和返回值 model 调用 Pydantic `model_json_schema()`。Perago 随后做三件事，让 schema 适合作为 Conductor TaskDef 内联 schema：
 
 - inline `$defs` / `$ref`，避免 TaskDef 依赖外部 schema definition。
-- 删除 Pydantic 自动生成的 `title` 字段，降低 TaskDef 噪声。
+- 删除 Pydantic 自动生成的 `title` 字段，以及从 `BaseModel` class docstring 自动生成的 object-level `description`。
 - 给所有 object schema 设置 `additionalProperties: false`，包括嵌套 object。
+
+不要在 task 的 `params` / `result` model 中依赖 `ConfigDict`。`perago check` 会对配置了 `ConfigDict` 的 task model 报 warning；Perago 当前不对使用 `ConfigDict` 后的 TaskDef schema 或运行时行为做兼容保证。额外字段拒绝由 Perago 运行时强制执行，不需要在业务 model 中声明 `ConfigDict(extra="forbid")`。
 
 workspace task 的 TaskDef schema 结构如下：
 
@@ -128,7 +130,7 @@ class ParamsWithDefaults(BaseModel):
 
 ## 字段描述和 schema 漂移
 
-`Field(description=...)`、`Field(examples=...)`、alias、正则、长度和数值范围都会进入 Pydantic JSON Schema，进而进入 generated TaskDef JSON。只有在团队接受 TaskDef schema 输出变化时，才把描述性文案写入 `Field(...)`。
+`Field(description=...)`、`Field(examples=...)`、alias、正则、长度和数值范围都会进入 Pydantic JSON Schema，进而进入 generated TaskDef JSON。`BaseModel` class docstring 只作为 Python API 文档，不作为 TaskDef schema 描述。不要用 `ConfigDict` 或 model-level `json_schema_extra` 定义 TaskDef schema 文案。
 
 如果只是想解释字段业务含义，优先写在本地文档、module 注释或 API docstring 中。这样可以补全文档，不改变 Conductor 注册用的 TaskDef JSON。
 
