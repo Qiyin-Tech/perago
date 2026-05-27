@@ -23,11 +23,11 @@ worker process count must be at least 1
 
 Perago 通过 `perago start --execution-mode ...` 和 `PERAGO_EXECUTION_MODE` 选择 execution mode；命令行参数优先，其次是环境变量，默认值为 `process`。`process` 模式用于隔离性更强的执行；`thread` 模式使用 SDK `TaskRunner(thread_count=N)` 在同一进程内执行 task body。
 
-默认 process 模式的 task body 并发单位是独立 executor process。同一进程内线程池和 asyncio worker pool 不参与这个模式。broker process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor；executor process 只消费 broker 派发的 assignment。
+默认 process 模式的 task body 并发单位是独立 executor process。同一进程内线程池和 asyncio worker pool 不参与 executor 侧执行。broker process 会导入同一个 single-task module，并用同一个 task name 去 poll Conductor；SDK `TaskRunner(thread_count=N)` 负责 broker 侧并发 poll、lease tracking 和 result update。
 
-process broker 的 adapter、SDK runner 启动函数和 supervisor 进程树已经落地。`run_conductor_process_broker(...)` 会把 `PeragoProcessDispatchWorker` 包进 SDK `TaskRunner(thread_count=N)`，让 broker 负责 poll、续租和 update result，同时把 task body 执行派发到 executor assignment queue。每次派发都会生成 execution id；executor completion 必须带回同一个 `task_id` 和同一个 `execution_id` 的 `RuntimeTaskResult`，broker adapter 会 fail closed 处理无法匹配的 completion。
+process broker 的 adapter、SDK runner 启动函数和 supervisor 进程树已经落地。supervisor 会为 N 个 executor process 创建 N 个私有 execution slot；每个 slot 是 broker 和对应 executor 之间的一条双向 `multiprocessing.Pipe`。`run_conductor_process_broker(...)` 会把 `PeragoProcessDispatchWorker` 包进 SDK `TaskRunner(thread_count=N)`，让 broker 负责 poll、续租和 update result，同时在每个 `execute(...)` 中租用一个空闲 slot，把 task body 执行派发到该 slot pipe。每次派发都会生成 execution id；executor completion 必须从同一条 pipe 带回同一个 `task_id` 和同一个 `execution_id` 的 `RuntimeTaskResult`，broker adapter 会 fail closed 处理无法匹配的 completion。
 
-executor 侧的本地执行循环是 `run_process_executor_loop(...)`。它只消费 broker 派发的 `ProcessTaskAssignment`，执行 Perago task runtime，然后把 `ProcessTaskCompletion` 写回 broker completion queue；它不直接 poll Conductor，也不直接 update result。workspace attempt fence reload 会通过 `ProcessAttemptFenceRequest` 发给 broker，broker 调 Conductor `get_task` 并把 `ProcessAttemptFenceResponse` 返回到该 executor 的 response queue。
+executor 侧的本地执行循环是 `run_process_executor_loop(...)`。它只监听自己的 slot pipe：收到 `ProcessTaskAssignment` 后执行 Perago task runtime，然后把 `ProcessTaskCompletion` 写回同一条 pipe；它不直接 poll Conductor，也不直接 update result。主任务执行不使用全局 work-stealing queue。workspace attempt fence reload 仍会通过共享 `ProcessAttemptFenceRequest` queue 发给 broker，broker 调 Conductor `get_task` 并把 `ProcessAttemptFenceResponse` 返回到该 executor 的 response queue。
 
 显式 `thread` 模式不会创建 executor child process：
 
@@ -67,7 +67,7 @@ supervisor 会把每个 executor 的 `PERAGO_WORKER_ID` 写入 child environment
 3. 准备 worker runtime。
 4. 检查 runtime config 已存在。
 5. broker 绑定 Conductor SDK runner 并进入 poll/update loop。
-6. executor 绑定 LakeFS workspace runtime，并进入 assignment queue loop。
+6. executor 绑定 LakeFS workspace runtime，并进入自己的 slot pipe loop。
 
 启动时 supervisor 会先在 `PERAGO_WORKSPACE_ROOT` 下获取 `.perago-supervisor.lock`。锁文件写入当前 supervisor pid，用来禁止两个 supervisor 共享同一个 workspace root；如果已有锁的 pid 还活着，新的 supervisor 会拒绝启动；如果 pid 已不存在，旧锁会被清理。拿到锁后，supervisor 会 sweep 一次上次 supervisor/host crash 遗留的 orphan attempt workspace。随后 supervisor 会启动后台 workspace GC loop，按 `PERAGO_WORKSPACE_GC_INTERVAL` 周期扫描超过 `PERAGO_WORKSPACE_GC_TTL` 且不属于活跃 executor owner 的 attempt workspace。准备 worker runtime 只做本进程身份和日志初始化：
 
@@ -103,9 +103,9 @@ supervisor 会持续监控 broker 和每个 executor process。如果 broker 退
 收到 `SIGINT` 或 `SIGTERM` 时，supervisor 会进入 drain：
 
 1. broker 停止继续 poll 新 Conductor task。
-2. supervisor 向 assignment queue 写入 executor stop sentinel。
-3. idle executor 从 queue poll 中退出。
-4. 正在执行 assignment 的 executor 不会被信号打断；它会尽量跑完当前 task、staging cleanup、本机 workspace cleanup 和 completion enqueue。
+2. supervisor 通过每个 executor 的 slot pipe 写入 executor stop sentinel。
+3. idle executor 从 pipe poll 中退出。
+4. 正在执行 assignment 的 executor 不会被信号打断；它会尽量跑完当前 task、staging cleanup、本机 workspace cleanup 和 completion send。
 5. supervisor 等待 child 自然退出，然后做一次最终 workspace GC sweep。
 
 executor child 自己收到 `SIGTERM` 或 `SIGINT` 时只设置停止标志，不会在 signal handler 中 `sys.exit()`、抛异常、清理 workspace、调用 LakeFS 或调用 Conductor。当前 assignment 的 `finally` 仍有机会执行。

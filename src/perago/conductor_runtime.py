@@ -4,7 +4,7 @@ import signal
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from queue import Empty
+from queue import Empty, Queue
 from types import FrameType
 from typing import Any, Protocol
 from uuid import uuid4
@@ -64,6 +64,12 @@ class ProcessTaskCompletion:
     task_id: str
     execution_id: str
     result: RuntimeTaskResult
+
+
+@dataclass(frozen=True)
+class ProcessExecutorSlot:
+    worker_id: str
+    connection: Any
 
 
 @dataclass(frozen=True)
@@ -179,8 +185,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         task: TaskDefinition,
         worker_id: str,
         thread_count: int,
-        assignment_queue: Any,
-        completion_queue: Any,
+        slots: list[ProcessExecutorSlot],
         attempt_fence_request_queue: Any | None = None,
         attempt_fence_response_queues: Mapping[str, Any] | None = None,
         client: ConductorRuntimeClient | None = None,
@@ -194,8 +199,10 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         self.register_task_def = False
         self.register_schema = False
         self.lease_extend_enabled = True
-        self._assignment_queue = assignment_queue
-        self._completion_queue = completion_queue
+        self._slots = slots
+        self._available_slots: Queue[ProcessExecutorSlot] = Queue()
+        for slot in slots:
+            self._available_slots.put(slot)
         self._attempt_fence_request_queue = attempt_fence_request_queue
         self._attempt_fence_response_queues = attempt_fence_response_queues or {}
         self._client = client
@@ -208,11 +215,27 @@ class PeragoProcessDispatchWorker(WorkerInterface):
     def execute(self, task: Task) -> TaskResult:
         attempt = conductor_task_to_attempt(task)
         execution_id = uuid4().hex
-        self._assignment_queue.put(ProcessTaskAssignment(attempt=attempt, execution_id=execution_id))
-        result = self._wait_for_completion(attempt, execution_id)
+        slot = self._available_slots.get()
+        try:
+            try:
+                slot.connection.send(ProcessTaskAssignment(attempt=attempt, execution_id=execution_id))
+            except (BrokenPipeError, EOFError, OSError):
+                result = failed_result(
+                    f"executor pipe for worker {slot.worker_id} is broken for task {attempt.task_id}",
+                    max_length=self._failure_reason_max_length,
+                )
+            else:
+                result = self._wait_for_completion(slot, attempt, execution_id)
+        finally:
+            self._available_slots.put(slot)
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 
-    def _wait_for_completion(self, attempt: ConductorTaskAttempt, execution_id: str) -> RuntimeTaskResult:
+    def _wait_for_completion(
+        self,
+        slot: ProcessExecutorSlot,
+        attempt: ConductorTaskAttempt,
+        execution_id: str,
+    ) -> RuntimeTaskResult:
         deadline = (
             None
             if self._completion_timeout_seconds is None
@@ -221,8 +244,10 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         while True:
             self._drain_attempt_fence_requests()
             try:
+                timeout = PROCESS_QUEUE_POLL_INTERVAL_SECONDS
                 if deadline is None:
-                    completion = self._completion_queue.get(timeout=PROCESS_QUEUE_POLL_INTERVAL_SECONDS)
+                    if not slot.connection.poll(timeout):
+                        continue
                 else:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -230,11 +255,14 @@ class PeragoProcessDispatchWorker(WorkerInterface):
                             f"executor did not return result for task {attempt.task_id}",
                             max_length=self._failure_reason_max_length,
                         )
-                    completion = self._completion_queue.get(
-                        timeout=min(PROCESS_QUEUE_POLL_INTERVAL_SECONDS, remaining)
-                    )
-            except Empty:
-                continue
+                    if not slot.connection.poll(min(timeout, remaining)):
+                        continue
+                completion = slot.connection.recv()
+            except (BrokenPipeError, EOFError, OSError):
+                return failed_result(
+                    f"executor pipe for worker {slot.worker_id} is broken for task {attempt.task_id}",
+                    max_length=self._failure_reason_max_length,
+                )
             break
 
         if not isinstance(completion, ProcessTaskCompletion):
@@ -333,8 +361,7 @@ def run_conductor_process_broker(
     worker_id: str,
     process_count: int,
     conductor_config: ConductorConfig,
-    assignment_queue: Any,
-    completion_queue: Any,
+    slots: list[ProcessExecutorSlot],
     attempt_fence_request_queue: Any | None = None,
     attempt_fence_response_queues: Mapping[str, Any] | None = None,
     client: ConductorRuntimeClient | None = None,
@@ -346,8 +373,7 @@ def run_conductor_process_broker(
         task=task,
         worker_id=worker_id,
         thread_count=process_count,
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
+        slots=slots,
         attempt_fence_request_queue=attempt_fence_request_queue,
         attempt_fence_response_queues=attempt_fence_response_queues,
         client=client,
@@ -378,8 +404,7 @@ def run_process_executor_loop(
     task: TaskDefinition,
     worker_id: str,
     workspace_root: Any,
-    assignment_queue: Any,
-    completion_queue: Any,
+    connection: Any,
     load_current_attempt: LoadCurrentAttempt,
     failure_reason_max_length: int,
     workspace_runtime: WorkspaceRuntime | None = None,
@@ -397,10 +422,12 @@ def run_process_executor_loop(
     try:
         while not shutdown_requested:
             try:
-                try:
-                    assignment = assignment_queue.get(timeout=PROCESS_QUEUE_POLL_INTERVAL_SECONDS)
-                except TypeError:
-                    assignment = assignment_queue.get()
+                if not connection.poll(PROCESS_QUEUE_POLL_INTERVAL_SECONDS):
+                    continue
+                assignment = connection.recv()
+            except (BrokenPipeError, EOFError, OSError):
+                logger.bind(worker_id=worker_id).info("process executor pipe closed")
+                return
             except Empty:
                 continue
             if isinstance(assignment, StopProcessExecutor):
@@ -423,13 +450,19 @@ def run_process_executor_loop(
                 execution_id=assignment.execution_id,
                 failure_reason_max_length=failure_reason_max_length,
             )
-            completion_queue.put(
-                ProcessTaskCompletion(
-                    task_id=attempt.task_id,
-                    execution_id=assignment.execution_id,
-                    result=result,
+            try:
+                connection.send(
+                    ProcessTaskCompletion(
+                        task_id=attempt.task_id,
+                        execution_id=assignment.execution_id,
+                        result=result,
+                    )
                 )
-            )
+            except (BrokenPipeError, EOFError, OSError):
+                logger.bind(worker_id=worker_id, task_id=attempt.task_id).info(
+                    "process executor pipe closed before completion could be sent"
+                )
+                return
     finally:
         signal.signal(signal.SIGINT, previous_int)
         signal.signal(signal.SIGTERM, previous_term)

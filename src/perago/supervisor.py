@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
 from loguru import logger
 
 from perago.conductor_runtime import (
     OrkesConductorRuntimeClient,
+    ProcessExecutorSlot,
     StopProcessExecutor,
     load_current_attempt_via_broker,
     run_conductor_process_broker,
@@ -240,8 +242,12 @@ def _run_worker_supervisor_locked(
         module_target=module_target,
         process_count=process_count,
     )
-    assignment_queue: multiprocessing.Queue = multiprocessing.Queue()
-    completion_queue: multiprocessing.Queue = multiprocessing.Queue()
+    broker_slots: list[ProcessExecutorSlot] = []
+    executor_connections: dict[int, Any] = {}
+    for spec in specs:
+        broker_connection, executor_connection = multiprocessing.Pipe()
+        broker_slots.append(ProcessExecutorSlot(worker_id=spec.worker_id, connection=broker_connection))
+        executor_connections[spec.slot] = executor_connection
     attempt_fence_request_queue: multiprocessing.Queue = multiprocessing.Queue()
     attempt_fence_response_queues: dict[str, multiprocessing.Queue] = {
         spec.worker_id: multiprocessing.Queue() for spec in specs
@@ -251,8 +257,7 @@ def _run_worker_supervisor_locked(
         config=config,
         module_target=module_target,
         process_count=process_count,
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
+        slots=broker_slots,
         attempt_fence_request_queue=attempt_fence_request_queue,
         attempt_fence_response_queues=attempt_fence_response_queues,
     )
@@ -274,8 +279,7 @@ def _run_worker_supervisor_locked(
                 config=config,
                 module_target=module_target,
                 spec=spec,
-                assignment_queue=assignment_queue,
-                completion_queue=completion_queue,
+                connection=executor_connections[spec.slot],
                 attempt_fence_request_queue=attempt_fence_request_queue,
                 attempt_fence_response_queue=attempt_fence_response_queues[spec.worker_id],
             )
@@ -306,8 +310,7 @@ def _run_worker_supervisor_locked(
                     config=config,
                     module_target=module_target,
                     spec=spec,
-                    assignment_queue=assignment_queue,
-                    completion_queue=completion_queue,
+                    connection=executor_connections[spec.slot],
                     attempt_fence_request_queue=attempt_fence_request_queue,
                     attempt_fence_response_queue=attempt_fence_response_queues[spec.worker_id],
                 )
@@ -316,8 +319,11 @@ def _run_worker_supervisor_locked(
     finally:
         stop.set()
         gc_loop.stop()
-        for _ in executors:
-            assignment_queue.put(StopProcessExecutor())
+        for slot in broker_slots:
+            try:
+                slot.connection.send(StopProcessExecutor())
+            except (BrokenPipeError, EOFError, OSError):
+                pass
         if broker.is_alive():
             broker.terminate()
         _stop_worker_processes(
@@ -547,8 +553,7 @@ def _start_broker_process(
     config: RuntimeConfig,
     module_target: str,
     process_count: int,
-    assignment_queue: multiprocessing.Queue,
-    completion_queue: multiprocessing.Queue,
+    slots: list[ProcessExecutorSlot],
     attempt_fence_request_queue: multiprocessing.Queue,
     attempt_fence_response_queues: dict[str, multiprocessing.Queue],
 ) -> multiprocessing.Process:
@@ -558,8 +563,7 @@ def _start_broker_process(
             "config": config,
             "module_target": module_target,
             "process_count": process_count,
-            "assignment_queue": assignment_queue,
-            "completion_queue": completion_queue,
+            "slots": slots,
             "attempt_fence_request_queue": attempt_fence_request_queue,
             "attempt_fence_response_queues": attempt_fence_response_queues,
         },
@@ -574,8 +578,7 @@ def _start_process_executor(
     config: RuntimeConfig,
     module_target: str,
     spec: WorkerChildSpec,
-    assignment_queue: multiprocessing.Queue,
-    completion_queue: multiprocessing.Queue,
+    connection: Any,
     attempt_fence_request_queue: multiprocessing.Queue,
     attempt_fence_response_queue: multiprocessing.Queue,
 ) -> multiprocessing.Process:
@@ -585,8 +588,7 @@ def _start_process_executor(
             "config": config,
             "module_target": module_target,
             "child_env": spec.env,
-            "assignment_queue": assignment_queue,
-            "completion_queue": completion_queue,
+            "connection": connection,
             "attempt_fence_request_queue": attempt_fence_request_queue,
             "attempt_fence_response_queue": attempt_fence_response_queue,
         },
@@ -601,8 +603,7 @@ def _broker_process_main(
     config: RuntimeConfig,
     module_target: str,
     process_count: int,
-    assignment_queue: multiprocessing.Queue,
-    completion_queue: multiprocessing.Queue,
+    slots: list[ProcessExecutorSlot],
     attempt_fence_request_queue: multiprocessing.Queue,
     attempt_fence_response_queues: dict[str, multiprocessing.Queue],
 ) -> None:
@@ -622,8 +623,7 @@ def _broker_process_main(
         worker_id=runtime.worker_id,
         process_count=process_count,
         conductor_config=conductor_config,
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
+        slots=slots,
         attempt_fence_request_queue=attempt_fence_request_queue,
         attempt_fence_response_queues=attempt_fence_response_queues,
         client=conductor,
@@ -636,8 +636,7 @@ def _process_executor_main(
     config: RuntimeConfig,
     module_target: str,
     child_env: dict[str, str],
-    assignment_queue: multiprocessing.Queue,
-    completion_queue: multiprocessing.Queue,
+    connection: Any,
     attempt_fence_request_queue: multiprocessing.Queue,
     attempt_fence_response_queue: multiprocessing.Queue,
 ) -> None:
@@ -653,8 +652,7 @@ def _process_executor_main(
         task=task,
         worker_id=runtime.worker_id,
         workspace_root=config.workspace_root,
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
+        connection=connection,
         load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
             current_attempt,
             worker_id=runtime.worker_id,

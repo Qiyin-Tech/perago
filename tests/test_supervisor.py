@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from perago import ConductorConfig, LakeFSConfig, RuntimeConfig, RuntimeConfigError, restart_backoff_seconds, worker_child_specs
+from perago.conductor_runtime import ProcessExecutorSlot, StopProcessExecutor
 from perago.supervisor import (
     MIN_DURATION_SECONDS,
     PROCESS_JOIN_TIMEOUT_SECONDS,
@@ -450,10 +451,14 @@ def test_run_worker_supervisor_process_mode_starts_broker_and_executors(monkeypa
     assert started["broker"]["config"] is config
     assert started["broker"]["module_target"] == "app.workers.features_build"
     assert started["broker"]["process_count"] == 2
+    assert [slot.worker_id for slot in started["broker"]["slots"]] == ["worker0001", "worker0002"]
     assert len(started["executors"]) == 2
     assert [item["spec"].worker_id for item in started["executors"]] == ["worker0001", "worker0002"]
-    assert all(item["assignment_queue"] is started["broker"]["assignment_queue"] for item in started["executors"])
-    assert all(item["completion_queue"] is started["broker"]["completion_queue"] for item in started["executors"])
+    assert all(isinstance(slot, ProcessExecutorSlot) for slot in started["broker"]["slots"])
+    assert [item["connection"].recv() for item in started["executors"]] == [
+        StopProcessExecutor(),
+        StopProcessExecutor(),
+    ]
     assert all(
         item["attempt_fence_request_queue"] is started["broker"]["attempt_fence_request_queue"]
         for item in started["executors"]
@@ -537,8 +542,9 @@ def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path
             secret_access_key="lakefs-secret",
         ),
     )
-    assignment_queue = object()
-    completion_queue = object()
+    broker_connection = object()
+    executor_connection = object()
+    slots = [ProcessExecutorSlot(worker_id="worker0001", connection=broker_connection)]
     attempt_fence_request_queue = object()
     attempt_fence_response_queue = object()
     attempt_fence_response_queues = {"worker0001": attempt_fence_response_queue}
@@ -552,8 +558,7 @@ def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path
         config=config,
         module_target="app.workers.features_build",
         process_count=3,
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
+        slots=slots,
         attempt_fence_request_queue=attempt_fence_request_queue,
         attempt_fence_response_queues=attempt_fence_response_queues,
     )
@@ -561,8 +566,7 @@ def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path
         config=config,
         module_target="app.workers.features_build",
         spec=spec,
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
+        connection=executor_connection,
         attempt_fence_request_queue=attempt_fence_request_queue,
         attempt_fence_response_queue=attempt_fence_response_queue,
     )
@@ -571,12 +575,12 @@ def test_process_runtime_start_helpers_use_named_processes(monkeypatch, tmp_path
     assert executor.started is True
     assert created[0].name == "perago-conductor-broker"
     assert created[0].kwargs["process_count"] == 3
+    assert created[0].kwargs["slots"] is slots
     assert created[0].kwargs["attempt_fence_request_queue"] is attempt_fence_request_queue
     assert created[0].kwargs["attempt_fence_response_queues"] is attempt_fence_response_queues
     assert created[1].name == "perago-executor-0001"
     assert created[1].kwargs["child_env"]["PERAGO_WORKER_ID"] == "worker0001"
-    assert created[1].kwargs["assignment_queue"] is assignment_queue
-    assert created[1].kwargs["completion_queue"] is completion_queue
+    assert created[1].kwargs["connection"] is executor_connection
     assert created[1].kwargs["attempt_fence_request_queue"] is attempt_fence_request_queue
     assert created[1].kwargs["attempt_fence_response_queue"] is attempt_fence_response_queue
 
@@ -598,9 +602,8 @@ def test_broker_process_main_prepares_runtime_and_runs_dispatch_broker(monkeypat
     task = SimpleNamespace(controls=SimpleNamespace(publish_budget=None))
     runtime = SimpleNamespace(worker_id="workerBroker", log_file=tmp_path / "worker.log")
     conductor = object()
-    queues = {
-        "assignment_queue": object(),
-        "completion_queue": object(),
+    ipc = {
+        "slots": [ProcessExecutorSlot(worker_id="worker0001", connection=object())],
         "attempt_fence_request_queue": object(),
         "attempt_fence_response_queues": {"worker0001": object()},
     }
@@ -615,7 +618,7 @@ def test_broker_process_main_prepares_runtime_and_runs_dispatch_broker(monkeypat
         config=config,
         module_target="app.workers.features_build",
         process_count=2,
-        **queues,
+        **ipc,
     )
 
     assert ran == {
@@ -625,7 +628,7 @@ def test_broker_process_main_prepares_runtime_and_runs_dispatch_broker(monkeypat
         "conductor_config": config.conductor,
         "client": conductor,
         "failure_reason_max_length": config.failure_reason_max_length,
-        **queues,
+        **ipc,
     }
 
 
@@ -654,8 +657,7 @@ def test_broker_process_main_requires_conductor_config(monkeypatch, tmp_path) ->
             config=config,
             module_target="app.workers.features_build",
             process_count=1,
-            assignment_queue=object(),
-            completion_queue=object(),
+            slots=[],
             attempt_fence_request_queue=object(),
             attempt_fence_response_queues={},
         )
@@ -688,9 +690,8 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
         cleanup_staging=object(),
         complete_noop_workspace=object(),
     )
-    queues = {
-        "assignment_queue": object(),
-        "completion_queue": object(),
+    ipc = {
+        "connection": object(),
         "attempt_fence_request_queue": object(),
         "attempt_fence_response_queue": object(),
     }
@@ -712,15 +713,14 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
         config=config,
         module_target="app.workers.features_build",
         child_env={"PERAGO_WORKER_ID": "worker0001"},
-        **queues,
+        **ipc,
     )
 
     assert created_lakefs == {"lakefs_config": config.lakefs, "publish_budget": 3}
     assert ran["task"] is task
     assert ran["worker_id"] == "worker0001"
     assert ran["workspace_root"] == config.workspace_root
-    assert ran["assignment_queue"] is queues["assignment_queue"]
-    assert ran["completion_queue"] is queues["completion_queue"]
+    assert ran["connection"] is ipc["connection"]
     assert ran["workspace_runtime"] is lakefs_runtime
     assert ran["failure_reason_max_length"] == config.failure_reason_max_length
 
@@ -769,8 +769,7 @@ def test_process_executor_main_ignores_publish_budget_for_read_only_workspace(mo
         config=config,
         module_target="app.workers.read_only_budget",
         child_env={"PERAGO_WORKER_ID": "worker0001"},
-        assignment_queue=object(),
-        completion_queue=object(),
+        connection=object(),
         attempt_fence_request_queue=object(),
         attempt_fence_response_queue=object(),
     )
@@ -803,8 +802,7 @@ def test_process_executor_main_requires_lakefs_config(monkeypatch, tmp_path) -> 
             config=config,
             module_target="app.workers.features_build",
             child_env={"PERAGO_WORKER_ID": "worker0001"},
-            assignment_queue=object(),
-            completion_queue=object(),
+            connection=object(),
             attempt_fence_request_queue=object(),
             attempt_fence_response_queue=object(),
         )
@@ -836,8 +834,7 @@ def test_process_executor_main_allows_workspace_free_task_without_lakefs(monkeyp
         config=config,
         module_target="app.workers.metadata_validate",
         child_env={"PERAGO_WORKER_ID": "worker0001"},
-        assignment_queue=object(),
-        completion_queue=object(),
+        connection=object(),
         attempt_fence_request_queue=object(),
         attempt_fence_response_queue=object(),
     )
