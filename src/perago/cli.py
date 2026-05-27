@@ -12,7 +12,12 @@ from perago.config import ExecutionMode, load_runtime_config
 from perago.errors import RuntimeConfigError, TaskDefinitionError
 from perago.supervisor import run_worker_supervisor
 from perago.task import load_module_task
-from perago.taskdef import build_taskdef, task_models_with_config, write_taskdef
+from perago.taskdef import (
+    build_taskdef,
+    task_models_with_config,
+    validate_no_root_task_models,
+    write_taskdef,
+)
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -42,6 +47,7 @@ def check(module_target: str) -> None:
         config = load_runtime_config(module_target)
         task = load_module_task(module_target)
         _warn_ignored_publish_budget(task)
+        validate_no_root_task_models(task)
         _warn_task_model_config(task)
         build_taskdef(task)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
@@ -61,6 +67,7 @@ def extract(module_target: str, output: Path = typer.Option(..., "--output", "-o
         load_runtime_config(module_target)
         task = load_module_task(module_target)
         _warn_ignored_publish_budget(task)
+        validate_no_root_task_models(task)
         _warn_task_model_config(task)
         path = write_taskdef(task, output)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema, ValueError) as exc:
@@ -84,6 +91,7 @@ def start(
         if task.has_workspace and config.lakefs is None:
             raise RuntimeConfigError("LakeFS config is required for workspace tasks")
         _warn_ignored_publish_budget(task)
+        validate_no_root_task_models(task)
         _warn_task_model_config(task)
         build_taskdef(task)
         conductor = OrkesConductorRuntimeClient.from_config(config.conductor)

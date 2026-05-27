@@ -43,6 +43,18 @@ def test_check_cli_warns_when_task_models_use_configdict(monkeypatch, tmp_path) 
     assert "not part of the Perago task contract" in result.output
 
 
+def test_check_cli_rejects_root_model_task_contracts(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.root_model_task"])
+
+    assert result.exit_code == 1
+    assert "Pydantic RootModel on task model(s) Params is not supported" in result.output
+    assert "ordinary BaseModel object models" in result.output
+
+
 def test_check_cli_reports_connection_config_status_without_secrets(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".env").write_text(
@@ -278,6 +290,19 @@ def test_extract_cli_accepts_short_output_option(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "generated" / "taskdef.json").exists()
 
 
+def test_extract_cli_rejects_root_model_task_contracts(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+    output = tmp_path / "generated" / "root.json"
+
+    result = runner.invoke(app, ["extract", "app.workers.root_model_task", "--output", str(output)])
+
+    assert result.exit_code == 1
+    assert "Pydantic RootModel on task model(s) Params is not supported" in result.output
+    assert not output.exists()
+
+
 def test_extract_cli_warns_and_ignores_read_only_publish_budget(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
@@ -500,6 +525,17 @@ def test_start_cli_allows_workspace_free_task_without_lakefs_config(monkeypatch,
 
     assert result.exit_code == 0
     assert started["module_target"] == "app.workers.metadata_validate"
+
+
+def test_start_cli_rejects_root_model_task_contracts(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("CONDUCTOR_SERVER_URL=http://conductor.local/api", encoding="utf-8")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.root_model_task"])
+
+    assert result.exit_code == 1
+    assert "Pydantic RootModel on task model(s) Params is not supported" in result.output
 
 
 def test_start_cli_wraps_unexpected_taskdef_validation_errors(monkeypatch, tmp_path) -> None:

@@ -105,7 +105,7 @@ outputKeys = ["result"]
 
 `workspace` schema 来自 Perago 的 `WorkspaceInput` / `WorkspaceOutput`，`params` 和 `result` schema 来自任务函数的 Pydantic 类型注解。`perago extract` 还会把嵌套 schema inline，删除 Pydantic `title` 和从 `BaseModel` class docstring 自动生成的 object-level `description`，并把 object schema 关闭为 `additionalProperties: false`。
 
-不要在 task 的 `params` / `result` model 中依赖 `ConfigDict`。`perago check` 会对配置了 `ConfigDict` 的 task model 报 warning；Perago 当前不保证这类 model 的 TaskDef schema 或运行时行为。
+不要在 task 的 `params` / `result` model 中使用 `RootModel`，也不要依赖 `ConfigDict`。Perago 期望 task contract 是普通 `BaseModel` object model：`RootModel` 会被 `perago check`、`perago extract` 和 `perago start` 直接拒绝；配置了 `ConfigDict` 的 task model 会报 warning。Perago 当前不保证 `ConfigDict` model 的 TaskDef schema 或运行时行为。
 
 Perago 不生成 Conductor `inputTemplate`。Pydantic 字段默认值会保留在 JSON Schema 里，但不会被复制到 TaskDef 顶层的 input template 中。
 
