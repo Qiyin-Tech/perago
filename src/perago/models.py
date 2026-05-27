@@ -66,10 +66,8 @@ class RetryPolicy(BaseModel):
 class TimeoutPolicy(BaseModel):
     """Timeout controls copied into the generated Conductor TaskDef.
 
-    ``TimeoutPolicy`` holds the general Conductor timeout fields used when a
-    task does not declare a :class:`PublishBudget`. Workspace tasks with a
-    publish budget derive ``responseTimeoutSeconds`` from that budget instead
-    of ``response_seconds``.
+    ``TimeoutPolicy`` holds the general Conductor timeout fields used by the
+    generated TaskDef.
 
     Parameters
     ----------
@@ -78,8 +76,7 @@ class TimeoutPolicy(BaseModel):
     seconds : int, default=0
         Task timeout written as ``timeoutSeconds``.
     response_seconds : int, default=600
-        Response timeout written as ``responseTimeoutSeconds`` when no publish
-        budget is configured.
+        Response timeout written as ``responseTimeoutSeconds``.
     poll_seconds : int, default=0
         Poll timeout written as ``pollTimeoutSeconds``.
     total_seconds : int, default=0
@@ -165,12 +162,12 @@ class ExecutionLimits(BaseModel):
 class PublishBudget(BaseModel):
     """Operational time budget for workspace publication.
 
-    ``PublishBudget`` derives the Conductor ``responseTimeoutSeconds`` used by
-    generated TaskDefs for workspace tasks. The LakeFS merge field is used as
-    a LakeFS SDK request timeout. The Conductor completion field is currently a
-    completion-phase reserve inside ``responseTimeoutSeconds``; it is not wired
-    to the Conductor SDK ``TaskRunner`` result-update HTTP request timeout. It
-    is an operational time budget, not an exactly-once publication proof.
+    ``PublishBudget`` derives a publication budget that can be compared with
+    the task response timeout during TaskDef generation. The LakeFS merge field
+    is used as a LakeFS SDK request timeout. The Conductor completion field is
+    currently a completion-phase reserve; it is not wired to the Conductor SDK
+    ``TaskRunner`` result-update HTTP request timeout. It is an operational
+    time budget, not an exactly-once publication proof.
 
     Parameters
     ----------
@@ -182,10 +179,9 @@ class PublishBudget(BaseModel):
         Request timeout for the LakeFS merge operation. Must cover
         ``observed_merge_p99_seconds + safety_margin_seconds``.
     conductor_completion_timeout_seconds : int
-        Reserve for the Conductor completion phase when deriving
-        ``responseTimeoutSeconds``. The SDK ``TaskRunner`` owns result update,
-        and Perago does not currently apply this value as its internal HTTP
-        request timeout.
+        Reserve for the Conductor completion phase. The SDK ``TaskRunner`` owns
+        result update, and Perago does not currently apply this value as its
+        internal HTTP request timeout.
     worker_shutdown_grace_seconds : int
         Grace period reserved for worker shutdown after publication.
     heartbeat_interval_seconds : int
@@ -194,7 +190,8 @@ class PublishBudget(BaseModel):
     Attributes
     ----------
     response_timeout_seconds : int
-        Derived Conductor ``responseTimeoutSeconds`` value.
+        Derived publication budget that TaskDef generation can compare with
+        ``TimeoutPolicy.response_seconds``.
 
     Raises
     ------
@@ -255,7 +252,7 @@ class PublishBudget(BaseModel):
 
     @property
     def response_timeout_seconds(self) -> int:
-        """Derived Conductor response timeout for workspace publication."""
+        """Derived publication budget for workspace publication."""
         return (
             self.lakefs_merge_timeout_seconds
             + self.conductor_completion_timeout_seconds
@@ -288,7 +285,7 @@ class TaskControls(BaseModel):
     ----------
     response_timeout_seconds : int
         Effective response timeout used for TaskDef generation. This comes from
-        ``publish_budget`` when present, otherwise from ``timeout``.
+        ``timeout.response_seconds``.
 
     Examples
     --------
@@ -310,8 +307,6 @@ class TaskControls(BaseModel):
     @property
     def response_timeout_seconds(self) -> int:
         """Effective response timeout for the generated Conductor TaskDef."""
-        if self.publish_budget is not None:
-            return self.publish_budget.response_timeout_seconds
         return self.timeout.response_seconds
 
 

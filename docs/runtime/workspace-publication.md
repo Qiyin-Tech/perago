@@ -147,7 +147,7 @@ Abandoned target commits 不在 task publish 路径中删除。replacement publi
 MVP 的 workspace publication 依赖这些运行时假设：
 
 - Conductor lease/heartbeat 必须覆盖 task body、stage、publish、cleanup 和 result update。
-- `PublishBudget` 应来自真实 LakeFS publish 观测值和安全边界，用来约束 publish timeout，并把 Conductor completion budget reserve 计入 `responseTimeoutSeconds`。
+- `PublishBudget` 应来自真实 LakeFS publish 观测值和安全边界，用来约束 publish timeout，并保留 Conductor completion budget reserve；task 的 `responseTimeoutSeconds` 应单独覆盖完整 attempt 生命周期。
 - 不要把 LakeFS publish 与 Conductor completion 当成单个事务。publish 成功但 completion 未上报时，Perago 不做 workflow recovery。
 - 如果 runtime 无法判断当前 attempt 是否仍可发布，应 fail closed，让 Conductor 按 timeout/fail/retry 策略处理。
 

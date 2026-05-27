@@ -1,6 +1,6 @@
 # Publish Budget
 
-`PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只对可写 workspace task 生效，用来让 Conductor 的 `responseTimeoutSeconds` 覆盖 LakeFS merge、Conductor completion 阶段预留、worker shutdown grace 和 heartbeat slack。
+`PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只对可写 workspace task 生效，用来约束 LakeFS merge，并记录 Conductor completion 阶段预留、worker shutdown grace 和 heartbeat slack。
 
 这个页面面向运行时维护者和需要给 workspace task 配置发布预算的任务作者。TaskDef 字段映射见 `../getting-started/controls-and-taskdef.md`；LakeFS 发布顺序见 `workspace-publication.md`。
 
@@ -48,9 +48,9 @@ def build_features(workspace: Path, params: BuildFeaturesParams) -> BuildFeature
 Required/optional/generated 字段边界：
 
 - required: `PublishBudget` 的 6 个字段都必须显式提供。
-- optional: `TaskControls.publish_budget` 可以省略；省略时使用 `TimeoutPolicy.response_seconds`。
+- optional: `TaskControls.publish_budget` 可以省略。
 - conditional: `publish_budget` 只允许配置在带 `WorkspaceSpec(...)` 的 workspace task 上；`read_only=True` 时会被忽略并发出 warning。
-- generated: `responseTimeoutSeconds` 由 `PublishBudget.response_timeout_seconds` 派生并写入 TaskDef。
+- generated: `responseTimeoutSeconds` 来自 `TimeoutPolicy.response_seconds`；如果它小于 `PublishBudget.response_timeout_seconds`，TaskDef 生成会发出 warning。
 - forbidden: 不能把 `publish_budget` 配在 workspace-free task 上；不能在 `PublishBudget` 里声明未知字段或 exactly-once 语义。
 
 ## 字段语义
@@ -60,7 +60,7 @@ Required/optional/generated 字段边界：
 | `observed_merge_p99_seconds` | `>= 0` | 目标 workload 下已观测到的 LakeFS merge 高分位延迟。 |
 | `safety_margin_seconds` | `>= 0` | 覆盖观测抖动、网络抖动和小幅数据量增长的安全余量。 |
 | `lakefs_merge_timeout_seconds` | `>= 1` | 传给 LakeFS merge SDK request 的 timeout。必须覆盖观测 p99 加安全余量。 |
-| `conductor_completion_timeout_seconds` | `>= 1` | Conductor completion 阶段的预算预留，用于派生 `responseTimeoutSeconds`。当前 SDK `TaskRunner` owns result update，Perago 不把该值作为 SDK 内部 HTTP request timeout。 |
+| `conductor_completion_timeout_seconds` | `>= 1` | Conductor completion 阶段的预算预留。当前 SDK `TaskRunner` owns result update，Perago 不把该值作为 SDK 内部 HTTP request timeout。 |
 | `worker_shutdown_grace_seconds` | `>= 1` | publication 后预留给 worker 停止、清理和进程退出的时间。 |
 | `heartbeat_interval_seconds` | `>= 1` | 预留给 Conductor response timeout/heartbeat 机制的 slack。 |
 
@@ -83,15 +83,15 @@ lakefs_merge_timeout_seconds
 45 + 15 + 30 + 10 = 100
 ```
 
-因此 `perago extract` 写出的 TaskDef 会包含：
+`perago extract` 写出的 TaskDef 仍然使用 `TimeoutPolicy.response_seconds`：
 
 ```json
 {
-  "responseTimeoutSeconds": 100
+  "responseTimeoutSeconds": 600
 }
 ```
 
-如果同时配置了 `TimeoutPolicy(response_seconds=999)` 和有效 `publish_budget`，`publish_budget` 优先。`PublishBudget` 本身不会写入 TaskDef JSON，也不会出现在 Conductor input/output 中。read-only workspace task 没有 publication 阶段；它的 `publish_budget` 会被忽略，`responseTimeoutSeconds` 使用 `TimeoutPolicy.response_seconds`。
+如果同时配置了 `TimeoutPolicy(response_seconds=999)` 和有效 `publish_budget`，TaskDef 会写入 `999`。如果 `TimeoutPolicy.response_seconds` 小于 `PublishBudget.response_timeout_seconds`，TaskDef 生成会发出 warning，但不会用 publish budget 覆盖 task timeout。`PublishBudget` 本身不会写入 TaskDef JSON，也不会出现在 Conductor input/output 中。read-only workspace task 没有 publication 阶段；它的 `publish_budget` 会被忽略，`responseTimeoutSeconds` 使用 `TimeoutPolicy.response_seconds`。
 
 ## Runtime 使用位置
 
@@ -99,9 +99,9 @@ lakefs_merge_timeout_seconds
 
 | 位置 | 使用字段 | 行为 |
 | --- | --- | --- |
-| TaskDef generation | `response_timeout_seconds` | 生成 Conductor `responseTimeoutSeconds`。 |
+| TaskDef generation | `response_timeout_seconds` | 只用于 warning：当 `TimeoutPolicy.response_seconds` 小于派生值时提示配置过短。 |
 | LakeFS publish | `lakefs_merge_timeout_seconds` | 作为 merge request timeout 传给 LakeFS SDK。 |
-| Conductor completion reserve | `conductor_completion_timeout_seconds` | 只参与 `responseTimeoutSeconds` 预算；SDK `TaskRunner` 当前 owns completion result update。 |
+| Conductor completion reserve | `conductor_completion_timeout_seconds` | 作为 publication 预算预留；SDK `TaskRunner` 当前 owns completion result update。 |
 
 Perago 当前不直接发送 Conductor completion update，也不接管 SDK 的 `update_task_v2` / `update_task` fallback。`conductor-python 1.3.11` 当前没有公开的 `TaskRunner` completion update HTTP timeout 配置入口；如果后续 SDK 提供正式 public option，再把该字段接到 SDK 公开配置上。
 

@@ -139,7 +139,7 @@ def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
 
 ## Workspace task with publish budget
 
-这个正例展示 workspace task 如何声明 publication budget。`PublishBudget` 不会作为业务 input，也不会写入 TaskDef 的独立字段；它会派生 generated `responseTimeoutSeconds`，并在 runtime 中约束 LakeFS merge request timeout。Conductor completion 字段只是 `responseTimeoutSeconds` 中的阶段预留，当前不作为 SDK `TaskRunner` 内部 HTTP request timeout 生效。
+这个正例展示 workspace task 如何声明 publication budget。`PublishBudget` 不会作为业务 input，也不会写入 TaskDef 的独立字段；它在 runtime 中约束 LakeFS merge request timeout。Conductor completion 字段是 publication 预算的一部分，当前不作为 SDK `TaskRunner` 内部 HTTP request timeout 生效。
 
 ```python
 from pathlib import Path
@@ -182,7 +182,7 @@ def render_audio(workspace: Path, params: RenderParams) -> RenderOutput:
 字段边界：
 
 - Required: `PublishBudget` 的六个时间字段都必须显式配置，且 `lakefs_merge_timeout_seconds` 必须覆盖 `observed_merge_p99_seconds + safety_margin_seconds`。
-- Generated: `responseTimeoutSeconds = 45 + 15 + 30 + 10 = 100`。
+- Generated: `responseTimeoutSeconds` 来自 `TimeoutPolicy.response_seconds`；如果它小于 `45 + 15 + 30 + 10 = 100`，TaskDef 生成会发出 warning。
 - Forbidden: workspace-free task 不能配置 `publish_budget`；read-only workspace task 配置 `publish_budget` 会在校验/启动阶段 warning，并忽略该预算。
 
 ## 本地验证
