@@ -1,4 +1,7 @@
-from queue import Empty
+import multiprocessing
+import threading
+import time
+from queue import Queue
 import signal
 from types import SimpleNamespace
 
@@ -11,6 +14,9 @@ from perago.conductor_runtime import (
     OrkesConductorRuntimeClient,
     PeragoProcessDispatchWorker,
     PeragoThreadWorker,
+    ProcessExecutorExited,
+    ProcessExecutorSlot,
+    ProcessExecutorStarted,
     ProcessAttemptFenceRequest,
     ProcessAttemptFenceResponse,
     ProcessTaskAssignment,
@@ -47,6 +53,44 @@ def _attempt(input_data=None) -> ConductorTaskAttempt:
             }
         },
     )
+
+
+def _sdk_task(task_id: str = "task-9b4c") -> Task:
+    return Task(
+        workflow_instance_id="wf-7f3d",
+        task_id=task_id,
+        retry_count=2,
+        task_def_name="metadata.validate",
+        reference_task_name="validate_metadata",
+        seq=3,
+        iteration=1,
+        status="IN_PROGRESS",
+        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+        response_timeout_seconds=75,
+    )
+
+
+def _process_slot(worker_id: str = "metadata0001"):
+    broker_connection, executor_connection = multiprocessing.Pipe()
+    return ProcessExecutorSlot(worker_id=worker_id, connection=broker_connection), executor_connection
+
+
+class _FakeProcessConnection:
+    def __init__(self, incoming: list[object]) -> None:
+        self.incoming = incoming
+        self.sent: list[object] = []
+        self.poll_calls = 0
+
+    def poll(self, timeout=None) -> bool:
+        del timeout
+        self.poll_calls += 1
+        return bool(self.incoming)
+
+    def recv(self):
+        return self.incoming.pop(0)
+
+    def send(self, item) -> None:
+        self.sent.append(item)
 
 
 def test_conductor_task_to_attempt_maps_runtime_fields() -> None:
@@ -306,12 +350,12 @@ def test_thread_worker_passes_failure_reason_limit_to_execution(monkeypatch) -> 
 
 
 def test_process_dispatch_worker_configures_sdk_worker_contract() -> None:
+    slot, _ = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=4,
-        assignment_queue=object(),
-        completion_queue=object(),
+        slots=[slot],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -324,55 +368,34 @@ def test_process_dispatch_worker_configures_sdk_worker_contract() -> None:
 
 
 def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> None:
-    class FakeAssignmentQueue:
-        def __init__(self) -> None:
-            self.items = []
-
-        def put(self, item) -> None:
-            self.items.append(item)
-
-    class FakeCompletionQueue:
-        def __init__(self, assignment_queue) -> None:
-            self.assignment_queue = assignment_queue
-
-        def get(self, timeout=None):
-            del timeout
-            return ProcessTaskCompletion(
-                task_id="task-9b4c",
-                execution_id=self.assignment_queue.items[0].execution_id,
-                result=completed_result({"result": {"valid": True, "reason": None}}),
-            )
-
-    assignment_queue = FakeAssignmentQueue()
+    slot, executor_connection = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=assignment_queue,
-        completion_queue=FakeCompletionQueue(assignment_queue),
+        slots=[slot],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
-    task = Task(
-        workflow_instance_id="wf-7f3d",
-        task_id="task-9b4c",
-        retry_count=2,
-        task_def_name="metadata.validate",
-        reference_task_name="validate_metadata",
-        seq=3,
-        iteration=1,
-        status="IN_PROGRESS",
-        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
-        response_timeout_seconds=75,
-    )
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
 
-    result = worker.execute(task)
-
-    assert len(assignment_queue.items) == 1
-    assignment = assignment_queue.items[0]
+    assert executor_connection.poll(1)
+    assignment = executor_connection.recv()
     assert isinstance(assignment, ProcessTaskAssignment)
     assert assignment.attempt.task_id == "task-9b4c"
     assert assignment.execution_id
     assert assignment.attempt.response_timeout_seconds == 75
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-9b4c",
+            execution_id=assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    result = result_queue.get_nowait()
     assert result.workflow_instance_id == "wf-7f3d"
     assert result.task_id == "task-9b4c"
     assert result.worker_id == "metadataBroker"
@@ -380,262 +403,413 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
     assert result.output_data == {"result": {"valid": True, "reason": None}}
 
 
-def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None:
-    assignment_queue = None
+def test_process_dispatch_worker_uses_distinct_slots_for_concurrent_tasks_and_accepts_reverse_completion() -> None:
+    first_slot, first_executor = _process_slot("metadata0001")
+    second_slot, second_executor = _process_slot("metadata0002")
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=2,
+        slots=[first_slot, second_slot],
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    )
+    results: Queue = Queue()
+    first_thread = threading.Thread(target=lambda: results.put(("first", worker.execute(_sdk_task("task-a")))))
+    second_thread = threading.Thread(target=lambda: results.put(("second", worker.execute(_sdk_task("task-b")))))
 
-    class FakeAssignmentQueue:
-        def put(self, item) -> None:
-            self.item = item
+    first_thread.start()
+    assert first_executor.poll(1)
+    first_assignment = first_executor.recv()
+    second_thread.start()
+    assert second_executor.poll(1)
+    second_assignment = second_executor.recv()
+    second_executor.send(
+        ProcessTaskCompletion(
+            task_id="task-b",
+            execution_id=second_assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    first_executor.send(
+        ProcessTaskCompletion(
+            task_id="task-a",
+            execution_id=first_assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    first_thread.join(timeout=1)
+    second_thread.join(timeout=1)
 
-    class FakeCompletionQueue:
-        def get(self, timeout=None):
-            del timeout
-            assert assignment_queue is not None
-            return ProcessTaskCompletion(
-                task_id="other-task",
-                execution_id=assignment_queue.item.execution_id,
-                result=completed_result({"result": {"valid": True, "reason": None}}),
-            )
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    completed = {results.get_nowait()[0], results.get_nowait()[0]}
+    assert completed == {"first", "second"}
 
-    assignment_queue = FakeAssignmentQueue()
+
+def test_process_dispatch_worker_waits_when_all_slots_are_busy() -> None:
+    slot, executor_connection = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=assignment_queue,
-        completion_queue=FakeCompletionQueue(),
+        slots=[slot],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
-    task = Task(
-        workflow_instance_id="wf-7f3d",
-        task_id="task-9b4c",
-        retry_count=2,
-        task_def_name="metadata.validate",
-        reference_task_name="validate_metadata",
-        seq=3,
-        status="IN_PROGRESS",
-        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
-    )
+    results: Queue = Queue()
+    first_thread = threading.Thread(target=lambda: results.put(worker.execute(_sdk_task("task-a"))))
+    second_thread = threading.Thread(target=lambda: results.put(worker.execute(_sdk_task("task-b"))))
 
-    result = worker.execute(task)
+    first_thread.start()
+    assert executor_connection.poll(1)
+    first_assignment = executor_connection.recv()
+    second_thread.start()
+    assert not executor_connection.poll(0.05)
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-a",
+            execution_id=first_assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    first_thread.join(timeout=1)
+    assert executor_connection.poll(1)
+    second_assignment = executor_connection.recv()
+    assert second_assignment.attempt.task_id == "task-b"
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-b",
+            execution_id=second_assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    second_thread.join(timeout=1)
+
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert [results.get_nowait().status, results.get_nowait().status] == ["COMPLETED", "COMPLETED"]
+
+
+def test_process_dispatch_worker_fails_closed_on_mismatched_completion() -> None:
+    slot, executor_connection = _process_slot()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        slots=[slot],
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    )
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+    assert executor_connection.poll(1)
+    assignment = executor_connection.recv()
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="other-task",
+            execution_id=assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    thread.join(timeout=1)
+    result = result_queue.get_nowait()
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "executor returned completion for task other-task; expected task-9b4c"
 
 
 def test_process_dispatch_worker_fails_closed_on_mismatched_execution_completion() -> None:
-    class FakeAssignmentQueue:
-        def put(self, item) -> None:
-            self.item = item
-
-    class FakeCompletionQueue:
-        def get(self, timeout=None):
-            del timeout
-            return ProcessTaskCompletion(
-                task_id="task-9b4c",
-                execution_id="old-execution",
-                result=completed_result({"result": {"valid": True, "reason": None}}),
-            )
-
+    slot, executor_connection = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=FakeCompletionQueue(),
+        slots=[slot],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
-    task = Task(
-        workflow_instance_id="wf-7f3d",
-        task_id="task-9b4c",
-        retry_count=2,
-        task_def_name="metadata.validate",
-        reference_task_name="validate_metadata",
-        seq=3,
-        status="IN_PROGRESS",
-        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+    assert executor_connection.poll(1)
+    executor_connection.recv()
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-9b4c",
+            execution_id="old-execution",
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
     )
-
-    result = worker.execute(task)
+    thread.join(timeout=1)
+    result = result_queue.get_nowait()
 
     assert result.status == "FAILED"
     assert "executor returned completion for execution old-execution; expected" in result.reason_for_incompletion
 
 
 def test_process_dispatch_worker_fails_closed_on_invalid_completion() -> None:
-    class FakeAssignmentQueue:
-        def put(self, item) -> None:
-            self.item = item
-
-    class FakeCompletionQueue:
-        def get(self, timeout=None):
-            del timeout
-            return object()
-
+    slot, executor_connection = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=FakeCompletionQueue(),
+        slots=[slot],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
-    task = Task(
-        workflow_instance_id="wf-7f3d",
-        task_id="task-9b4c",
-        retry_count=2,
-        task_def_name="metadata.validate",
-        reference_task_name="validate_metadata",
-        seq=3,
-        status="IN_PROGRESS",
-        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
-    )
-
-    result = worker.execute(task)
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+    assert executor_connection.poll(1)
+    executor_connection.recv()
+    executor_connection.send(object())
+    thread.join(timeout=1)
+    result = result_queue.get_nowait()
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "executor returned invalid completion for task task-9b4c"
 
 
 def test_process_dispatch_worker_truncates_broker_side_failure_reasons() -> None:
-    class FakeAssignmentQueue:
-        def put(self, item) -> None:
-            self.item = item
-
-    class FakeCompletionQueue:
-        def get(self, timeout=None):
-            del timeout
-            return object()
-
+    slot, executor_connection = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=FakeCompletionQueue(),
+        slots=[slot],
         failure_reason_max_length=8,
     )
-
-    result = worker.execute(
-        Task(
-            workflow_instance_id="wf-7f3d",
-            task_id="task-9b4c",
-            retry_count=2,
-            task_def_name="metadata.validate",
-            reference_task_name="validate_metadata",
-            seq=3,
-            status="IN_PROGRESS",
-            input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
-        )
-    )
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+    assert executor_connection.poll(1)
+    executor_connection.recv()
+    executor_connection.send(object())
+    thread.join(timeout=1)
+    result = result_queue.get_nowait()
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "executor"
 
 
 def test_process_dispatch_worker_times_out_waiting_for_completion() -> None:
-    class FakeAssignmentQueue:
-        def put(self, item) -> None:
-            self.item = item
-
-    class FakeCompletionQueue:
-        def get(self, timeout=None):
-            del timeout
-            raise Empty
-
+    slot, executor_connection = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=FakeCompletionQueue(),
+        slots=[slot],
         completion_timeout_seconds=0,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
-    task = Task(
-        workflow_instance_id="wf-7f3d",
-        task_id="task-9b4c",
-        retry_count=2,
-        task_def_name="metadata.validate",
-        reference_task_name="validate_metadata",
-        seq=3,
-        status="IN_PROGRESS",
-        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
-    )
-
-    result = worker.execute(task)
+    result = worker.execute(_sdk_task())
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "executor did not return result for task task-9b4c"
+    assert executor_connection.poll(1)
+    assert isinstance(executor_connection.recv(), ProcessTaskAssignment)
 
 
-def test_process_dispatch_worker_retries_empty_completion_queue_before_success() -> None:
-    class FakeAssignmentQueue:
-        def put(self, item) -> None:
-            self.item = item
+def test_process_dispatch_worker_fails_closed_on_broken_pipe() -> None:
+    class BrokenConnection:
+        def send(self, item) -> None:
+            del item
+            raise BrokenPipeError
 
-    class FakeCompletionQueue:
-        def __init__(self, assignment_queue) -> None:
-            self.assignment_queue = assignment_queue
-            self.calls = 0
-
-        def get(self, timeout=None):
-            assert timeout is not None
-            self.calls += 1
-            if self.calls == 1:
-                raise Empty
-            return ProcessTaskCompletion(
-                task_id="task-9b4c",
-                execution_id=self.assignment_queue.item.execution_id,
-                result=completed_result({"result": {"valid": True, "reason": None}}),
-            )
-
-    assignment_queue = FakeAssignmentQueue()
-    completion_queue = FakeCompletionQueue(assignment_queue)
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
-        completion_timeout_seconds=1,
+        slots=[ProcessExecutorSlot(worker_id="metadata0001", connection=BrokenConnection())],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
-    result = worker.execute(
-        Task(
-            workflow_instance_id="wf-7f3d",
-            task_id="task-9b4c",
-            retry_count=2,
-            task_def_name="metadata.validate",
-            reference_task_name="validate_metadata",
-            seq=3,
-            status="IN_PROGRESS",
-            input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
-        )
+    result = worker.execute(_sdk_task())
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "executor pipe for worker metadata0001 is broken for task task-9b4c"
+
+
+def test_process_dispatch_worker_fails_closed_when_pipe_breaks_waiting_for_completion() -> None:
+    class BrokenAfterAssignmentConnection:
+        def __init__(self) -> None:
+            self.sent = []
+
+        def send(self, item) -> None:
+            self.sent.append(item)
+
+        def poll(self, timeout=None) -> bool:
+            del timeout
+            return True
+
+        def recv(self):
+            raise EOFError
+
+    connection = BrokenAfterAssignmentConnection()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        slots=[ProcessExecutorSlot(worker_id="metadata0001", connection=connection)],
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
-    assert completion_queue.calls == 2
+    result = worker.execute(_sdk_task())
+
+    assert len(connection.sent) == 1
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "executor pipe for worker metadata0001 is broken for task task-9b4c"
+
+
+def test_process_dispatch_worker_waits_for_pipe_readiness_before_success() -> None:
+    slot, executor_connection = _process_slot()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        slots=[slot],
+        completion_timeout_seconds=1,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    )
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+    assert executor_connection.poll(1)
+    assignment = executor_connection.recv()
+    time.sleep(0.15)
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-9b4c",
+            execution_id=assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    thread.join(timeout=1)
+
+    result = result_queue.get_nowait()
+    assert result.status == "COMPLETED"
+
+
+def test_process_dispatch_worker_fails_inflight_task_when_executor_exits() -> None:
+    slot, executor_connection = _process_slot()
+    executor_events: Queue = Queue()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        slots=[slot],
+        executor_event_queue=executor_events,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    )
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+
+    assert executor_connection.poll(1)
+    assignment = executor_connection.recv()
+    assert isinstance(assignment, ProcessTaskAssignment)
+    executor_events.put(ProcessExecutorExited(worker_id="metadata0001", generation=1, exit_code=9))
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    result = result_queue.get_nowait()
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == (
+        "executor process for worker metadata0001 exited while running task task-9b4c"
+    )
+
+
+def test_process_dispatch_worker_recovers_slot_after_executor_restart_generation() -> None:
+    slot, first_executor = _process_slot()
+    executor_events: Queue = Queue()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        slots=[slot],
+        executor_event_queue=executor_events,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    )
+    results: Queue = Queue()
+    first_thread = threading.Thread(target=lambda: results.put(worker.execute(_sdk_task("task-a"))))
+    first_thread.start()
+
+    assert first_executor.poll(1)
+    first_assignment = first_executor.recv()
+    assert first_assignment.attempt.task_id == "task-a"
+    next_broker_connection, next_executor_connection = multiprocessing.Pipe()
+    executor_events.put(ProcessExecutorExited(worker_id="metadata0001", generation=1, exit_code=9))
+    executor_events.put(
+        ProcessExecutorStarted(
+            worker_id="metadata0001",
+            generation=2,
+            connection=next_broker_connection,
+        )
+    )
+    first_thread.join(timeout=1)
+    assert not first_thread.is_alive()
+    first_result = results.get_nowait()
+    assert first_result.status == "FAILED"
+
+    second_thread = threading.Thread(target=lambda: results.put(worker.execute(_sdk_task("task-b"))))
+    second_thread.start()
+    assert next_executor_connection.poll(1)
+    second_assignment = next_executor_connection.recv()
+    assert second_assignment.attempt.task_id == "task-b"
+    next_executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-b",
+            execution_id=second_assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    second_thread.join(timeout=1)
+
+    assert not second_thread.is_alive()
+    second_result = results.get_nowait()
+    assert second_result.status == "COMPLETED"
+
+
+def test_process_dispatch_worker_uses_restarted_generation_for_idle_slot() -> None:
+    slot, _ = _process_slot()
+    executor_events: Queue = Queue()
+    next_broker_connection, next_executor_connection = multiprocessing.Pipe()
+    executor_events.put(ProcessExecutorExited(worker_id="metadata0001", generation=1, exit_code=9))
+    executor_events.put(
+        ProcessExecutorStarted(
+            worker_id="metadata0001",
+            generation=2,
+            connection=next_broker_connection,
+        )
+    )
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        slots=[slot],
+        executor_event_queue=executor_events,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+    )
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task("task-b"))))
+    thread.start()
+
+    assert next_executor_connection.poll(1)
+    assignment = next_executor_connection.recv()
+    assert assignment.attempt.task_id == "task-b"
+    next_executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-b",
+            execution_id=assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    result = result_queue.get_nowait()
     assert result.status == "COMPLETED"
 
 
 def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting() -> None:
     fresh_attempt = _attempt()
-    assignment_queue = None
-
-    class FakeAssignmentQueue:
-        def put(self, item) -> None:
-            self.item = item
-
-    class FakeCompletionQueue:
-        def get(self, timeout=None):
-            del timeout
-            assert assignment_queue is not None
-            return ProcessTaskCompletion(
-                task_id="task-9b4c",
-                execution_id=assignment_queue.item.execution_id,
-                result=completed_result({"result": {"valid": True, "reason": None}}),
-            )
 
     class FakeRequestQueue:
         def __init__(self) -> None:
@@ -661,30 +835,32 @@ def test_process_dispatch_worker_services_attempt_fence_requests_while_waiting()
             return fresh_attempt
 
     response_queue = FakeResponseQueue()
-    assignment_queue = FakeAssignmentQueue()
+    slot, executor_connection = _process_slot()
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=assignment_queue,
-        completion_queue=FakeCompletionQueue(),
+        slots=[slot],
         attempt_fence_request_queue=FakeRequestQueue(),
         attempt_fence_response_queues={"metadata0001": response_queue},
         client=FakeClient(),
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
-    task = Task(
-        workflow_instance_id="wf-7f3d",
-        task_id="task-9b4c",
-        retry_count=2,
-        task_def_name="metadata.validate",
-        reference_task_name="validate_metadata",
-        seq=3,
-        status="IN_PROGRESS",
-        input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+    assert executor_connection.poll(1)
+    assignment = executor_connection.recv()
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-9b4c",
+            execution_id=assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
     )
+    thread.join(timeout=1)
 
-    result = worker.execute(task)
+    result = result_queue.get_nowait()
 
     assert result.status == "COMPLETED"
     assert response_queue.items == [ProcessAttemptFenceResponse(task_id="task-9b4c", attempt=fresh_attempt)]
@@ -703,8 +879,7 @@ def test_process_dispatch_worker_reports_attempt_fence_client_errors() -> None:
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=object(),
-        completion_queue=object(),
+        slots=[_process_slot()[0]],
         attempt_fence_response_queues={"metadata0001": response_queue},
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
@@ -734,8 +909,7 @@ def test_process_dispatch_worker_reports_attempt_fence_reload_errors() -> None:
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=object(),
-        completion_queue=object(),
+        slots=[_process_slot()[0]],
         attempt_fence_response_queues={"metadata0001": response_queue},
         client=FakeClient(),
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
@@ -751,8 +925,7 @@ def test_process_dispatch_worker_rejects_invalid_attempt_fence_request() -> None
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=object(),
-        completion_queue=object(),
+        slots=[_process_slot()[0]],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
@@ -764,8 +937,7 @@ def test_process_dispatch_worker_rejects_attempt_fence_request_without_response_
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=1,
-        assignment_queue=object(),
-        completion_queue=object(),
+        slots=[_process_slot()[0]],
         attempt_fence_response_queues={},
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
@@ -846,8 +1018,7 @@ def test_process_broker_signal_handler_stops_runner_and_restores_handlers(monkey
         worker_id="metadataBroker",
         process_count=1,
         conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
-        assignment_queue=object(),
-        completion_queue=object(),
+        slots=[_process_slot()[0]],
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )
@@ -924,37 +1095,24 @@ def test_load_current_attempt_via_broker_rejects_invalid_responses(response, mes
 
 
 def test_process_executor_loop_executes_assignment_and_returns_completion() -> None:
-    class FakeAssignmentQueue:
-        def __init__(self) -> None:
-            self.items = [
-                ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1"),
-                StopProcessExecutor(),
-            ]
-
-        def get(self):
-            return self.items.pop(0)
-
-    class FakeCompletionQueue:
-        def __init__(self) -> None:
-            self.items = []
-
-        def put(self, item) -> None:
-            self.items.append(item)
-
-    completion_queue = FakeCompletionQueue()
+    connection = _FakeProcessConnection(
+        [
+            ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1"),
+            StopProcessExecutor(),
+        ]
+    )
 
     run_process_executor_loop(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadata0001",
         workspace_root="unused",
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=completion_queue,
+        connection=connection,
         load_current_attempt=lambda current_attempt: current_attempt,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
-    assert len(completion_queue.items) == 1
-    completion = completion_queue.items[0]
+    assert len(connection.sent) == 1
+    completion = connection.sent[0]
     assert isinstance(completion, ProcessTaskCompletion)
     assert completion.task_id == "task-9b4c"
     assert completion.execution_id == "exec-1"
@@ -966,20 +1124,12 @@ def test_process_executor_loop_executes_assignment_and_returns_completion() -> N
 
 def test_process_executor_loop_passes_failure_reason_limit_to_execution(monkeypatch) -> None:
     captured = {}
-
-    class FakeAssignmentQueue:
-        def __init__(self) -> None:
-            self.items = [
-                ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1"),
-                StopProcessExecutor(),
-            ]
-
-        def get(self):
-            return self.items.pop(0)
-
-    class FakeCompletionQueue:
-        def put(self, item) -> None:
-            pass
+    connection = _FakeProcessConnection(
+        [
+            ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1"),
+            StopProcessExecutor(),
+        ]
+    )
 
     def fake_execute_polled_task(**kwargs):
         captured.update(kwargs)
@@ -991,8 +1141,7 @@ def test_process_executor_loop_passes_failure_reason_limit_to_execution(monkeypa
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadata0001",
         workspace_root="unused",
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=FakeCompletionQueue(),
+        connection=connection,
         load_current_attempt=lambda current_attempt: current_attempt,
         failure_reason_max_length=41,
     )
@@ -1008,23 +1157,6 @@ def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monk
         handlers[signum] = handler
         return previous
 
-    class FakeAssignmentQueue:
-        def __init__(self) -> None:
-            self.items = [ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1")]
-
-        def get(self, timeout=None):
-            del timeout
-            if not self.items:
-                raise Empty
-            return self.items.pop(0)
-
-    class FakeCompletionQueue:
-        def __init__(self) -> None:
-            self.items = []
-
-        def put(self, item) -> None:
-            self.items.append(item)
-
     def fake_execute_polled_task(**kwargs):
         handlers[signal.SIGTERM](signal.SIGTERM, None)
         return completed_result({"result": {"valid": True, "reason": None}})
@@ -1033,20 +1165,19 @@ def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monk
 
     monkeypatch.setattr("perago.conductor_runtime.signal.signal", fake_signal)
     monkeypatch.setattr("perago.conductor_runtime.execute_polled_task", fake_execute_polled_task)
-    completion_queue = FakeCompletionQueue()
+    connection = _FakeProcessConnection([ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1")])
 
     run_process_executor_loop(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadata0001",
         workspace_root="unused",
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=completion_queue,
+        connection=connection,
         load_current_attempt=lambda current_attempt: current_attempt,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
-    assert len(completion_queue.items) == 1
-    assert completion_queue.items[0].execution_id == "exec-1"
+    assert len(connection.sent) == 1
+    assert connection.sent[0].execution_id == "exec-1"
 
 
 def test_idle_process_executor_loop_exits_after_signal(monkeypatch) -> None:
@@ -1057,69 +1188,52 @@ def test_idle_process_executor_loop_exits_after_signal(monkeypatch) -> None:
         handlers[signum] = handler
         return previous
 
-    class FakeAssignmentQueue:
+    class FakeConnection:
         def __init__(self) -> None:
             self.calls = 0
 
-        def get(self, timeout=None):
+        def poll(self, timeout=None):
             del timeout
             self.calls += 1
             handlers[signal.SIGTERM](signal.SIGTERM, None)
-            raise Empty
+            return False
 
-    class FakeCompletionQueue:
-        def put(self, item) -> None:
+        def recv(self):
+            raise AssertionError("idle shutdown must not read an assignment")
+
+        def send(self, item) -> None:
             raise AssertionError("idle shutdown must not complete an assignment")
 
     import signal
 
     monkeypatch.setattr("perago.conductor_runtime.signal.signal", fake_signal)
-    assignment_queue = FakeAssignmentQueue()
+    connection = FakeConnection()
 
     run_process_executor_loop(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadata0001",
         workspace_root="unused",
-        assignment_queue=assignment_queue,
-        completion_queue=FakeCompletionQueue(),
+        connection=connection,
         load_current_attempt=lambda current_attempt: current_attempt,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
-    assert assignment_queue.calls == 1
+    assert connection.calls == 1
 
 
 def test_process_executor_loop_ignores_invalid_assignments() -> None:
-    class FakeAssignmentQueue:
-        def __init__(self) -> None:
-            self.items = [
-                object(),
-                StopProcessExecutor(),
-            ]
-
-        def get(self):
-            return self.items.pop(0)
-
-    class FakeCompletionQueue:
-        def __init__(self) -> None:
-            self.items = []
-
-        def put(self, item) -> None:
-            self.items.append(item)
-
-    completion_queue = FakeCompletionQueue()
+    connection = _FakeProcessConnection([object(), StopProcessExecutor()])
 
     run_process_executor_loop(
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadata0001",
         workspace_root="unused",
-        assignment_queue=FakeAssignmentQueue(),
-        completion_queue=completion_queue,
+        connection=connection,
         load_current_attempt=lambda current_attempt: current_attempt,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
     )
 
-    assert completion_queue.items == []
+    assert connection.sent == []
 
 
 def test_execute_polled_task_uses_workspace_attempt_runner(monkeypatch, tmp_path) -> None:
@@ -1198,8 +1312,7 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
 
 def test_run_conductor_process_broker_builds_sdk_runner() -> None:
     created = {}
-    assignment_queue = object()
-    completion_queue = object()
+    slots = [_process_slot("metadata0001")[0], _process_slot("metadata0002")[0], _process_slot("metadata0003")[0]]
 
     class FakeRunner:
         def __init__(self, worker, *, configuration) -> None:
@@ -1217,8 +1330,7 @@ def test_run_conductor_process_broker_builds_sdk_runner() -> None:
         worker_id="metadataBroker",
         process_count=3,
         conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
-        assignment_queue=assignment_queue,
-        completion_queue=completion_queue,
+        slots=slots,
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
         runner_cls=FakeRunner,
     )
@@ -1228,8 +1340,7 @@ def test_run_conductor_process_broker_builds_sdk_runner() -> None:
     assert created["worker"].thread_count == 3
     assert created["worker"].lease_extend_enabled is True
     assert created["worker"].get_identity() == "metadataBroker"
-    assert created["worker"]._assignment_queue is assignment_queue
-    assert created["worker"]._completion_queue is completion_queue
+    assert created["worker"]._slots is slots
     assert isinstance(created["configuration"], Configuration)
     assert created["configuration"].host == "http://conductor.local/api"
     assert not hasattr(created["configuration"], "request_timeout")
