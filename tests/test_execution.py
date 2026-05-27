@@ -64,6 +64,27 @@ def nested_params_task(params: NestedParams) -> NestedOutput:
     return NestedOutput(value=params.settings.value)
 
 
+@task(
+    name="tests.read_only_workspace",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(read_only=True),
+)
+def read_only_workspace_task(workspace: Path, params: Params) -> Output:
+    (workspace / "scratch.txt").write_text("discarded", encoding="utf-8")
+    return Output(value=params.value)
+
+
+@task(
+    name="tests.same_content_workspace",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(),
+)
+def same_content_workspace_task(workspace: Path, params: Params) -> Output:
+    (workspace / "raw").mkdir(exist_ok=True)
+    (workspace / "raw" / "input.parquet").write_text("ok", encoding="utf-8")
+    return Output(value=params.value)
+
+
 WORKSPACE_INPUT = {
     "repository": "song-000123",
     "branch": "main",
@@ -185,6 +206,125 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
         "publish:perago/staging/wf/build:staging-commit",
         "cleanup:song-000123:perago/staging/wf/build",
     ]
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_read_only_skips_fences_and_publication(tmp_path) -> None:
+    task = read_only_workspace_task.__perago_task__
+    attempt = _attempt()
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"value": 7},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        load_current_attempt=lambda current_attempt: pytest.fail(
+            "read-only workspace task must not check the attempt fence"
+        ),
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: pytest.fail(
+            "read-only workspace task must not stage"
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: pytest.fail(
+            "read-only workspace task must not publish"
+        ),
+        cleanup_staging=lambda staged: None,
+        complete_noop_workspace=lambda workspace_input, workspace_spec, attempt: pytest.fail(
+            "read-only workspace task must not run no-op reconciliation"
+        ),
+        owner_worker_id="metadataInspect0001",
+    )
+
+    assert result.conductor_payload() == {
+        "status": "COMPLETED",
+        "output": {
+            "workspace": WORKSPACE_INPUT,
+            "result": {"value": 7},
+        },
+    }
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_completes_writable_noop_without_staging(tmp_path) -> None:
+    task = same_content_workspace_task.__perago_task__
+    attempt = _attempt()
+    calls: list[str] = []
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"value": 9},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: calls.append("fence") or current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: pytest.fail(
+            "writable no-op task must not stage"
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: pytest.fail(
+            "writable no-op task must not publish"
+        ),
+        cleanup_staging=lambda staged: calls.append("cleanup"),
+        complete_noop_workspace=lambda workspace_input, workspace_spec, attempt: calls.append("noop")
+        or workspace_input.ref,
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.conductor_payload() == {
+        "status": "COMPLETED",
+        "output": {
+            "workspace": WORKSPACE_INPUT,
+            "result": {"value": 9},
+        },
+    }
+    assert calls == ["fence", "noop"]
+    assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_checks_attempt_fence_before_writable_noop(tmp_path) -> None:
+    task = same_content_workspace_task.__perago_task__
+    attempt = _attempt()
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"value": 9},
+        },
+        attempt,
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: Attempt(status="COMPLETED"),
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: pytest.fail(
+            "stale writable no-op attempt must not stage"
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+        complete_noop_workspace=lambda workspace_input, workspace_spec, attempt: pytest.fail(
+            "stale writable no-op attempt must not reconcile target branch"
+        ),
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "9b4c"
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
 

@@ -77,6 +77,27 @@ def budgeted_workspace_task(workspace: Path, params: BudgetParams) -> BudgetOutp
     return BudgetOutput(value=params.value)
 
 
+@task(
+    name="tests.read_only_publish_budget",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(read_only=True),
+    controls=TaskControls(
+        timeout=TimeoutPolicy(response_seconds=999),
+        publish_budget=PublishBudget(
+            observed_merge_p99_seconds=20,
+            safety_margin_seconds=10,
+            lakefs_merge_timeout_seconds=45,
+            conductor_completion_timeout_seconds=15,
+            worker_shutdown_grace_seconds=30,
+            heartbeat_interval_seconds=10,
+        ),
+    ),
+)
+def read_only_budgeted_workspace_task(workspace: Path, params: BudgetParams) -> BudgetOutput:
+    del workspace
+    return BudgetOutput(value=params.value)
+
+
 @task(name="tests.defaults", owner_email="data@example.com")
 def defaults_task(params: ParamsWithDefaults) -> OutputWithDefaults:
     del params
@@ -109,6 +130,14 @@ def test_taskdef_derives_response_timeout_from_publish_budget() -> None:
     taskdef = build_taskdef(budgeted_workspace_task.__perago_task__)
 
     assert taskdef["responseTimeoutSeconds"] == 100
+    assert "publish_budget" not in taskdef
+    assert "lakefs_merge_timeout_seconds" not in json.dumps(taskdef)
+
+
+def test_taskdef_ignores_publish_budget_for_read_only_workspace_task() -> None:
+    taskdef = build_taskdef(read_only_budgeted_workspace_task.__perago_task__)
+
+    assert taskdef["responseTimeoutSeconds"] == 999
     assert "publish_budget" not in taskdef
     assert "lakefs_merge_timeout_seconds" not in json.dumps(taskdef)
 

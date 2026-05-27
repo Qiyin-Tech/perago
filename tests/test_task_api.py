@@ -191,6 +191,8 @@ def test_guardrail_count_bound_validation() -> None:
 
 def test_workspace_prefix_validation() -> None:
     assert WorkspaceSpec(prefix="/audio/render").prefix == "audio/render"
+    assert WorkspaceSpec(prefix="/audio/render").read_only is False
+    assert WorkspaceSpec(prefix="/audio/render", read_only=True).read_only is True
     with pytest.raises(ValidationError, match="stay inside"):
         WorkspaceSpec(prefix="../raw")
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):

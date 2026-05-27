@@ -16,6 +16,9 @@ from perago.taskdef import build_taskdef, write_taskdef
 
 
 app = typer.Typer(no_args_is_help=True)
+READ_ONLY_PUBLISH_BUDGET_WARNING = (
+    "WorkspaceSpec(read_only=True) disables workspace publication; TaskControls.publish_budget is ignored."
+)
 
 
 def _version_callback(value: bool) -> None:
@@ -38,6 +41,7 @@ def check(module_target: str) -> None:
     try:
         config = load_runtime_config(module_target)
         task = load_module_task(module_target)
+        _warn_ignored_publish_budget(task)
         build_taskdef(task)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema) as exc:
         _fail(str(exc))
@@ -55,6 +59,7 @@ def extract(module_target: str, output: Path = typer.Option(..., "--output", "-o
     try:
         load_runtime_config(module_target)
         task = load_module_task(module_target)
+        _warn_ignored_publish_budget(task)
         path = write_taskdef(task, output)
     except (TaskDefinitionError, RuntimeConfigError, ValidationError, PydanticInvalidForJsonSchema, ValueError) as exc:
         _fail(str(exc))
@@ -76,6 +81,7 @@ def start(
         if config.lakefs is None:
             raise RuntimeConfigError("LakeFS config is required for perago start")
         task = load_module_task(module_target)
+        _warn_ignored_publish_budget(task)
         build_taskdef(task)
         conductor = OrkesConductorRuntimeClient.from_config(config.conductor)
         if not conductor.taskdef_exists(task.name):
@@ -101,6 +107,18 @@ def _fail(message: str) -> None:
 
 def _configured(value: bool) -> str:
     return "configured" if value else "not configured"
+
+
+def _warn_ignored_publish_budget(task: object) -> None:
+    workspace = getattr(task, "workspace", None)
+    controls = getattr(task, "controls", None)
+    if workspace is None or controls is None:
+        return
+    if (
+        getattr(workspace, "read_only", False)
+        and getattr(controls, "publish_budget", None) is not None
+    ):
+        typer.echo(f"warning: {READ_ONLY_PUBLISH_BUDGET_WARNING}", err=True)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -22,6 +23,7 @@ from perago.models import WorkspaceInput, WorkspaceSpec
 from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
 from perago.workspace import (
+    ATTEMPT_WORKSPACE_MARKER,
     cleanup_attempt_workspace_safely,
     new_workspace_owner,
     prepare_attempt_workspace,
@@ -35,6 +37,8 @@ LoadCurrentAttempt = Callable[[object], object]
 StageWorkspace = Callable[[Path, WorkspaceInput, WorkspaceSpec, object], "StagedWorkspace"]
 PublishWorkspace = Callable[["StagedWorkspace", WorkspaceInput, WorkspaceSpec, object], str]
 CleanupStaging = Callable[["StagedWorkspace"], None]
+CompleteNoOpWorkspace = Callable[[WorkspaceInput, WorkspaceSpec, object], str]
+WorkspaceSnapshot = tuple[tuple[str, str, str], ...]
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,7 @@ def run_workspace_task_attempt(
     stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
+    complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
 ) -> RuntimeTaskResult:
@@ -115,8 +120,10 @@ def run_workspace_task_attempt(
     This function is the testable execution core used by the Conductor worker
     runtime. It validates the Conductor input shape, prepares an attempt-local
     workspace, downloads the declared workspace input, invokes the task body,
-    checks the attempt fence before and after staging, publishes the staged
-    workspace, and cleans local and staging resources.
+    and then follows the task's workspace access mode. Read-only tasks complete
+    with the input ref. Writable tasks either complete a no-op without staging
+    or check the attempt fence before and after staging, publish the staged
+    workspace, and clean local and staging resources.
 
     Parameters
     ----------
@@ -147,6 +154,10 @@ def run_workspace_task_attempt(
     cleanup_staging : callable
         Callback that removes or abandons the staging branch after the attempt
         completes or fails after staging.
+    complete_noop_workspace : callable or None, default=None
+        Callback that validates or reconciles the target branch for writable
+        tasks whose local workspace did not change. If omitted and a writable
+        no-op is reached, the attempt fails closed.
     owner_worker_id : str or None, default=None
         Worker id written into the local workspace owner marker for active
         owner tracking and supervisor GC.
@@ -217,8 +228,35 @@ def run_workspace_task_attempt(
         workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
         workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
         download_workspace(workspace_input, workspace, workspace_dir)
+        initial_snapshot = None if workspace.read_only else _snapshot_workspace(workspace_dir)
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
+
+        if workspace.read_only:
+            output_workspace = workspace_input.published_output(workspace_input.ref)
+            return completed_result(
+                {
+                    "workspace": output_workspace.model_dump(mode="json"),
+                    **body_output,
+                }
+            )
+
+        workspace_changed = _snapshot_workspace(workspace_dir) != initial_snapshot
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
+        if not workspace_changed:
+            published_ref = _complete_noop_workspace(
+                complete_noop_workspace,
+                workspace_input,
+                workspace,
+                execution,
+            )
+            output_workspace = workspace_input.published_output(published_ref)
+            return completed_result(
+                {
+                    "workspace": output_workspace.model_dump(mode="json"),
+                    **body_output,
+                }
+            )
+
         staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
         published_ref = publish_workspace(staged, workspace_input, workspace, execution)
@@ -568,6 +606,43 @@ def _cleanup_staging_safely(staged: StagedWorkspace, cleanup_staging: CleanupSta
             staging_branch=staged.branch,
             staging_commit=staged.commit,
         ).opt(exception=exc).error("failed to clean staging workspace")
+
+
+def _complete_noop_workspace(
+    complete_noop_workspace: CompleteNoOpWorkspace | None,
+    workspace_input: WorkspaceInput,
+    workspace: WorkspaceSpec,
+    attempt: object,
+) -> str:
+    if complete_noop_workspace is None:
+        raise TaskInputError(
+            "complete_noop_workspace callback is required for writable no-op workspace completion"
+        )
+    return complete_noop_workspace(workspace_input, workspace, attempt)
+
+
+def _snapshot_workspace(workspace_dir: Path) -> WorkspaceSnapshot:
+    entries: list[tuple[str, str, str]] = []
+    for local_path in sorted(workspace_dir.rglob("*")):
+        relative_path = local_path.relative_to(workspace_dir)
+        if relative_path.name == ATTEMPT_WORKSPACE_MARKER:
+            continue
+        workspace_path = relative_path.as_posix()
+        if local_path.is_symlink():
+            entries.append((workspace_path, "symlink", os.readlink(local_path)))
+            continue
+        if not local_path.is_file():
+            continue
+        entries.append((workspace_path, "file", _file_digest(local_path)))
+    return tuple(entries)
+
+
+def _file_digest(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _validate_result(task: TaskDefinition, raw_result: object) -> BaseModel:

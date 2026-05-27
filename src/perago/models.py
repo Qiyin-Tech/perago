@@ -319,6 +319,11 @@ class WorkspaceSpec(BaseModel):
         Guardrails evaluated after workspace download and before the task body.
     post : list of workspace guardrails, optional
         Guardrails evaluated after the task body and before publication.
+    read_only : bool, default=False
+        Whether this workspace task consumes workspace input without publishing
+        workspace changes. Read-only tasks still receive a local workspace path
+        and return workspace output, but the output ref stays equal to the input
+        ref.
 
     Raises
     ------
@@ -343,6 +348,7 @@ class WorkspaceSpec(BaseModel):
     prefix: str = "/"
     pre: list[_WorkspaceGuardrail] = Field(default_factory=list)
     post: list[_WorkspaceGuardrail] = Field(default_factory=list)
+    read_only: bool = False
 
     @field_validator("prefix")
     @classmethod

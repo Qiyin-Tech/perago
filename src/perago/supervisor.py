@@ -643,7 +643,7 @@ def _process_executor_main(
     if lakefs_config is None:
         raise RuntimeConfigError("LakeFS config is required for perago start")
 
-    publish_budget = task.controls.publish_budget
+    publish_budget = _effective_publish_budget(task)
     lakefs = LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
@@ -665,6 +665,7 @@ def _process_executor_main(
         stage_workspace=lakefs.stage_workspace,
         publish_workspace=lakefs.publish_workspace,
         cleanup_staging=lakefs.cleanup_staging,
+        complete_noop_workspace=lakefs.complete_noop_workspace,
     )
 
 
@@ -684,7 +685,7 @@ def _thread_runner_main(
     if lakefs_config is None:
         raise RuntimeConfigError("LakeFS config is required for perago start")
 
-    publish_budget = task.controls.publish_budget
+    publish_budget = _effective_publish_budget(task)
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
     lakefs = LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
 
@@ -702,6 +703,7 @@ def _thread_runner_main(
         stage_workspace=lakefs.stage_workspace,
         publish_workspace=lakefs.publish_workspace,
         cleanup_staging=lakefs.cleanup_staging,
+        complete_noop_workspace=lakefs.complete_noop_workspace,
     )
 
 
@@ -710,3 +712,10 @@ def _broker_environment(worker_id_prefix: str) -> dict[str, str]:
         "PERAGO_WORKER_ID_PREFIX": worker_id_prefix,
         "PERAGO_WORKER_ID": f"{worker_id_prefix}Broker",
     }
+
+
+def _effective_publish_budget(task: object) -> object:
+    workspace = getattr(task, "workspace", None)
+    if workspace is not None and getattr(workspace, "read_only", False):
+        return None
+    return task.controls.publish_budget

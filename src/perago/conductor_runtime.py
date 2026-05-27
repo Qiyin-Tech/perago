@@ -22,6 +22,7 @@ from loguru import logger
 from perago.config import ConductorConfig
 from perago.execution import (
     CleanupStaging,
+    CompleteNoOpWorkspace,
     DownloadWorkspace,
     LoadCurrentAttempt,
     PublishWorkspace,
@@ -129,6 +130,7 @@ class PeragoThreadWorker(WorkerInterface):
         stage_workspace: StageWorkspace,
         publish_workspace: PublishWorkspace,
         cleanup_staging: CleanupStaging,
+        complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -143,6 +145,7 @@ class PeragoThreadWorker(WorkerInterface):
         self._stage_workspace = stage_workspace
         self._publish_workspace = publish_workspace
         self._cleanup_staging = cleanup_staging
+        self._complete_noop_workspace = complete_noop_workspace
 
     def get_identity(self) -> str:
         return self.worker_id
@@ -159,6 +162,7 @@ class PeragoThreadWorker(WorkerInterface):
             stage_workspace=self._stage_workspace,
             publish_workspace=self._publish_workspace,
             cleanup_staging=self._cleanup_staging,
+            complete_noop_workspace=self._complete_noop_workspace,
             owner_worker_id=self.worker_id,
             execution_id=execution_id,
         )
@@ -280,6 +284,7 @@ def run_conductor_thread_runner(
     stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
+    complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoThreadWorker(
@@ -292,6 +297,7 @@ def run_conductor_thread_runner(
         stage_workspace=stage_workspace,
         publish_workspace=publish_workspace,
         cleanup_staging=cleanup_staging,
+        complete_noop_workspace=complete_noop_workspace,
     )
     runner = runner_cls(
         worker,
@@ -368,6 +374,7 @@ def run_process_executor_loop(
     stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
+    complete_noop_workspace: CompleteNoOpWorkspace | None = None,
 ) -> None:
     logger.bind(worker_id=worker_id).info("process executor started")
     shutdown_requested = False
@@ -407,6 +414,7 @@ def run_process_executor_loop(
                 stage_workspace=stage_workspace,
                 publish_workspace=publish_workspace,
                 cleanup_staging=cleanup_staging,
+                complete_noop_workspace=complete_noop_workspace,
                 owner_worker_id=worker_id,
                 execution_id=assignment.execution_id,
             )
@@ -489,6 +497,7 @@ def execute_polled_task(
     stage_workspace: StageWorkspace,
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
+    complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
 ) -> RuntimeTaskResult:
@@ -503,6 +512,7 @@ def execute_polled_task(
             stage_workspace=stage_workspace,
             publish_workspace=publish_workspace,
             cleanup_staging=cleanup_staging,
+            complete_noop_workspace=complete_noop_workspace,
             owner_worker_id=owner_worker_id,
             execution_id=execution_id,
         )

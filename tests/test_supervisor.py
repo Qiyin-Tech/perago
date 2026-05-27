@@ -572,6 +572,7 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
         stage_workspace=object(),
         publish_workspace=object(),
         cleanup_staging=object(),
+        complete_noop_workspace=object(),
     )
     queues = {
         "assignment_queue": object(),
@@ -610,6 +611,59 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
     assert ran["stage_workspace"] is lakefs_runtime.stage_workspace
     assert ran["publish_workspace"] is lakefs_runtime.publish_workspace
     assert ran["cleanup_staging"] is lakefs_runtime.cleanup_staging
+    assert ran["complete_noop_workspace"] is lakefs_runtime.complete_noop_workspace
+
+
+def test_process_executor_main_ignores_publish_budget_for_read_only_workspace(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=LakeFSConfig(
+            endpoint_url="http://lakefs.local",
+            access_key_id="lakefs-key",
+            secret_access_key="lakefs-secret",
+        ),
+    )
+    task = SimpleNamespace(
+        workspace=SimpleNamespace(read_only=True),
+        controls=SimpleNamespace(publish_budget=3),
+    )
+    runtime = SimpleNamespace(worker_id="worker0001", log_file=tmp_path / "worker.log")
+    lakefs_runtime = SimpleNamespace(
+        download_workspace=object(),
+        stage_workspace=object(),
+        publish_workspace=object(),
+        cleanup_staging=object(),
+        complete_noop_workspace=object(),
+    )
+    created_lakefs = {}
+
+    monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
+    monkeypatch.setattr("perago.supervisor.prepare_worker_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr(
+        "perago.supervisor.LakeFSWorkspaceRuntime.from_config",
+        lambda lakefs_config, publish_budget: created_lakefs.update(
+            {"lakefs_config": lakefs_config, "publish_budget": publish_budget}
+        )
+        or lakefs_runtime,
+    )
+    monkeypatch.setattr("perago.supervisor.run_process_executor_loop", lambda **kwargs: None)
+
+    _process_executor_main(
+        config=config,
+        module_target="app.workers.read_only_budget",
+        child_env={"PERAGO_WORKER_ID": "worker0001"},
+        assignment_queue=object(),
+        completion_queue=object(),
+        attempt_fence_request_queue=object(),
+        attempt_fence_response_queue=object(),
+    )
+
+    assert created_lakefs == {"lakefs_config": config.lakefs, "publish_budget": None}
 
 
 def test_process_executor_main_requires_lakefs_config(monkeypatch, tmp_path) -> None:
@@ -662,6 +716,7 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
         stage_workspace=object(),
         publish_workspace=object(),
         cleanup_staging=object(),
+        complete_noop_workspace=object(),
     )
     ran = {}
 
@@ -687,6 +742,7 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
         "stage_workspace": lakefs_runtime.stage_workspace,
         "publish_workspace": lakefs_runtime.publish_workspace,
         "cleanup_staging": lakefs_runtime.cleanup_staging,
+        "complete_noop_workspace": lakefs_runtime.complete_noop_workspace,
     }
 
 

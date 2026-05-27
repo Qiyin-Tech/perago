@@ -336,6 +336,57 @@ def test_lakefs_publish_replaces_abandoned_publication_with_hard_reset() -> None
     ]
 
 
+def test_lakefs_complete_noop_returns_input_ref_when_head_matches() -> None:
+    repo = FakeRepo()
+    runtime = FakeRuntime(repo)
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    attempt = Attempt()
+
+    output_ref = runtime.complete_noop_workspace(workspace, spec, attempt)
+
+    assert output_ref == "input-commit"
+    assert runtime._client.sdk_client.experimental_api.hard_reset_calls == []
+
+
+def test_lakefs_complete_noop_relocates_abandoned_publication_to_input_ref() -> None:
+    repo = FakeRepo()
+    repo.main_commit_log = [
+        FakeCommit(id="abandoned-commit", parents=["input-commit"]),
+    ]
+    runtime = FakeRuntime(repo)
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    attempt = Attempt()
+
+    output_ref = runtime.complete_noop_workspace(workspace, spec, attempt)
+
+    assert output_ref == "input-commit"
+    assert runtime._client.sdk_client.experimental_api.hard_reset_calls == [
+        {
+            "repository": "song-000123",
+            "branch": "main",
+            "ref": "input-commit",
+            "force": False,
+            "_request_timeout": None,
+        }
+    ]
+
+
+def test_lakefs_complete_noop_rejects_head_without_input_ref_parent() -> None:
+    repo = FakeRepo()
+    repo.main_commit_log = [
+        FakeCommit(id="head-2", parents=["head-1"]),
+    ]
+    runtime = FakeRuntime(repo)
+    workspace = _workspace_input()
+    spec = WorkspaceSpec(prefix="/audio/render")
+    attempt = Attempt()
+
+    with pytest.raises(PublishFenceError, match="cannot complete no-op from input ref"):
+        runtime.complete_noop_workspace(workspace, spec, attempt)
+
+
 def test_lakefs_publish_hard_reset_uses_publish_budget_timeout() -> None:
     repo = FakeRepo()
     attempt = Attempt()

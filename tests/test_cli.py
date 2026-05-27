@@ -1,3 +1,4 @@
+import json
 import pathlib
 
 from typer.testing import CliRunner
@@ -50,6 +51,18 @@ def test_check_cli_reports_connection_config_status_without_secrets(monkeypatch,
     assert "conductor: configured" in result.output
     assert "lakefs: configured" in result.output
     assert "lakefs-secret" not in result.output
+
+
+def test_check_cli_warns_when_read_only_workspace_ignores_publish_budget(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.read_only_budget"])
+
+    assert result.exit_code == 0
+    assert "ok: metadata.inspect" in result.output
+    assert result.output.count("WorkspaceSpec(read_only=True) disables workspace publication") == 1
 
 
 def test_check_cli_rejects_invalid_worker_prefix(monkeypatch, tmp_path) -> None:
@@ -252,6 +265,19 @@ def test_extract_cli_accepts_short_output_option(monkeypatch, tmp_path) -> None:
     assert (tmp_path / "generated" / "taskdef.json").exists()
 
 
+def test_extract_cli_warns_and_ignores_read_only_publish_budget(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+    output = tmp_path / "generated" / "metadata.inspect.json"
+
+    result = runner.invoke(app, ["extract", "app.workers.read_only_budget", "--output", str(output)])
+
+    assert result.exit_code == 0
+    assert result.output.count("WorkspaceSpec(read_only=True) disables workspace publication") == 1
+    assert json.loads(output.read_text(encoding="utf-8"))["responseTimeoutSeconds"] == 999
+
+
 def test_extract_cli_rejects_directory_like_output(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
@@ -359,6 +385,36 @@ def test_start_cli_option_overrides_execution_mode_env(monkeypatch, tmp_path) ->
 
     assert result.exit_code == 0
     assert started["execution_mode"] == "process"
+
+
+def test_start_cli_warns_once_when_read_only_workspace_ignores_publish_budget(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
+                "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
+                "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    started: dict[str, object] = {}
+
+    class FakeConductor:
+        def taskdef_exists(self, task_name: str) -> bool:
+            return task_name == "metadata.inspect"
+
+    monkeypatch.setattr("perago.cli.OrkesConductorRuntimeClient.from_config", lambda config: FakeConductor())
+    monkeypatch.setattr("perago.cli.run_worker_supervisor", lambda **kwargs: started.update(kwargs))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.read_only_budget"])
+
+    assert result.exit_code == 0
+    assert result.output.count("WorkspaceSpec(read_only=True) disables workspace publication") == 1
+    assert started["module_target"] == "app.workers.read_only_budget"
 
 
 def test_start_cli_fails_when_taskdef_is_missing(monkeypatch, tmp_path) -> None:

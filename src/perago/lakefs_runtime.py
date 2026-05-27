@@ -106,6 +106,28 @@ class LakeFSWorkspaceRuntime:
             f"current head is {current_head}"
         )
 
+    def complete_noop_workspace(
+        self,
+        workspace_input: WorkspaceInput,
+        workspace_spec: WorkspaceSpec,
+        attempt: object,
+    ) -> str:
+        del workspace_spec, attempt
+        repo = self._repo(workspace_input.repository)
+        target_branch = repo.branch(workspace_input.branch)
+        head_commit = target_branch.get_commit()
+        current_head = head_commit.id
+        if current_head == workspace_input.ref:
+            return workspace_input.ref
+
+        if _first_parent_id(head_commit) == workspace_input.ref:
+            return self._hard_reset_target_to_ref(workspace_input, workspace_input.ref)
+
+        raise PublishFenceError(
+            f"{workspace_input.branch} cannot complete no-op from input ref {workspace_input.ref}; "
+            f"current head is {current_head}"
+        )
+
     def cleanup_staging(self, staged: StagedWorkspace) -> None:
         self._repo(staged.repository).branch(staged.branch).delete()
 
@@ -136,8 +158,15 @@ class LakeFSWorkspaceRuntime:
         staged: StagedWorkspace,
         workspace_input: WorkspaceInput,
     ) -> str:
+        return self._hard_reset_target_to_ref(workspace_input, staged.commit)
+
+    def _hard_reset_target_to_ref(
+        self,
+        workspace_input: WorkspaceInput,
+        ref: str,
+    ) -> str:
         kwargs = {
-            "ref": staged.commit,
+            "ref": ref,
             "force": False,
         }
         if self._publish_budget is not None:
@@ -148,7 +177,7 @@ class LakeFSWorkspaceRuntime:
                 workspace_input.branch,
                 **kwargs,
             )
-        return staged.commit
+        return ref
 
     def _repo(self, repository: str) -> Repository:
         return Repository(repository, client=self._client)

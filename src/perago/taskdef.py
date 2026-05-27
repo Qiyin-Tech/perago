@@ -61,7 +61,8 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
     -----
     Workspace guardrails, workspace prefixes, LakeFS connection settings, and
     publish budget internals are not serialized into the TaskDef. A publish
-    budget only affects the generated ``responseTimeoutSeconds`` value.
+    budget only affects the generated ``responseTimeoutSeconds`` value for
+    writable workspace tasks; read-only workspace tasks ignore it.
 
     Examples
     --------
@@ -165,12 +166,21 @@ def schema_for_model(model: type[BaseModel]) -> dict[str, Any]:
 def _control_fields(task: TaskDefinition) -> dict[str, Any]:
     fields: dict[str, Any] = {}
     for conductor_name, path in CONTROL_FIELD_MAP.items():
-        value: object = task.controls
-        for segment in path:
-            value = getattr(value, segment)
+        if conductor_name == "responseTimeoutSeconds":
+            value: object = _response_timeout_seconds(task)
+        else:
+            value = task.controls
+            for segment in path:
+                value = getattr(value, segment)
         if value is not None:
             fields[conductor_name] = value
     return fields
+
+
+def _response_timeout_seconds(task: TaskDefinition) -> int:
+    if task.workspace is not None and task.workspace.read_only:
+        return task.controls.timeout.response_seconds
+    return task.controls.response_timeout_seconds
 
 
 def _object_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
