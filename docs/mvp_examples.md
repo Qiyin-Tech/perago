@@ -897,9 +897,10 @@ download WorkspaceSpec(prefix=...) from the input Workspace Ref
 run pre guardrails against the local workspace root
 call the business function
 run post guardrails against the local workspace root
-upload WorkspaceSpec(prefix=...) to a staging branch
-pass publication fences
-publish the staging commit to the Workspace Branch
+choose read-only, no-op, or publication path
+if writable and changed, upload WorkspaceSpec(prefix=...) to a staging branch
+if writable, pass the required HEAD-state fence
+if writable and changed, publish the staging commit to the Workspace Branch
 attempt cleanup of the attempt-local workspace
 complete the Conductor task
 ```
@@ -930,7 +931,7 @@ def run_workspace_attempt(task) -> None:
         run_pre_guardrails(workspace_dir)
         result = call_business_function(workspace_dir, task.params)
         run_post_guardrails(workspace_dir)
-        output_workspace = publish_workspace_changes(workspace_dir, task)
+        output_workspace = complete_workspace(task, workspace_dir)
     except PreGuardrailViolation as exc:
         cleanup_attempt_workspace(workspace_dir, task)
         complete_task(
@@ -1033,7 +1034,7 @@ Guardrails are not emitted into the Conductor TaskDef schema. The generated Task
 
 ## Conductor task output
 
-Perago wraps the business return value with the committed workspace reference.
+Perago wraps the business return value with the completed workspace reference.
 
 Workspace task output:
 
@@ -1052,9 +1053,9 @@ Workspace task output:
 }
 ```
 
-For workspace task workers, Perago must commit changes to the target LakeFS branch and attempt local cleanup before reporting the Conductor task as completed. Downstream workers receive the same target branch plus the new immutable commit ref.
+For workspace task workers, Perago must complete the workspace path and attempt local cleanup before reporting the Conductor task as completed. Read-only and no-op completions keep the input immutable commit ref; writable completions that changed workspace content publish a new immutable commit ref. Downstream workers receive the same target branch plus the output ref.
 
-Perago validates the committed workspace reference with the `WorkspaceOutput` model before reporting task completion.
+Perago validates the completed workspace reference with the `WorkspaceOutput` model before reporting task completion.
 
 The workflow carries both a writable branch name, such as `main`, and an immutable commit ref. The commit ref gives each worker a deterministic input version for retries; the branch is the write target advanced by successful workers.
 
@@ -1071,12 +1072,12 @@ Workspace-free task output:
 
 ## Workspace transaction runtime
 
-Workspace publishing uses a TCC-inspired model, but the user function does not implement `try`, `confirm`, or `cancel` methods. Perago owns the transaction boundary around the workspace.
+Workspace publishing uses a TCC-inspired model when a writable task produces workspace changes, but the user function does not implement `try`, `confirm`, or `cancel` methods. Perago owns the transaction boundary around the workspace.
 
 | TCC phase | Perago runtime behavior | Main branch visibility |
 | --- | --- | --- |
-| Try | Create a short-lived staging branch, upload the task prefix, and commit to that staging branch. | Not visible on the target branch. |
-| Confirm | Re-check the current Conductor attempt, check whether the target branch may still be advanced, then squash merge the staging commit into the target branch. | Visible as one linear commit. |
+| Try | For a writable changed workspace, create a short-lived staging branch, upload the task prefix, and commit to that staging branch. | Not visible on the target branch. |
+| Confirm | Re-check the current Conductor attempt, check whether the target branch may still be advanced, then squash merge the staging commit into the target branch. Writable no-op completion only checks or relocates the target branch without creating an empty commit. | Visible as one linear commit, or unchanged for no-op. |
 | Cancel | Delete the staging branch after failure, stale attempt detection, publish-fence failure, or successful merge. | No target branch change unless confirm already succeeded. |
 
 The staging branch is internal runtime state. It is not part of Conductor task input or output. Inside the runtime, the staged workspace reference carries the LakeFS repository, staging branch, and staging commit so cleanup is driven by explicit identity instead of worker-local mutable state.
@@ -1088,15 +1089,18 @@ Conductor task input
   workspace.ref        = immutable input commit
 
 Perago runtime
-  create hidden staging branch from the publish base
-  sync WorkspaceSpec(prefix=...) into the staging branch
-  commit staging branch
-  publish through fences
+  if WorkspaceSpec(read_only=True): keep input ref and skip HEAD checks
+  elif writable diff is empty: check HEAD and keep input ref
+  else:
+    create hidden staging branch from the publish base
+    sync WorkspaceSpec(prefix=...) into the staging branch
+    commit staging branch
+    publish through fences
 
 Conductor task output
   workspace.repository = song-000123
   workspace.branch     = main
-  workspace.ref        = published merge commit
+  workspace.ref        = input commit or published merge commit
 ```
 
 ### Attempt fence
@@ -1119,14 +1123,16 @@ def assert_current_attempt(task_client, task) -> None:
         raise StaleAttemptError(task.task_id)
 ```
 
-Perago 在 stage 前和 publish 前各检查一次。检查失败时，attempt 返回 `FAILED`，并执行 cleanup。
+Perago 在可写路径的 stage 或 no-op branch relocation 前检查一次；如果已经创建 staging branch，则在 publish 前再检查一次。检查失败时，attempt 返回 `FAILED`，并执行 cleanup。
 
 ### LakeFS publish protocol
 
 完整协议见 [LakeFS 发布协议](lakefs-publication-protocol.md)。核心规则：
 
 - 不需要任何 commit metadata。
-- staging branch 从 input `workspace.ref` 创建。
+- read-only workspace task 不检查 HEAD、不 stage、不 publish，output ref 保持 input ref。
+- staging branch 从 input `workspace.ref` 创建，但只在可写且 diff 非空时创建。
+- 可写 task diff 为空时 Perago 不会创建 empty commit；如果 target HEAD 是 input ref 的直接子提交，relocate 回 input ref 后完成。
 - 如果 target `HEAD == input_ref`，merge staging branch。
 - 如果 `parent(HEAD) == input_ref`，把当前 HEAD 当作 abandoned publication，并 hard-reset / relocate target branch 到本次 staging commit。
 - 其他 HEAD 状态全部 fail closed。
@@ -1135,16 +1141,39 @@ Perago 在 stage 前和 publish 前各检查一次。检查失败时，attempt �
 简化伪代码：
 
 ```python
-def publish_workspace(task_client, task, workspace, staging):
+def complete_workspace(task_client, task, workspace, workspace_dir):
+    if task.workspace.read_only:
+        return workspace.ref
+
+    changed = workspace_has_diff(workspace_dir, workspace)
     assert_current_attempt(task_client, task)
+
+    if changed:
+        staging = stage_workspace(workspace_dir, workspace)
+        assert_current_attempt(task_client, task)
 
     repo = lakefs.repository(workspace.repository)
     target = repo.branch(workspace.branch)
     head = target.get_commit()
 
+    if not changed:
+        if head.id == workspace.ref:
+            return workspace.ref
+        if first_parent(head) == workspace.ref:
+            repo.client.sdk_client.experimental_api.hard_reset_branch(
+                workspace.repository,
+                workspace.branch,
+                ref=workspace.ref,
+                force=False,
+            )
+            return workspace.ref
+        raise PublishFenceError(
+            f"{workspace.branch} cannot complete no-op from input ref {workspace.ref}"
+        )
+
     if head.id == workspace.ref:
-        published_ref = staging.merge_into(target, squash_merge=True)
-    elif first_parent(head) == workspace.ref:
+        return staging.merge_into(target, squash_merge=True)
+    if first_parent(head) == workspace.ref:
         published_ref = staging.get_commit().id
         repo.client.sdk_client.experimental_api.hard_reset_branch(
             workspace.repository,

@@ -29,7 +29,7 @@ The Conductor input field that identifies the LakeFS repository, writable branch
 _Avoid_: business parameter, params field, workspace prefix
 
 **Workspace Output**:
-The Conductor output field that carries the LakeFS repository, writable branch, and immutable commit ref after a Workspace Task Worker commits successfully.
+The Conductor output field that carries the LakeFS repository, writable branch, and immutable commit ref after a Workspace Task Worker completes successfully.
 _Avoid_: business result, params field, workspace prefix
 
 **Params Input**:
@@ -47,6 +47,14 @@ _Avoid_: workflow input, workflow output, runtime credential
 **Workspace Guardrail**:
 A task-declared file-system expectation over the local workspace root exposed by a Workspace Prefix.
 _Avoid_: business validator, schema validator, data transformer
+
+**Workspace Access Mode**:
+The task-declared workspace intent that says whether a Workspace Task Worker may publish workspace changes.
+_Avoid_: inferred write mode, runtime guess
+
+**Read-Only Workspace Task Worker**:
+A Workspace Task Worker whose Workspace Access Mode forbids workspace publication.
+_Avoid_: workspace-free task, fake workspace
 
 **Workspace Path**:
 A relative logical path inside the local workspace root exposed by a Workspace Prefix.
@@ -79,6 +87,10 @@ _Avoid_: task id, worker id, process id
 **Workspace Transaction**:
 The Perago-managed publication boundary that turns a local workspace result into a committed Workspace Output.
 _Avoid_: direct branch write, business transaction
+
+**No-Op Workspace Completion**:
+A successful Workspace Task Worker completion whose Workspace Output carries the same Workspace Ref as its Workspace Input.
+_Avoid_: empty commit, fake success
 
 **Abandoned Workspace Publication**:
 A LakeFS workspace update left behind by a Task Attempt that Conductor did not accept as successful.
@@ -117,7 +129,7 @@ The operational time bound Perago assumes for confirming a Workspace Transaction
 _Avoid_: hard transaction guarantee, exact worst-case duration
 
 **Workspace Task Worker**:
-A Task Worker that receives and commits a versioned workspace.
+A Task Worker that receives a versioned workspace and produces a Workspace Output.
 _Avoid_: task with optional workspace
 
 **Workspace-Free Task Worker**:
@@ -158,9 +170,12 @@ _Avoid_: file path, object path, module:app target
 - A **Workspace Guardrail** belongs to a **Workspace Task Worker** and is scoped to that worker's **Workspace Prefix**.
 - A **Workspace Guardrail** is declared over one or more **Workspace Paths**.
 - A **Workspace Guardrail** is checked against local workspace files, not against **Task Contract** schemas.
+- A **Workspace Task Worker** has one **Workspace Access Mode**.
+- A **Read-Only Workspace Task Worker** may read a **Workspace Input** but must not publish a new **Workspace Ref**.
 - An **Attempt Workspace** belongs to exactly one **Task Attempt**.
 - A **Workspace Input** carries one **Workspace Branch** and one **Workspace Ref**.
-- A **Workspace Output** carries the same **Workspace Branch** and a new **Workspace Ref** after commit.
+- A **Workspace Output** carries the same **Workspace Branch** and either the same or a new **Workspace Ref** after successful completion.
+- A **Workspace Task Worker** may complete as a **No-Op Workspace Completion**.
 - A **Protected Workspace Branch** is a **Workspace Branch** guarded against direct workspace writes.
 - A **Task Attempt** belongs to one **Logical Task Key**.
 - Multiple **Task Attempts** may exist for the same **Logical Task Key** when Conductor retries a task.
@@ -200,9 +215,11 @@ _Avoid_: file path, object path, module:app target
 - Business input belongs under **Params Input**; versioned workspace identity belongs under **Workspace Input**.
 - Business output belongs under **Result Output**; committed workspace identity belongs under **Workspace Output**.
 - **Workspace Input** and **Workspace Output** carry repository, **Workspace Branch**, and **Workspace Ref**; the **Workspace Prefix** is task metadata declared in code.
+- **Workspace Task Worker** must not be read as a guaranteed workspace writer; it may complete without changing the **Workspace Ref**.
 - A **Workspace Path** must stay inside the local workspace root exposed by a **Workspace Prefix**.
 - An **Attempt Workspace** must not be reused across **Task Attempts**, **Task Workers**, or **Worker Processes**.
 - A **Workspace Guardrail** is a local file-shape check; it is not a data transformation, TaskDef schema rule, or cross-repository scan.
+- A **Read-Only Workspace Task Worker** is still a **Workspace Task Worker**, not a **Workspace-Free Task Worker**.
 - A **Protected Workspace Branch** prevents direct workspace writes; it is not a business-level lock service.
 - A **Workspace-Free Task Worker** must not receive fake workspace data.
 - A **Worker Supervisor** may restart failed Worker Processes, but it must not become a task scheduler.

@@ -7,7 +7,7 @@ TaskDef 的真源是 task module：
 - decorator metadata 提供 `name`、`owner_email`、可选 `description` 和 `controls`。
 - 函数签名决定 task 是 workspace task 还是 workspace-free task。
 - Pydantic params/output model 生成 `inputSchema` 和 `outputSchema`。
-- `WorkspaceSpec`、guardrail、LakeFS prefix 和本地运行配置不直接写入 Conductor TaskDef。
+- `WorkspaceSpec`、guardrail、LakeFS prefix、workspace access mode 和本地运行配置不直接写入 Conductor TaskDef。
 
 ## 生成入口
 
@@ -45,7 +45,7 @@ write_taskdef(load_module_task("app.workers.features_build"), Path("generated/fe
 | `totalTimeoutSeconds` | `controls.timeout.total_seconds` | generated | 默认 `0`；必须非负。 |
 | `timeoutPolicy` | `controls.timeout.policy` | generated | 默认 `"TIME_OUT_WF"`；可选 `"RETRY"`、`"TIME_OUT_WF"`、`"ALERT_ONLY"`。 |
 | `timeoutSeconds` | `controls.timeout.seconds` | generated | 默认 `0`；必须非负。 |
-| `responseTimeoutSeconds` | `controls.response_timeout_seconds` | generated | 默认 `600`；有 `publish_budget` 时使用预算派生值。 |
+| `responseTimeoutSeconds` | `controls.response_timeout_seconds` | generated | 默认 `600`；有有效 `publish_budget` 时使用预算派生值。 |
 | `pollTimeoutSeconds` | `controls.timeout.poll_seconds` | generated | 默认 `0`；必须非负。 |
 | `concurrentExecLimit` | `controls.limits.concurrent_exec_limit` | no | `None` 时省略；非 `None` 时必须非负。 |
 | `rateLimitFrequencyInSeconds` | `controls.limits.rate_limit_frequency_in_seconds` | no | `None` 时省略；必须和 `rateLimitPerFrequency` 成对配置。 |
@@ -127,7 +127,7 @@ workspace task 的 output 顶层字段固定为：
 
 ## Publish budget
 
-`PublishBudget` 不会作为字段写入 TaskDef。它只覆盖生成出来的 `responseTimeoutSeconds`：
+`PublishBudget` 不会作为字段写入 TaskDef。它只在可写 workspace task 上覆盖生成出来的 `responseTimeoutSeconds`：
 
 ```text
 responseTimeoutSeconds =
@@ -137,13 +137,14 @@ responseTimeoutSeconds =
   + heartbeat_interval_seconds
 ```
 
-如果没有 `publish_budget`，`responseTimeoutSeconds` 来自 `controls.timeout.response_seconds`，默认是 `600`。
+如果没有 `publish_budget`，或 task 声明 `WorkspaceSpec(read_only=True)` 导致 publish budget 被忽略，`responseTimeoutSeconds` 来自 `controls.timeout.response_seconds`，默认是 `600`。
 
 ## 不写入 TaskDef 的 Perago 信息
 
 以下信息属于 Perago runtime 或任务声明边界，不属于 Conductor TaskDef：
 
 - `WorkspaceSpec.prefix`
+- `WorkspaceSpec.read_only`
 - `WorkspaceSpec.pre` / `WorkspaceSpec.post`
 - `require_file`、`require_dir`、`require_glob`、`forbid_glob`
 - LakeFS endpoint、credentials、repository 默认值
@@ -184,5 +185,18 @@ workspace-free task 配置 publish budget 也会被拒绝，因为它没有 Lake
     controls=TaskControls(publish_budget=budget),
 )
 def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
+    ...
+```
+
+read-only workspace task 配置 publish budget 不会失败，但会在 `perago check`、`perago extract` 或 `perago start` 的校验/启动阶段 warning 一次，并忽略该预算：
+
+```python
+@task(
+    name="metadata.inspect",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(prefix="/audio/render", read_only=True),
+    controls=TaskControls(publish_budget=budget),
+)
+def inspect_metadata(workspace: Path, params: InspectMetadataParams) -> InspectMetadataOutput:
     ...
 ```

@@ -1,6 +1,6 @@
 # Publish Budget
 
-`PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只适用于 workspace task，用来让 Conductor 的 `responseTimeoutSeconds` 覆盖 LakeFS merge、Conductor completion 阶段预留、worker shutdown grace 和 heartbeat slack。
+`PublishBudget` 把 workspace publication 的运维时间边界写进 task metadata。它只对可写 workspace task 生效，用来让 Conductor 的 `responseTimeoutSeconds` 覆盖 LakeFS merge、Conductor completion 阶段预留、worker shutdown grace 和 heartbeat slack。
 
 这个页面面向运行时维护者和需要给 workspace task 配置发布预算的任务作者。TaskDef 字段映射见 `../getting-started/controls-and-taskdef.md`；LakeFS 发布顺序见 `workspace-publication.md`。
 
@@ -8,7 +8,7 @@
 
 默认 `TaskControls(timeout=TimeoutPolicy(response_seconds=600))` 只表达 Conductor response timeout。对短任务或没有真实 LakeFS publication 压力的任务，这通常足够。
 
-当 workspace task 会修改大量 object、LakeFS merge latency 已经有观测值，或 worker shutdown 与 Conductor completion 阶段需要明确留量时，配置 `publish_budget`：
+当可写 workspace task 会修改大量 object、LakeFS merge latency 已经有观测值，或 worker shutdown 与 Conductor completion 阶段需要明确留量时，配置 `publish_budget`：
 
 ```python
 from pathlib import Path
@@ -49,7 +49,7 @@ Required/optional/generated 字段边界：
 
 - required: `PublishBudget` 的 6 个字段都必须显式提供。
 - optional: `TaskControls.publish_budget` 可以省略；省略时使用 `TimeoutPolicy.response_seconds`。
-- conditional: `publish_budget` 只允许配置在带 `WorkspaceSpec(...)` 的 workspace task 上。
+- conditional: `publish_budget` 只允许配置在带 `WorkspaceSpec(...)` 的 workspace task 上；`read_only=True` 时会被忽略并发出 warning。
 - generated: `responseTimeoutSeconds` 由 `PublishBudget.response_timeout_seconds` 派生并写入 TaskDef。
 - forbidden: 不能把 `publish_budget` 配在 workspace-free task 上；不能在 `PublishBudget` 里声明未知字段或 exactly-once 语义。
 
@@ -91,7 +91,7 @@ lakefs_merge_timeout_seconds
 }
 ```
 
-如果同时配置了 `TimeoutPolicy(response_seconds=999)` 和 `publish_budget`，`publish_budget` 优先。`PublishBudget` 本身不会写入 TaskDef JSON，也不会出现在 Conductor input/output 中。
+如果同时配置了 `TimeoutPolicy(response_seconds=999)` 和有效 `publish_budget`，`publish_budget` 优先。`PublishBudget` 本身不会写入 TaskDef JSON，也不会出现在 Conductor input/output 中。read-only workspace task 没有 publication 阶段；它的 `publish_budget` 会被忽略，`responseTimeoutSeconds` 使用 `TimeoutPolicy.response_seconds`。
 
 ## Runtime 使用位置
 
@@ -106,6 +106,14 @@ lakefs_merge_timeout_seconds
 Perago 当前不直接发送 Conductor completion update，也不接管 SDK 的 `update_task_v2` / `update_task` fallback。`conductor-python 1.3.11` 当前没有公开的 `TaskRunner` completion update HTTP timeout 配置入口；如果后续 SDK 提供正式 public option，再把该字段接到 SDK 公开配置上。
 
 `observed_merge_p99_seconds` 和 `safety_margin_seconds` 不直接传给外部系统。它们只用于校验 `lakefs_merge_timeout_seconds` 是否覆盖 `observed_merge_p99_seconds + safety_margin_seconds`。
+
+## Read-only workspace task
+
+`WorkspaceSpec(read_only=True)` 禁用 workspace publication。此时 `TaskControls(publish_budget=...)` 不参与 TaskDef 生成，也不影响运行时 LakeFS request timeout。`perago check`、`perago extract` 和 `perago start` 应在校验或启动阶段 warning 一次，避免每次 task execution 重复刷日志：
+
+```text
+WorkspaceSpec(read_only=True) disables workspace publication; TaskControls.publish_budget is ignored.
+```
 
 ## 配置流程
 

@@ -1,6 +1,6 @@
 # Workspace-Free Task
 
-workspace-free task 是不读写 LakeFS workspace 的 Perago worker。它只接收 typed `params`，返回 typed `result`，适合 metadata 校验、轻量规则判断、外部只读查询包装或不需要发布 workspace 变更的节点。
+workspace-free task 是不接收 LakeFS workspace 的 Perago worker。它只接收 typed `params`，返回 typed `result`，适合 metadata 校验、轻量规则判断或外部只读查询包装。需要读取 LakeFS workspace 但不发布变更的节点应使用 `WorkspaceSpec(read_only=True)` 的 workspace task。
 
 ## 最小示例
 

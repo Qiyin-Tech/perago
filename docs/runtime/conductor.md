@@ -1,6 +1,6 @@
 # Conductor Runtime
 
-Perago 默认 `process` runtime 由一个 Conductor broker process 拉取单个 task name 的 attempt，再派发给本地 executor process 执行 task body，并由 broker 把 `COMPLETED`、`FAILED` 或 `FAILED_WITH_TERMINAL_ERROR` 写回 Conductor。Conductor 负责调度和重试；Perago 负责把 Conductor task snapshot 映射成强类型 attempt，并在 workspace 发布前确认 attempt 仍然是当前可写入的 attempt。
+Perago 默认 `process` runtime 由一个 Conductor broker process 拉取单个 task name 的 attempt，再派发给本地 executor process 执行 task body，并由 broker 把 `COMPLETED`、`FAILED` 或 `FAILED_WITH_TERMINAL_ERROR` 写回 Conductor。Conductor 负责调度和重试；Perago 负责把 Conductor task snapshot 映射成强类型 attempt，并在可写 workspace 路径执行 stage、publish 或 no-op branch relocation 前确认 attempt 仍然是当前可写入的 attempt。
 
 ## 启动前检查
 
@@ -72,14 +72,14 @@ Conductor task 会被映射成 Perago attempt snapshot：
 | `retried_task_id` | optional | Conductor retry lineage，可用于日志排查。 |
 | `response_timeout_seconds` | optional | SDK task 的 lease timeout snapshot；后续 SDK broker/runner adapter 用它接入 LeaseManager 追踪和日志排查。 |
 
-workspace task 在发布前会重新读取当前 `task_id` 的 Conductor task，并调用 attempt fence。默认 process 模式下，这个重新读取动作由 broker-owned RPC 完成，executor 不持有 Conductor client；thread 模式下由同进程 runner client 完成。只有 fresh snapshot 同时满足以下条件时，才允许继续进入 stage 或 publish：
+可写 workspace task 在 stage、publish 或 no-op branch relocation 前会重新读取当前 `task_id` 的 Conductor task，并调用 attempt fence。默认 process 模式下，这个重新读取动作由 broker-owned RPC 完成，executor 不持有 Conductor client；thread 模式下由同进程 runner client 完成。只有 fresh snapshot 同时满足以下条件时，才允许继续进入可写 LakeFS 路径：
 
 - `status == "IN_PROGRESS"`。
 - `workflow_instance_id` 与已 poll 到的 attempt 一致。
 - `task_id` 与已 poll 到的 attempt 一致。
 - `retry_count` 与已 poll 到的 attempt 一致。
 
-Perago 当前在两个位置检查 attempt fence：执行 task body 后、stage workspace 前检查一次；stage workspace 后、publish workspace 前再检查一次。任一检查失败都会返回普通 `FAILED`，并清理 attempt-local workspace；如果 staging 已经创建，还会尝试清理 staging branch。
+Perago 当前在可写路径的两个位置检查 attempt fence：执行 task body 后、stage workspace 或 no-op branch relocation 前检查一次；stage workspace 后、publish workspace 前再检查一次。任一检查失败都会返回普通 `FAILED`，并清理 attempt-local workspace；如果 staging 已经创建，还会尝试清理 staging branch。`WorkspaceSpec(read_only=True)` 不进入这些 LakeFS 写入 fence，Conductor result 接受与幂等性由 Conductor 负责。
 
 ## Result update
 
@@ -87,13 +87,13 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 
 | Perago status | Conductor 字段 | 典型来源 |
 | --- | --- | --- |
-| `COMPLETED` | `outputData` | task body 成功，workspace task 还包含已发布的 workspace output。 |
+| `COMPLETED` | `outputData` | task body 成功；workspace task 包含 read-only、no-op 或 published workspace output。 |
 | `FAILED` | `reasonForIncompletion` | bad input、post guardrail、stale attempt、task body exception、publish failure。 |
 | `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` | pre guardrail failure。 |
 
 `COMPLETED` 必须带 output，且不能带 failure reason。失败状态必须带 `reasonForIncompletion`，且不能带 output。worker id 会写入 Conductor result，便于从 Conductor 结果反查 worker 日志目录。
 
-workspace task 如果配置了 `PublishBudget`，TaskDef 会使用派生出的 `responseTimeoutSeconds`，让 SDK runner 的 LeaseManager 按 publication 预算续租。LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束。`conductor_completion_timeout_seconds` 只是 `responseTimeoutSeconds` 中的 completion reserve；当前不传给 SDK `TaskRunner` 作为 result update HTTP timeout。没有 publish budget 时使用普通 task timeout。
+可写 workspace task 如果配置了有效 `PublishBudget`，TaskDef 会使用派生出的 `responseTimeoutSeconds`，让 SDK runner 的 LeaseManager 按 publication 预算续租。LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束。`conductor_completion_timeout_seconds` 只是 `responseTimeoutSeconds` 中的 completion reserve；当前不传给 SDK `TaskRunner` 作为 result update HTTP timeout。没有 publish budget，或 `WorkspaceSpec(read_only=True)` 导致 publish budget 被忽略时，使用普通 task timeout。
 
 `ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。显式 thread runtime 和默认 process broker runtime 都交给 SDK `TaskRunner` 处理 LeaseManager 续租。
 
@@ -106,7 +106,7 @@ Conductor 传入的 `input_data` 必须匹配 Perago task 类型：
 | workspace task | 顶层只能有 `workspace` 和 `params` | 顶层包含 `workspace` 和 `result` |
 | workspace-free task | 顶层只能有 `params` | 顶层只包含 `result` |
 
-Conductor 不保存 attempt-local workspace 路径，也不参与 workspace 文件同步。workspace 路径、LakeFS download/stage/merge 和 staging cleanup 都由 Perago worker runtime 在本机执行。
+Conductor 不保存 attempt-local workspace 路径，也不参与 workspace 文件同步。workspace 路径、LakeFS download、read-only/no-op completion、stage/merge 和 staging cleanup 都由 Perago worker runtime 在本机执行。
 
 ## 故障边界
 

@@ -4,6 +4,8 @@
 **Status**: accepted
 **Deciders**: Perago maintainers
 
+> 后续补充：read-only workspace task 和 no-op completion 的规则见 [ADR-0004](0004-add-read-only-workspace-and-no-op-completion.md)。
+
 ## 背景
 
 Perago workspace task 在 Conductor retry 语义下发布 LakeFS workspace 更新。一次 task attempt 可能已经更新 LakeFS，但没有成功向 Conductor 回报 `COMPLETED`。这种情况下，Conductor 仍然是 task 成功事实来源；LakeFS 上那次更新是 abandoned publication。

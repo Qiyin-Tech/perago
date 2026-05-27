@@ -1,6 +1,6 @@
 # Workspace Task
 
-workspace task 是需要读写版本化 workspace 的 Perago worker。它把 Conductor input 中的 `workspace` ref 下载到本地 attempt workspace，把业务函数的 `workspace: Path` 指向这个本地目录，然后在任务成功后把输出发布回 LakeFS。
+workspace task 是需要读取版本化 workspace 的 Perago worker。它把 Conductor input 中的 `workspace` ref 下载到本地 attempt workspace，把业务函数的 `workspace: Path` 指向这个本地目录；可写 workspace task 在产生变更后才把输出发布回 LakeFS。
 
 ## 最小示例
 
@@ -42,7 +42,7 @@ Required/generated 字段边界：
 
 - input required: Conductor input 必须提供 `workspace` 和 `params`。
 - input generated: `workspace: Path` 由 Perago 注入，不由业务调用方传入函数。
-- output generated: 函数返回值序列化为 Conductor output 的 `result`；成功发布后 Perago 生成 output `workspace` ref。
+- output generated: 函数返回值序列化为 Conductor output 的 `result`；Perago 生成 output `workspace` ref，ref 可能是 input ref，也可能是成功发布后的新 ref。
 - task metadata required: `@task(...)` 必须声明 `name` 和 `owner_email`。
 - task metadata optional: `description`、guardrail 和 controls 可按任务需要声明；`WorkspaceSpec` 的 `prefix` 参数可省略为默认值 `"/"`。
 
@@ -112,8 +112,27 @@ def build_features(workspace: Path, params: BuildFeaturesParams) -> BuildFeature
 - 按 Conductor input 的 workspace ref 下载 `WorkspaceSpec(prefix=...)` 指向的内容。
 - 在本地 attempt workspace 中执行函数。
 - 检查 post guardrails。
-- 将该 prefix 下的变更 stage 到 LakeFS。
-- 成功发布后报告 generated output `workspace` 和 `result`。
+- 根据 `WorkspaceSpec(read_only=...)` 和 workspace diff 决定是否进入 LakeFS publication。
+- 成功后报告 generated output `workspace` 和 `result`。
+
+## Read-only workspace task
+
+只需要读取 LakeFS workspace 的节点仍然应该声明 workspace task，而不是伪装成 workspace-free task。使用 `read_only=True` 表示这个 task 不产生 workspace publication：
+
+```python
+@task(
+    name="metadata.inspect",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(prefix="/audio/render", read_only=True),
+)
+def inspect_metadata(workspace: Path, params: InspectParams) -> InspectOutput:
+    manifest = workspace / "manifest.json"
+    return InspectOutput(found=manifest.exists())
+```
+
+`read_only=True` 的成功 output 保留 input workspace ref。runtime 不检查 target branch HEAD、不创建 staging branch、不提交 LakeFS commit，也不发布新 ref。它不是 OS-level readonly mount；如果函数误写了本机 attempt workspace，这些写入会随 cleanup 丢弃。
+
+默认 `read_only=False`。可写 workspace task 执行后如果没有任何 workspace diff，Perago 不会创建 empty commit；runtime 会按 publish fence 检查 target branch 状态，并保持 output ref 与 target branch 可见 head 一致。
 
 ## 常见拒绝场景
 

@@ -121,7 +121,7 @@ Workspace task attempt 的 guardrail 顺序固定：
 4. pre 检查通过后，Perago 调用业务函数。
 5. 业务函数返回值通过 output Pydantic model 校验。
 6. `post` guardrails 检查同一个本地 workspace root。
-7. post 检查通过后，Perago 才会 stage、发布 workspace output 并报告成功结果。
+7. post 检查通过后，Perago 才会选择 read-only、no-op 或 publication 路径，并报告成功结果。
 
 Pre guardrail 失败表示上游输入 workspace 不满足当前 task 的输入文件契约。Perago 不调用业务函数，不发布 workspace output，并把异常映射为 terminal failure：
 

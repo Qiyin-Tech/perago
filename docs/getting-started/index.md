@@ -4,7 +4,7 @@
 
 ## 完整 workspace task
 
-Workspace task 适合需要读写 LakeFS workspace 的 Conductor task。函数签名是 `(workspace: Path, params: ParamsModel) -> OutputModel`。
+Workspace task 适合需要读取 LakeFS workspace，或读取后按需发布变更的 Conductor task。函数签名是 `(workspace: Path, params: ParamsModel) -> OutputModel`。
 
 ```python
 from pathlib import Path
@@ -156,7 +156,7 @@ PYTHONPATH=tests/fixtures uv run perago extract app.workers.features_build --out
 }
 ```
 
-`WorkspaceSpec.prefix`、`pre` / `post` guardrail、LakeFS endpoint、credentials、attempt branch、publish fence 和 `publish_budget` 原始字段不会写入 TaskDef。
+`WorkspaceSpec.prefix`、`WorkspaceSpec.read_only`、`pre` / `post` guardrail、LakeFS endpoint、credentials、attempt branch、publish fence 和 `publish_budget` 原始字段不会写入 TaskDef。
 
 深入阅读：{doc}`controls-and-taskdef`、{doc}`../reference/conductor-taskdef` 和 {doc}`../reference/input-output-contract`。
 
@@ -179,7 +179,7 @@ PYTHONPATH=tests/fixtures uv run perago extract app.workers.features_build --out
 | `limits.concurrent_exec_limit` | `concurrentExecLimit` | omitted | 为 `None` 时不写入 JSON。 |
 | `limits.rate_limit_frequency_in_seconds` | `rateLimitFrequencyInSeconds` | omitted | 必须和 `rate_limit_per_frequency` 成对配置。 |
 | `limits.rate_limit_per_frequency` | `rateLimitPerFrequency` | omitted | 必须和 `rate_limit_frequency_in_seconds` 成对配置。 |
-| `publish_budget` | derives `responseTimeoutSeconds` | `None` | 只允许 workspace task 使用，不直接写入 TaskDef。 |
+| `publish_budget` | derives `responseTimeoutSeconds` | `None` | 只允许 workspace task 使用；read-only workspace task 上会被忽略并发出 warning。 |
 
 `PublishBudget` 用 workspace publication 的运行时预算派生 `responseTimeoutSeconds`：
 
@@ -208,7 +208,9 @@ controls = TaskControls(
 
 `WorkspaceSpec(prefix=...)` 决定从 LakeFS repository 的哪个 object prefix 投影到本地 attempt workspace。`"/"` 表示 repository root，其他值会归一化成相对 prefix。
 
-`pre` guardrail 在 task body 运行前检查下载后的 workspace，`post` guardrail 在 task body 运行后、publication 前检查输出。常用 guardrail：
+`WorkspaceSpec(read_only=True)` 表示 workspace task 只读取版本化 workspace，不发布新 workspace ref。成功 output 的 `workspace.ref` 保持为 input ref；runtime 不检查 target branch HEAD、不创建 staging branch、不提交 LakeFS commit。默认 `read_only=False`，可写 workspace task 在 diff 为空时 Perago 不会创建 empty commit。
+
+`pre` guardrail 在 task body 运行前检查下载后的 workspace，`post` guardrail 在 task body 运行后、completion 路径选择前检查输出。常用 guardrail：
 
 | 函数 | 用途 |
 | --- | --- |
@@ -217,13 +219,13 @@ controls = TaskControls(
 | `require_glob("pattern", min_count=1)` | 要求 glob 至少匹配指定数量。 |
 | `forbid_glob("pattern")` | 禁止 glob 匹配任何路径。 |
 
-Guardrail 失败会阻止 task body 或 publication 继续执行；guardrail 本身不写入 Conductor TaskDef。
+Guardrail 失败会阻止 task body 或 workspace completion 继续执行；guardrail 本身不写入 Conductor TaskDef。
 
 深入阅读：{doc}`guardrails`、{doc}`../runtime/lakefs` 和 {doc}`../runtime/workspace-publication`。
 
 ## Workspace-free task
 
-不需要 LakeFS workspace 的 task 使用 `(params: ParamsModel) -> OutputModel` 签名，并且不能声明 `workspace=WorkspaceSpec(...)`。
+不需要 LakeFS workspace 的 task 使用 `(params: ParamsModel) -> OutputModel` 签名，并且不能声明 `workspace=WorkspaceSpec(...)`。需要读取 LakeFS workspace 但不发布变更的节点仍然是 workspace task，应声明 `WorkspaceSpec(read_only=True)`。
 
 ```python
 from pydantic import BaseModel, Field

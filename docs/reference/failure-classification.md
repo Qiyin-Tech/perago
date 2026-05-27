@@ -6,7 +6,7 @@ Perago 的运行时结果只有三个状态：
 
 | 状态 | 载荷结构 | Conductor 语义 |
 | --- | --- | --- |
-| `COMPLETED` | `output` required; `reasonForIncompletion` forbidden | attempt 成功完成。workspace task 已发布 workspace output；workspace-free task 已返回业务 `result`。 |
+| `COMPLETED` | `output` required; `reasonForIncompletion` forbidden | attempt 成功完成。workspace task 已生成 workspace output；workspace-free task 已返回业务 `result`。 |
 | `FAILED` | `reasonForIncompletion` required; `output` forbidden | attempt 失败，Perago 未把它归类为 terminal input-workspace 契约错误。 |
 | `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required; `output` forbidden | pre guardrail 失败，表示上游提供的 workspace input 不满足任务声明的输入文件契约。 |
 
@@ -34,6 +34,8 @@ Workspace task 的 attempt 生命周期中，失败分类如下。
 | pre guardrails | 输入 workspace 缺少必需文件/目录/glob，或命中 forbidden glob | `FAILED_WITH_TERMINAL_ERROR` | 否 |
 | task body | 用户函数抛异常，或返回值不能通过 output Pydantic model 校验 | `FAILED` | 否 |
 | post guardrails | 输出 workspace 文件未通过 task 的 post guardrail | `FAILED` | 否 |
+| read-only completion | `WorkspaceSpec(read_only=True)` 的 task 成功完成 | `COMPLETED` | 否，output ref 保持 input ref |
+| no-op writable completion | `read_only=False` 且 workspace diff 为空，target HEAD 状态可解释 | `COMPLETED` | 否，output ref 保持 input ref |
 | first attempt fence | task body 后、stage 前发现 Conductor attempt 已不再是当前 attempt | `FAILED` | 否 |
 | stage | workspace 含 symlink、上传/删除/commit 失败 | `FAILED` | 否 |
 | second attempt fence | stage 后、publish 前发现 attempt 已失效 | `FAILED` | 否 |
@@ -41,7 +43,7 @@ Workspace task 的 attempt 生命周期中，失败分类如下。
 | staging cleanup | staging branch 删除失败 | 保留原始 result | 保留原始 result |
 | local cleanup | attempt-local workspace 删除失败 | 保留原始 result | 保留原始 result |
 
-Workspace task 只有在 body 成功、post guardrail 通过、两次 attempt fence 都通过、stage 成功且 publish 成功后才返回 `COMPLETED`。完成 output 会包含 `workspace` 和 `result`；失败 output 不会带 workspace，也不会把未发布的 attempt-local workspace 暴露给下游。
+Workspace task 在 body 成功、post guardrail 通过后，按 workspace access mode 和 diff 决定完成路径。`read_only=True` 不进入 LakeFS HEAD 检查或 publication；`read_only=False` 且 diff 为空时 Perago 不会创建 empty commit，但必须通过 no-op HEAD 状态检查；`read_only=False` 且 diff 非空时必须完成 stage 和 publish。完成 output 会包含 `workspace` 和 `result`；失败 output 不会带 workspace，也不会把未发布的 attempt-local workspace 暴露给下游。
 
 ## Workspace-Free Task Attempt
 

@@ -40,6 +40,7 @@ Perago 的 worker 单元是 exactly one task per Python module。一个 worker p
 | `workspace must be a WorkspaceSpec` | `workspace=` 传入了 dict 或其他对象。 | 使用 `WorkspaceSpec(...)`。 |
 | `controls must be a TaskControls` | `controls=` 传入了 dict 或其他对象。 | 使用 `TaskControls(...)` 和嵌套 policy model。 |
 | `publish_budget requires workspace=WorkspaceSpec(...)` | workspace-free task 配置了 publish budget。 | 只在 workspace task 上配置 `TaskControls(publish_budget=...)`。 |
+| `WorkspaceSpec(read_only=True) disables workspace publication; TaskControls.publish_budget is ignored.` | read-only workspace task 配置了 publish budget。 | 这是启动/校验阶段 warning；删除 `publish_budget`，或把 task 改为可写 workspace task。 |
 
 这类错误在 module import 或 `build_taskdef(...)` 阶段暴露；`perago check` 会先加载 runtime config，再导入 task module。
 
@@ -66,6 +67,7 @@ Perago 的 worker 单元是 exactly one task per Python module。一个 worker p
 | --- | --- | --- |
 | `WorkspaceSpec.prefix must use '/' separators` | prefix 使用了 Windows 反斜杠。 | 使用 POSIX 风格 `/`。 |
 | `WorkspaceSpec.prefix must stay inside the repository` | prefix 含 `..`、`.` 或空 segment。 | 使用 `/` 或 repository 内的相对 prefix，例如 `datasets/raw`。 |
+| read-only task 写了本机 workspace 但没有发布 | `WorkspaceSpec(read_only=True)` 禁止 workspace publication。 | 这是预期行为；写入会随 attempt-local cleanup 丢弃。 |
 | `workspace guardrail paths must not be empty` | `require_file("")` 或类似空路径。 | 填写 workspace-prefix 内的相对路径。 |
 | `guardrail paths must be relative to WorkspaceSpec(prefix=...)` | guardrail path 以 `/` 开头。 | 删除开头 `/`，路径相对于 `WorkspaceSpec.prefix`。 |
 | `absolute guardrail paths are not allowed` | 使用了绝对 `Path`。 | 使用 workspace-relative path。 |
@@ -121,7 +123,7 @@ Perago 的 worker 单元是 exactly one task per Python module。一个 worker p
 | `Extra inputs are not permitted` | Pydantic input/result model 收到未声明字段，或 control object 有未知字段。 | 删除额外字段；扩展 contract 必须先改 Pydantic model。 |
 | `Input should be ...` | Pydantic 字段类型不匹配。 | 按 generated TaskDef schema 和 Pydantic model 修正字段类型。 |
 
-Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`ref_type`、`ref` 四元组；LakeFS endpoint、credentials 和 `WorkspaceSpec.prefix` 不属于 workflow input。
+Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`ref_type`、`ref` 四元组；LakeFS endpoint、credentials、`WorkspaceSpec.prefix` 和 `WorkspaceSpec.read_only` 不属于 workflow input。
 
 ## Workspace Sync And Publication
 
@@ -131,6 +133,7 @@ Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`ref_type`
 | `<branch> advanced from <input-ref> to <current-head>` | publish fence 发现 target branch 被无关提交推进。 | 不要手动重试同一 attempt；从当前 protected branch head 发起新的 workflow。 |
 | `<branch> advanced beyond supported publish range (1024 commits)` | target branch 从 current head 回溯到 input ref 的 first-parent range 超过上限。 | 从当前 protected branch head 发起新的 workflow，或人工确认历史后处理。 |
 | `<branch> no longer contains workspace input ref <ref>` | target branch first-parent history 中找不到本次 input ref，通常表示 branch 被重写或 input ref 不再属于当前线性历史。 | 不要继续当前 attempt；从当前 branch head 重新发起 workflow。 |
+| 可写 task 没有产生新 commit | `read_only=False` 但 workspace diff 为空。 | 这是 no-op completion；Perago 不会创建 empty commit，output ref 保持 input ref。 |
 | LakeFS download/stage/merge SDK 异常 | repository/ref 不存在、凭证错误、网络失败或 LakeFS 服务异常。 | 检查 LakeFS 连接变量、repository、input commit 和 worker JSONL。 |
 | staging branch create 失败且 branch 已存在 | 同一个 execution id 的 staging branch 已存在，或远端残留与当前 execution id 冲突。 | 当前 attempt 会 fail closed。正常情况下每次 execution 都有唯一 branch；排查 worker 日志中的 `execution_id`，必要时清理残留 `perago-staging-...-exec-...` branch。 |
 | `failed to clean staging workspace` | staging branch 删除失败。 | 原始 task result 不会被覆盖；事后检查并清理 `perago-staging-...` branch。 |

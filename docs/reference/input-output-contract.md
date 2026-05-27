@@ -31,7 +31,7 @@ Workspace task 的 Conductor `inputData` 顶层字段必须且只能包含 `work
 | 字段 | 状态 | 说明 |
 | --- | --- | --- |
 | `repository` | required | LakeFS repository 名称，不能为空字符串。 |
-| `branch` | required | 成功发布时要推进的目标 branch，不能为空字符串。 |
+| `branch` | required | 可写 workspace task 成功发布时要推进的目标 branch，不能为空字符串。 |
 | `ref_type` | required | 目前只接受 `"commit"`。 |
 | `ref` | required | 本次 attempt 下载的 immutable input commit，不能为空字符串。 |
 
@@ -88,7 +88,7 @@ Workspace task 的 `output` 顶层字段必须包含：
 
 | 字段 | 状态 | 来源 | 说明 |
 | --- | --- | --- | --- |
-| `workspace` | generated | Perago runtime | `WorkspaceOutput`，保留 input 的 repository/branch，并把 `ref` 替换成成功发布后的 commit。 |
+| `workspace` | generated | Perago runtime | `WorkspaceOutput`，保留 input 的 repository/branch；read-only 或 no-op completion 可保留 input ref，可写 publication 会替换为成功发布后的 commit。 |
 | `result` | generated from task return | 业务函数返回值 | 按 task 函数 return annotation 的 Pydantic model 校验和序列化。 |
 
 Workspace-free task 的完成输出只包含 `result`。
@@ -127,7 +127,7 @@ Workspace-free task 的完成输出只包含 `result`。
 
 | 状态 | 输出字段 | 典型来源 |
 | --- | --- | --- |
-| `COMPLETED` | `output` required, `reasonForIncompletion` forbidden | 业务函数成功、post guardrail 通过、workspace task 已完成发布。 |
+| `COMPLETED` | `output` required, `reasonForIncompletion` forbidden | 业务函数成功、post guardrail 通过；workspace task 已完成 read-only、no-op 或 publication 路径。 |
 | `FAILED` | `reasonForIncompletion` required, `output` forbidden | 输入结构错误、Pydantic 校验失败、业务异常、post guardrail 失败、attempt fence 或 publish fence 失败。 |
 | `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required, `output` forbidden | pre guardrail 失败，表示上游 workspace input 不满足任务输入文件契约。 |
 
@@ -140,4 +140,4 @@ Perago 的运行时入口会先检查顶层字段集合，再校验 Pydantic pay
 | Workspace task | `workspace`, `params` | `workspace`, `result` |
 | Workspace-free task | `params` | `result` |
 
-这些结构同时用于运行时执行和生成 TaskDef schema。TaskDef 中会生成对应的 `inputKeys`、`outputKeys`、`inputSchema` 和 `outputSchema`；guardrail、publish budget、LakeFS credentials 和 staging branch 不出现在 input/output contract 中。
+这些结构同时用于运行时执行和生成 TaskDef schema。TaskDef 中会生成对应的 `inputKeys`、`outputKeys`、`inputSchema` 和 `outputSchema`；guardrail、workspace access mode、publish budget、LakeFS credentials 和 staging branch 不出现在 input/output contract 中。

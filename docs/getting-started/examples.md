@@ -1,6 +1,6 @@
 # Examples
 
-本页提供可运行的 task module 示例，覆盖 workspace task、workspace-free task 和带 publish budget 的 workspace task。
+本页提供可运行的 task module 示例，覆盖可写 workspace task、read-only workspace task、workspace-free task 和带 publish budget 的 workspace task。
 
 ## Workspace task
 
@@ -69,6 +69,37 @@ def build_features(workspace: Path, params: BuildFeaturesParams) -> BuildFeature
 - Optional: `description`、`WorkspaceSpec.prefix`、pre/post guardrails、`TaskControls` 中的 retry/timeout/limits。
 - Generated: 业务函数的 `workspace: Path` 参数、TaskDef schema、成功输出中的 `workspace` ref。
 - Forbidden: 业务函数直接接收 LakeFS ref、把业务字段展开成多个函数参数、在 decorator 中重复声明 params/output schema。
+
+## Read-only workspace task
+
+需要读取 LakeFS workspace 但不发布变更的节点仍然是 workspace task。它声明 `WorkspaceSpec(read_only=True)`，成功 output 的 workspace ref 保持 input ref。
+
+```python
+from pathlib import Path
+
+from pydantic import BaseModel
+
+from perago import WorkspaceSpec, task
+
+
+class InspectParams(BaseModel):
+    manifest_name: str = "manifest.json"
+
+
+class InspectOutput(BaseModel):
+    exists: bool
+
+
+@task(
+    name="metadata.inspect",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(prefix="/audio/render", read_only=True),
+)
+def inspect_metadata(workspace: Path, params: InspectParams) -> InspectOutput:
+    return InspectOutput(exists=(workspace / params.manifest_name).exists())
+```
+
+read-only task 不检查 target branch HEAD、不创建 staging branch、不提交 LakeFS commit。即使函数写了本机 attempt workspace，写入也会随 cleanup 丢弃，不会成为 LakeFS output。
 
 ## Workspace-free task
 
@@ -152,7 +183,7 @@ def render_audio(workspace: Path, params: RenderParams) -> RenderOutput:
 
 - Required: `PublishBudget` 的六个时间字段都必须显式配置，且 `lakefs_merge_timeout_seconds` 必须覆盖 `observed_merge_p99_seconds + safety_margin_seconds`。
 - Generated: `responseTimeoutSeconds = 45 + 15 + 30 + 10 = 100`。
-- Forbidden: workspace-free task 不能配置 `publish_budget`。
+- Forbidden: workspace-free task 不能配置 `publish_budget`；read-only workspace task 配置 `publish_budget` 会在校验/启动阶段 warning，并忽略该预算。
 
 ## 本地验证
 
