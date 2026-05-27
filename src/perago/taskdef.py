@@ -236,11 +236,13 @@ def _response_timeout_seconds(task: TaskDefinition) -> int:
     response_seconds = task.controls.timeout.response_seconds
     if publish_budget is not None and response_seconds < publish_budget.response_timeout_seconds:
         warnings.warn(
-            "TaskControls.timeout.response_seconds is shorter than "
-            "publish_budget.response_timeout_seconds; responseTimeoutSeconds "
+            f"Task {task.name!r} has TaskControls.timeout.response_seconds={response_seconds} "
+            "which is shorter than "
+            f"publish_budget.response_timeout_seconds={publish_budget.response_timeout_seconds}; "
+            "responseTimeoutSeconds "
             "will use timeout.response_seconds",
             UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
     return response_seconds
 

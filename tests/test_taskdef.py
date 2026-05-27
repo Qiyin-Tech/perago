@@ -249,7 +249,14 @@ def test_taskdef_warns_when_publish_budget_exceeds_response_timeout() -> None:
         del workspace
         return BudgetOutput(value=params.value)
 
-    with pytest.warns(UserWarning, match="timeout.response_seconds is shorter"):
+    with pytest.warns(
+        UserWarning,
+        match=(
+            "Task 'tests.short_response_timeout_publish_budget' has "
+            "TaskControls.timeout.response_seconds=60 .*"
+            "publish_budget.response_timeout_seconds=100"
+        ),
+    ):
         taskdef = build_taskdef(short_timeout_task.__perago_task__)
 
     assert taskdef["responseTimeoutSeconds"] == 60
