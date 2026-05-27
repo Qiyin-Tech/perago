@@ -3,10 +3,30 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 import runpy
+from sphinx.search import languages
+from sphinx.search.zh import SearchChinese
 
 project = "Perago"
 author = "Yikai Liao"
 language = "zh_CN"
+
+
+class PeragoChineseSearch(SearchChinese):
+    """Chinese search with a Sphinx 9.1 frontend stemmer compatibility fix."""
+
+    lang = "perago_zh"
+    language_name = "Chinese"
+    js_stemmer_rawcode = ""
+    js_stemmer_code = """
+var Stemmer = function () {
+  this.stemWord = function (word) {
+    return word.toLowerCase();
+  };
+};
+"""
+
+
+languages[PeragoChineseSearch.lang] = PeragoChineseSearch
 
 
 def _resolve_release() -> str:
@@ -47,7 +67,7 @@ html_theme_options = {
 }
 html_title = "Perago"
 html_static_path = ["_static"]
-html_search_language = "zh"
+html_search_language = PeragoChineseSearch.lang
 exclude_patterns = [
     "_build",
     "generated/**",
