@@ -644,12 +644,7 @@ def _process_executor_main(
     os.environ.update(child_env)
     task = load_module_task(module_target)
     runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
-    lakefs_config = config.lakefs
-    if lakefs_config is None:
-        raise RuntimeConfigError("LakeFS config is required for perago start")
-
-    publish_budget = _effective_publish_budget(task)
-    lakefs = LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
+    lakefs = _lakefs_runtime_for_task(task, config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process executor started"
@@ -666,12 +661,8 @@ def _process_executor_main(
             request_queue=attempt_fence_request_queue,
             response_queue=attempt_fence_response_queue,
         ),
-        download_workspace=lakefs.download_workspace,
-        stage_workspace=lakefs.stage_workspace,
-        publish_workspace=lakefs.publish_workspace,
-        cleanup_staging=lakefs.cleanup_staging,
-        complete_noop_workspace=lakefs.complete_noop_workspace,
         failure_reason_max_length=config.failure_reason_max_length,
+        workspace_runtime=lakefs,
     )
 
 
@@ -685,15 +676,11 @@ def _thread_runner_main(
     task = load_module_task(module_target)
     runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
     conductor_config = config.conductor
-    lakefs_config = config.lakefs
     if conductor_config is None:
         raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
-    if lakefs_config is None:
-        raise RuntimeConfigError("LakeFS config is required for perago start")
 
-    publish_budget = _effective_publish_budget(task)
+    lakefs = _lakefs_runtime_for_task(task, config)
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
-    lakefs = LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "thread runner started"
@@ -705,12 +692,8 @@ def _thread_runner_main(
         conductor_config=conductor_config,
         client=conductor,
         workspace_root=config.workspace_root,
-        download_workspace=lakefs.download_workspace,
-        stage_workspace=lakefs.stage_workspace,
-        publish_workspace=lakefs.publish_workspace,
-        cleanup_staging=lakefs.cleanup_staging,
-        complete_noop_workspace=lakefs.complete_noop_workspace,
         failure_reason_max_length=config.failure_reason_max_length,
+        workspace_runtime=lakefs,
     )
 
 
@@ -719,6 +702,17 @@ def _broker_environment(worker_id_prefix: str) -> dict[str, str]:
         "PERAGO_WORKER_ID_PREFIX": worker_id_prefix,
         "PERAGO_WORKER_ID": f"{worker_id_prefix}Broker",
     }
+
+
+def _lakefs_runtime_for_task(task: object, config: RuntimeConfig) -> LakeFSWorkspaceRuntime | None:
+    if not task.has_workspace:
+        return None
+
+    lakefs_config = config.lakefs
+    if lakefs_config is None:
+        raise RuntimeConfigError("LakeFS config is required for workspace tasks")
+
+    return LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=_effective_publish_budget(task))
 
 
 def _effective_publish_budget(task: object) -> object:

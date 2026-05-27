@@ -675,7 +675,11 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
             secret_access_key="lakefs-secret",
         ),
     )
-    task = SimpleNamespace(controls=SimpleNamespace(publish_budget=3))
+    task = SimpleNamespace(
+        has_workspace=True,
+        workspace=SimpleNamespace(read_only=False),
+        controls=SimpleNamespace(publish_budget=3),
+    )
     runtime = SimpleNamespace(worker_id="worker0001", log_file=tmp_path / "worker.log")
     lakefs_runtime = SimpleNamespace(
         download_workspace=object(),
@@ -717,11 +721,7 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
     assert ran["workspace_root"] == config.workspace_root
     assert ran["assignment_queue"] is queues["assignment_queue"]
     assert ran["completion_queue"] is queues["completion_queue"]
-    assert ran["download_workspace"] is lakefs_runtime.download_workspace
-    assert ran["stage_workspace"] is lakefs_runtime.stage_workspace
-    assert ran["publish_workspace"] is lakefs_runtime.publish_workspace
-    assert ran["cleanup_staging"] is lakefs_runtime.cleanup_staging
-    assert ran["complete_noop_workspace"] is lakefs_runtime.complete_noop_workspace
+    assert ran["workspace_runtime"] is lakefs_runtime
     assert ran["failure_reason_max_length"] == config.failure_reason_max_length
 
 
@@ -740,6 +740,7 @@ def test_process_executor_main_ignores_publish_budget_for_read_only_workspace(mo
         ),
     )
     task = SimpleNamespace(
+        has_workspace=True,
         workspace=SimpleNamespace(read_only=True),
         controls=SimpleNamespace(publish_budget=3),
     )
@@ -787,7 +788,11 @@ def test_process_executor_main_requires_lakefs_config(monkeypatch, tmp_path) -> 
         conductor=ConductorConfig(server_url="http://conductor.local/api"),
         lakefs=None,
     )
-    task = SimpleNamespace(controls=SimpleNamespace(publish_budget=None))
+    task = SimpleNamespace(
+        has_workspace=True,
+        workspace=SimpleNamespace(read_only=False),
+        controls=SimpleNamespace(publish_budget=None),
+    )
     runtime = SimpleNamespace(worker_id="worker0001", log_file=tmp_path / "worker.log")
 
     monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
@@ -805,6 +810,42 @@ def test_process_executor_main_requires_lakefs_config(monkeypatch, tmp_path) -> 
         )
 
 
+def test_process_executor_main_allows_workspace_free_task_without_lakefs(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=None,
+    )
+    task = SimpleNamespace(has_workspace=False, workspace=None, controls=SimpleNamespace(publish_budget=None))
+    runtime = SimpleNamespace(worker_id="worker0001", log_file=tmp_path / "worker.log")
+    ran = {}
+
+    monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
+    monkeypatch.setattr("perago.supervisor.prepare_worker_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr(
+        "perago.supervisor.LakeFSWorkspaceRuntime.from_config",
+        lambda lakefs_config, publish_budget: pytest.fail("workspace-free tasks must not create LakeFS runtime"),
+    )
+    monkeypatch.setattr("perago.supervisor.run_process_executor_loop", lambda **kwargs: ran.update(kwargs))
+
+    _process_executor_main(
+        config=config,
+        module_target="app.workers.metadata_validate",
+        child_env={"PERAGO_WORKER_ID": "worker0001"},
+        assignment_queue=object(),
+        completion_queue=object(),
+        attempt_fence_request_queue=object(),
+        attempt_fence_response_queue=object(),
+    )
+
+    assert ran["task"] is task
+    assert ran["workspace_runtime"] is None
+
+
 def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch, tmp_path) -> None:
     config = RuntimeConfig(
         workspace_root=tmp_path / "workspaces",
@@ -819,7 +860,11 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
             secret_access_key="lakefs-secret",
         ),
     )
-    task = SimpleNamespace(controls=SimpleNamespace(publish_budget=5))
+    task = SimpleNamespace(
+        has_workspace=True,
+        workspace=SimpleNamespace(read_only=False),
+        controls=SimpleNamespace(publish_budget=5),
+    )
     runtime = SimpleNamespace(worker_id="workerBroker", log_file=tmp_path / "worker.log")
     conductor = object()
     lakefs_runtime = SimpleNamespace(
@@ -849,12 +894,8 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
         "conductor_config": config.conductor,
         "client": conductor,
         "workspace_root": config.workspace_root,
-        "download_workspace": lakefs_runtime.download_workspace,
-        "stage_workspace": lakefs_runtime.stage_workspace,
-        "publish_workspace": lakefs_runtime.publish_workspace,
-        "cleanup_staging": lakefs_runtime.cleanup_staging,
-        "complete_noop_workspace": lakefs_runtime.complete_noop_workspace,
         "failure_reason_max_length": config.failure_reason_max_length,
+        "workspace_runtime": lakefs_runtime,
     }
 
 
@@ -866,7 +907,11 @@ def test_thread_runner_main_requires_runtime_configs(monkeypatch, tmp_path) -> N
         "log_retention": timedelta(days=1),
         "worker_id_prefix": "worker",
     }
-    task = SimpleNamespace(controls=SimpleNamespace(publish_budget=None))
+    task = SimpleNamespace(
+        has_workspace=True,
+        workspace=SimpleNamespace(read_only=False),
+        controls=SimpleNamespace(publish_budget=None),
+    )
     runtime = SimpleNamespace(worker_id="workerBroker", log_file=tmp_path / "worker.log")
 
     monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
@@ -897,6 +942,37 @@ def test_thread_runner_main_requires_runtime_configs(monkeypatch, tmp_path) -> N
             module_target="app.workers.features_build",
             thread_count=1,
         )
+
+
+def test_thread_runner_main_allows_workspace_free_task_without_lakefs(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=None,
+    )
+    task = SimpleNamespace(has_workspace=False, workspace=None, controls=SimpleNamespace(publish_budget=None))
+    runtime = SimpleNamespace(worker_id="workerBroker", log_file=tmp_path / "worker.log")
+    conductor = object()
+    ran = {}
+
+    monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
+    monkeypatch.setattr("perago.supervisor.prepare_worker_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr("perago.supervisor.OrkesConductorRuntimeClient.from_config", lambda conductor_config: conductor)
+    monkeypatch.setattr(
+        "perago.supervisor.LakeFSWorkspaceRuntime.from_config",
+        lambda lakefs_config, publish_budget: pytest.fail("workspace-free tasks must not create LakeFS runtime"),
+    )
+    monkeypatch.setattr("perago.supervisor.run_conductor_thread_runner", lambda **kwargs: ran.update(kwargs))
+
+    _thread_runner_main(config=config, module_target="app.workers.metadata_validate", thread_count=2)
+
+    assert ran["task"] is task
+    assert ran["client"] is conductor
+    assert ran["workspace_runtime"] is None
 
 
 def test_stop_worker_processes_waits_without_default_force_kill() -> None:
