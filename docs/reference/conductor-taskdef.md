@@ -45,7 +45,7 @@ write_taskdef(load_module_task("app.workers.features_build"), Path("generated/fe
 | `totalTimeoutSeconds` | `controls.timeout.total_seconds` | generated | 默认 `0`；必须非负。 |
 | `timeoutPolicy` | `controls.timeout.policy` | generated | 默认 `"TIME_OUT_WF"`；可选 `"RETRY"`、`"TIME_OUT_WF"`、`"ALERT_ONLY"`。 |
 | `timeoutSeconds` | `controls.timeout.seconds` | generated | 默认 `0`；必须非负。 |
-| `responseTimeoutSeconds` | `controls.response_timeout_seconds` | generated | 默认 `600`；有有效 `publish_budget` 时使用预算派生值。 |
+| `responseTimeoutSeconds` | `controls.timeout.response_seconds` | generated | 默认 `600`；有有效 `publish_budget` 且小于预算派生值时发出 warning。 |
 | `pollTimeoutSeconds` | `controls.timeout.poll_seconds` | generated | 默认 `0`；必须非负。 |
 | `concurrentExecLimit` | `controls.limits.concurrent_exec_limit` | no | `None` 时省略；非 `None` 时必须非负。 |
 | `rateLimitFrequencyInSeconds` | `controls.limits.rate_limit_frequency_in_seconds` | no | `None` 时省略；必须和 `rateLimitPerFrequency` 成对配置。 |
@@ -129,17 +129,17 @@ workspace task 的 output 顶层字段固定为：
 
 ## Publish budget
 
-`PublishBudget` 不会作为字段写入 TaskDef。它只在可写 workspace task 上覆盖生成出来的 `responseTimeoutSeconds`：
+`PublishBudget` 不会作为字段写入 TaskDef，也不会覆盖生成出来的 `responseTimeoutSeconds`。它的派生值用于检查 task timeout 是否明显短于 publication budget：
 
 ```text
-responseTimeoutSeconds =
+PublishBudget.response_timeout_seconds =
   lakefs_merge_timeout_seconds
   + conductor_completion_timeout_seconds
   + worker_shutdown_grace_seconds
   + heartbeat_interval_seconds
 ```
 
-如果没有 `publish_budget`，或 task 声明 `WorkspaceSpec(read_only=True)` 导致 publish budget 被忽略，`responseTimeoutSeconds` 来自 `controls.timeout.response_seconds`，默认是 `600`。
+TaskDef 的 `responseTimeoutSeconds` 始终来自 `controls.timeout.response_seconds`，默认是 `600`。如果可写 workspace task 的 `controls.timeout.response_seconds` 小于上面的 publish-budget 派生值，TaskDef 生成会发出 warning。task 声明 `WorkspaceSpec(read_only=True)` 时 publish budget 会被忽略。
 
 ## 不写入 TaskDef 的 Perago 信息
 

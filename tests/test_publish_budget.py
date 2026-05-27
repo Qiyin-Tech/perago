@@ -26,7 +26,7 @@ def test_publish_budget_derives_response_timeout_from_operational_bounds() -> No
     )
 
 
-def test_task_controls_response_timeout_prefers_publish_budget() -> None:
+def test_task_controls_response_timeout_uses_timeout_policy() -> None:
     budget = PublishBudget(
         observed_merge_p99_seconds=20,
         safety_margin_seconds=10,
@@ -40,7 +40,7 @@ def test_task_controls_response_timeout_prefers_publish_budget() -> None:
     assert TaskControls(
         timeout=TimeoutPolicy(response_seconds=999),
         publish_budget=budget,
-    ).response_timeout_seconds == 100
+    ).response_timeout_seconds == 999
 
 
 def test_publish_budget_rejects_unbounded_or_under_sized_values() -> None:

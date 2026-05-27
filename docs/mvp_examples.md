@@ -268,13 +268,13 @@ Perago maps these fields to Conductor TaskDef fields:
 | `controls.limits.concurrent_exec_limit` | `concurrentExecLimit` | no | `None` |
 | `controls.limits.rate_limit_frequency_in_seconds` | `rateLimitFrequencyInSeconds` | no | `None` |
 | `controls.limits.rate_limit_per_frequency` | `rateLimitPerFrequency` | no | `None` |
-| `controls.publish_budget` | derives `responseTimeoutSeconds` | workspace tasks only | `None` |
+| `controls.publish_budget` | publication runtime budget | workspace tasks only | `None` |
 
 Fields set to `None` are omitted from the extracted TaskDef JSON.
 
-If `controls.publish_budget` is set, Perago derives `responseTimeoutSeconds` from `PublishBudget.response_timeout_seconds` instead of `controls.timeout.response_seconds`. At runtime, the same budget provides the LakeFS merge request timeout and a Conductor completion reserve inside `responseTimeoutSeconds`; it is not wired to the SDK `TaskRunner` result-update HTTP timeout. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
+If `controls.publish_budget` is set, Perago still writes `responseTimeoutSeconds` from `controls.timeout.response_seconds`. If the configured response timeout is shorter than `PublishBudget.response_timeout_seconds`, TaskDef generation warns but does not override the task timeout. At runtime, the same budget provides the LakeFS merge request timeout and a Conductor completion reserve; it is not wired to the SDK `TaskRunner` result-update HTTP timeout. The publish budget itself is local runtime configuration and is not emitted into TaskDef JSON.
 
-`TaskControls.response_timeout_seconds` is the single local source used for the generated TaskDef `responseTimeoutSeconds` value.
+The generated TaskDef `responseTimeoutSeconds` value comes from `controls.timeout.response_seconds`; `PublishBudget.response_timeout_seconds` is only compared for warnings and does not override the emitted task timeout.
 
 `workspace` is required for workspace task workers and forbidden for workspace-free task workers.
 `controls.publish_budget` is valid only for workspace task workers.

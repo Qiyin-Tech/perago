@@ -99,7 +99,7 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 可预期的业务拒绝、待补充信息或人工处理分支不应伪装成 Conductor task failure；
 worker 应返回成功的 `result`，让 WorkflowDef 用分支逻辑处理。
 
-可写 workspace task 如果配置了有效 `PublishBudget`，TaskDef 会使用派生出的 `responseTimeoutSeconds`，让 SDK runner 的 LeaseManager 按 publication 预算续租。LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束。`conductor_completion_timeout_seconds` 只是 `responseTimeoutSeconds` 中的 completion reserve；当前不传给 SDK `TaskRunner` 作为 result update HTTP timeout。没有 publish budget，或 `WorkspaceSpec(read_only=True)` 导致 publish budget 被忽略时，使用普通 task timeout。
+`responseTimeoutSeconds` 来自 `TimeoutPolicy.response_seconds`，让 SDK runner 的 LeaseManager 按 task timeout 续租。可写 workspace task 如果配置了有效 `PublishBudget`，LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束；如果 task timeout 小于 publish budget 的派生值，TaskDef 生成会发出 warning。`conductor_completion_timeout_seconds` 只是 publication 预算中的 completion reserve；当前不传给 SDK `TaskRunner` 作为 result update HTTP timeout。
 
 `ConductorTaskAttempt.response_timeout_seconds` 来自 SDK task snapshot 本身。显式 thread runtime 和默认 process broker runtime 都交给 SDK `TaskRunner` 处理 LeaseManager 续租。
 

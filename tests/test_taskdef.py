@@ -220,12 +220,49 @@ def test_task_control_defaults_and_limits_are_named_contract_values() -> None:
         RetryPolicy(count=MAX_RETRY_COUNT + 1)
 
 
-def test_taskdef_derives_response_timeout_from_publish_budget() -> None:
+def test_taskdef_uses_timeout_response_seconds_with_publish_budget() -> None:
     taskdef = build_taskdef(budgeted_workspace_task.__perago_task__)
 
-    assert taskdef["responseTimeoutSeconds"] == 100
+    assert taskdef["responseTimeoutSeconds"] == 999
     assert "publish_budget" not in taskdef
     assert "lakefs_merge_timeout_seconds" not in json.dumps(taskdef)
+
+
+def test_taskdef_warns_when_publish_budget_exceeds_response_timeout() -> None:
+    @task(
+        name="tests.short_response_timeout_publish_budget",
+        owner_email="data@example.com",
+        workspace=WorkspaceSpec(),
+        controls=TaskControls(
+            timeout=TimeoutPolicy(response_seconds=60),
+            publish_budget=PublishBudget(
+                observed_merge_p99_seconds=20,
+                safety_margin_seconds=10,
+                lakefs_merge_timeout_seconds=45,
+                conductor_completion_timeout_seconds=15,
+                worker_shutdown_grace_seconds=30,
+                heartbeat_interval_seconds=10,
+            ),
+        ),
+    )
+    def short_timeout_task(workspace: Path, params: BudgetParams) -> BudgetOutput:
+        del workspace
+        return BudgetOutput(value=params.value)
+
+    with pytest.warns(
+        UserWarning,
+        match=(
+            "Task 'tests.short_response_timeout_publish_budget' has "
+            "TaskControls.timeout.response_seconds=60 .*"
+            "publish_budget.response_timeout_seconds=100"
+        ),
+    ):
+        taskdef = build_taskdef(short_timeout_task.__perago_task__)
+
+    assert taskdef["responseTimeoutSeconds"] == 60
+    assert "publish_budget" not in taskdef
+    assert "lakefs_merge_timeout_seconds" not in json.dumps(taskdef)
+    assert short_timeout_task(Path("."), BudgetParams(value=3)) == BudgetOutput(value=3)
 
 
 def test_taskdef_ignores_publish_budget_for_read_only_workspace_task() -> None:

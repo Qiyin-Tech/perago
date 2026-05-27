@@ -449,10 +449,10 @@ def require_glob(pattern: str | PathLike[str], *, min_count: int = 1, max_count:
 class PublishBudget(BaseModel):
     """Operational time budget for workspace publication.
 
-    ``PublishBudget`` derives the Conductor response timeout used by the
-    generated TaskDef and constrains LakeFS merge and Conductor completion
-    calls at runtime. It is a timing assumption, not a distributed transaction
-    proof.
+    ``PublishBudget`` derives a publication budget that TaskDef generation can
+    compare with the task response timeout. It constrains LakeFS merge at
+    runtime and reserves time for Conductor completion. It is a timing
+    assumption, not a distributed transaction proof.
 
     Parameters
     ----------
@@ -464,7 +464,7 @@ class PublishBudget(BaseModel):
         Request timeout for the LakeFS merge operation. Must cover the observed
         merge latency plus margin.
     conductor_completion_timeout_seconds : int
-        Request timeout for reporting the final task result to Conductor.
+        Reserve for reporting the final task result to Conductor.
     worker_shutdown_grace_seconds : int
         Shutdown grace period reserved after publication.
     heartbeat_interval_seconds : int
@@ -473,7 +473,7 @@ class PublishBudget(BaseModel):
     Attributes
     ----------
     response_timeout_seconds : int
-        Derived Conductor ``responseTimeoutSeconds`` value.
+        Derived publication budget.
 
     Raises
     ------

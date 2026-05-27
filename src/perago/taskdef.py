@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Collection
 from copy import deepcopy
 from pathlib import Path
@@ -71,8 +72,9 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
     -----
     Workspace guardrails, workspace prefixes, LakeFS connection settings, and
     publish budget internals are not serialized into the TaskDef. A publish
-    budget only affects the generated ``responseTimeoutSeconds`` value for
-    writable workspace tasks; read-only workspace tasks ignore it.
+    budget does not replace ``timeout.response_seconds``; writable workspace
+    tasks warn if the configured response timeout is shorter than the derived
+    publish budget.
 
     Examples
     --------
@@ -230,7 +232,19 @@ def _control_fields(task: TaskDefinition) -> dict[str, Any]:
 def _response_timeout_seconds(task: TaskDefinition) -> int:
     if task.workspace is not None and task.workspace.read_only:
         return task.controls.timeout.response_seconds
-    return task.controls.response_timeout_seconds
+    publish_budget = task.controls.publish_budget
+    response_seconds = task.controls.timeout.response_seconds
+    if publish_budget is not None and response_seconds < publish_budget.response_timeout_seconds:
+        warnings.warn(
+            f"Task {task.name!r} has TaskControls.timeout.response_seconds={response_seconds} "
+            "which is shorter than "
+            f"publish_budget.response_timeout_seconds={publish_budget.response_timeout_seconds}; "
+            "responseTimeoutSeconds "
+            "will use timeout.response_seconds",
+            UserWarning,
+            stacklevel=4,
+        )
+    return response_seconds
 
 
 def _object_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:

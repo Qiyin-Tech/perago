@@ -83,7 +83,7 @@ Required/optional/generated 字段边界：
 | `controls.limits.concurrent_exec_limit` | `concurrentExecLimit` | `None` | 为 `None` 时省略。 |
 | `controls.limits.rate_limit_frequency_in_seconds` | `rateLimitFrequencyInSeconds` | `None` | 必须和 `rate_limit_per_frequency` 成对配置。 |
 | `controls.limits.rate_limit_per_frequency` | `rateLimitPerFrequency` | `None` | 必须和 `rate_limit_frequency_in_seconds` 成对配置。 |
-| `controls.publish_budget` | derives `responseTimeoutSeconds` | `None` | 只允许 workspace task 使用；read-only workspace task 上会被忽略并发出 warning。 |
+| `controls.publish_budget` | publication runtime budget | `None` | 只允许 workspace task 使用；read-only workspace task 上会被忽略并发出 warning。 |
 
 所有 control model 都使用 Pydantic 校验并拒绝未知字段。校验失败会在模块导入、`perago check` 或 `perago extract` 阶段暴露为 task definition 错误。
 
@@ -265,7 +265,7 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
 
 ## Publish budget
 
-`PublishBudget` 用来把 workspace publication 的本地运行时预算折算成 Conductor `responseTimeoutSeconds`：
+`PublishBudget` 用来声明 workspace publication 的本地运行时预算：
 
 ```python
 from perago import PublishBudget, TaskControls, TimeoutPolicy
@@ -284,13 +284,13 @@ controls = TaskControls(
 )
 ```
 
-上面的 `responseTimeoutSeconds` 会生成成 `100`：
+上面的 `PublishBudget.response_timeout_seconds` 派生值是 `100`：
 
 ```text
 45 + 15 + 30 + 10 = 100
 ```
 
-`PublishBudget` 本身不会写入 TaskDef JSON。它给 runtime 提供 LakeFS merge request timeout，并把 Conductor completion 阶段预留计入 `responseTimeoutSeconds`。SDK `TaskRunner` owns completion result update；Perago 当前不把 `conductor_completion_timeout_seconds` 写成 SDK 内部 HTTP request timeout。`lakefs_merge_timeout_seconds` 必须覆盖 `observed_merge_p99_seconds + safety_margin_seconds`，否则校验失败。
+`responseTimeoutSeconds` 仍然来自 `TimeoutPolicy.response_seconds`，所以上面的 TaskDef 会生成 `999`。如果 `TimeoutPolicy.response_seconds` 小于 `PublishBudget.response_timeout_seconds`，TaskDef 生成会发出 warning，但不会用 publish budget 覆盖 task timeout。`PublishBudget` 本身不会写入 TaskDef JSON。它给 runtime 提供 LakeFS merge request timeout，并保留 Conductor completion 阶段预算。SDK `TaskRunner` owns completion result update；Perago 当前不把 `conductor_completion_timeout_seconds` 写成 SDK 内部 HTTP request timeout。`lakefs_merge_timeout_seconds` 必须覆盖 `observed_merge_p99_seconds + safety_margin_seconds`，否则校验失败。
 
 `publish_budget` 只适用于 workspace task。workspace-free task 没有 LakeFS publication 阶段，配置 `TaskControls(publish_budget=...)` 会被拒绝。read-only workspace task 仍然是 workspace task，但没有 publication 阶段；如果配置了 `publish_budget`，`perago check`、`perago extract` 和 `perago start` 应在启动/校验阶段 warning 一次，并忽略该预算，不应在每次 task execution 中刷 warning。
 
