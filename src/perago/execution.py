@@ -12,6 +12,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from perago.attempt import assert_current_attempt_snapshot
+from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
@@ -113,6 +114,7 @@ def run_workspace_task_attempt(
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
+    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
 ) -> RuntimeTaskResult:
     """
     Run one workspace task attempt.
@@ -164,6 +166,9 @@ def run_workspace_task_attempt(
     execution_id : str or None, default=None
         Execution-scoped id used to isolate local attempt workspace and LakeFS
         staging branch names. A new id is generated when omitted.
+    failure_reason_max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+        Maximum number of characters written to ``reasonForIncompletion`` for
+        failed attempts.
 
     Returns
     -------
@@ -268,7 +273,7 @@ def run_workspace_task_attempt(
             }
         )
     except Exception as exc:
-        return result_for_exception(exc)
+        return result_for_exception(exc, max_length=failure_reason_max_length)
     finally:
         if staged is not None:
             _cleanup_staging_safely(staged, cleanup_staging)
@@ -280,6 +285,8 @@ def run_workspace_task_attempt(
 def run_workspace_free_task_attempt(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
+    *,
+    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
 ) -> RuntimeTaskResult:
     """
     Run one workspace-free task attempt.
@@ -296,6 +303,9 @@ def run_workspace_free_task_attempt(
     input_data : mapping of str to Any
         Conductor task input. Workspace-free attempts must contain exactly
         ``"params"``.
+    failure_reason_max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+        Maximum number of characters written to ``reasonForIncompletion`` for
+        failed attempts.
 
     Returns
     -------
@@ -332,7 +342,7 @@ def run_workspace_free_task_attempt(
     try:
         return completed_result(invoke_workspace_free_task(task, input_data))
     except Exception as exc:
-        return result_for_exception(exc)
+        return result_for_exception(exc, max_length=failure_reason_max_length)
 
 
 def invoke_workspace_task_body(

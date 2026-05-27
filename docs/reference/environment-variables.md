@@ -33,6 +33,7 @@ Perago 目前不会把 Conductor auth key、Conductor auth secret 或 LakeFS 配
 | `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | `RuntimeConfig.worker_id_prefix` | 只能包含 ASCII 字母和数字。supervisor 使用它派生 broker worker id 和 executor `PERAGO_WORKER_ID`。 |
 | `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 调试进程退回到 `<module-target-prefix>-pid-<pid>` | worker runtime identity | `perago start -j` 为 broker 和每个 executor child process 写入该值。常规部署不应在 `.env` 中配置。 |
 | `PERAGO_EXECUTION_MODE` | optional | `process` | `RuntimeConfig.execution_mode` | 接受 `process` 或 `thread`，大小写不敏感。CLI `perago start --execution-mode ...` 会覆盖该环境变量。`thread` 使用 SDK `TaskRunner` 在单进程内执行；默认 `process` 使用单 broker + N executor IPC 模型。 |
+| `PERAGO_FAILURE_REASON_MAX_LENGTH` | optional | `500` | `RuntimeConfig.failure_reason_max_length` | 失败 task 写入 Conductor `reasonForIncompletion` 的最大字符数。只接受正整数；超长 reason 会截断并在 worker JSONL 日志中记录原始长度和上限，不记录完整原文。 |
 | `PERAGO_WORKSPACE_GC_TTL` | optional | `24h` | `RuntimeConfig.workspace_gc_ttl` | 接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30m`、`24h`。supervisor 周期 GC 只会删除超过该年龄且不属于活跃 owner 的 attempt workspace。 |
 | `PERAGO_WORKSPACE_GC_INTERVAL` | optional | `1h` | `RuntimeConfig.workspace_gc_interval` | 接受正整数加 `s`、`m`、`h` 或 `d`。控制 supervisor 后台 workspace GC loop 的运行间隔。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` | optional | unset | `RuntimeConfig.shutdown_force_kill_after` | 接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30s`。未配置时 Perago shutdown 只 drain 并等待 child 自然退出，不调用 `process.kill()`；配置后超过 deadline 的 child 会被 kill。 |
@@ -55,6 +56,7 @@ PERAGO_WORKSPACE_ROOT='/tmp/perago/workspaces'
 PERAGO_LOG_ROOT="/tmp/perago/logs"
 PERAGO_WORKER_ID_PREFIX=localWorker
 PERAGO_EXECUTION_MODE=process
+PERAGO_FAILURE_REASON_MAX_LENGTH=500
 PERAGO_WORKSPACE_GC_TTL=24h
 PERAGO_WORKSPACE_GC_INTERVAL=1h
 PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
@@ -83,6 +85,8 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_LOG_RETENTION must be a positive day count ...` | 日志保留期格式无效。 | 使用 `7d`、`30d` 这类格式。 |
 | `PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits` | worker id prefix 含有连字符、下划线、点号或非 ASCII 字符。 | 改成只含字母和数字的前缀，例如 `prodAFeaturesBuild`。 |
 | `PERAGO_EXECUTION_MODE must be either 'process' or 'thread'` | execution mode 超出支持范围。 | 使用默认 `process`，或显式设置为 `thread`。 |
+| `PERAGO_FAILURE_REASON_MAX_LENGTH must be a positive integer` | failure reason 长度上限不是整数。 | 使用正整数，例如 `500` 或 `1200`。 |
+| `PERAGO_FAILURE_REASON_MAX_LENGTH must be greater than zero` | failure reason 长度上限为 `0`。 | 使用大于零的整数。 |
 | `PERAGO_WORKSPACE_GC_TTL must be a positive duration ...` | workspace GC TTL 格式非法。 | 使用 `30m`、`1h`、`24h` 这类正数 duration。 |
 | `PERAGO_WORKSPACE_GC_INTERVAL must be a positive duration ...` | workspace GC interval 格式非法。 | 使用 `30s`、`5m`、`1h` 这类正数 duration。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER must be a positive duration ...` | shutdown force-kill deadline 格式非法。 | 使用 `30s`、`5m`、`1h` 这类正数 duration，或不配置该变量。 |

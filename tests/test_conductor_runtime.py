@@ -273,6 +273,43 @@ def test_thread_worker_executes_polled_task_and_maps_result() -> None:
     assert result.output_data == {"result": {"valid": True, "reason": None}}
 
 
+def test_thread_worker_passes_failure_reason_limit_to_execution(monkeypatch) -> None:
+    captured = {}
+
+    def fake_execute_polled_task(**kwargs):
+        captured.update(kwargs)
+        return completed_result({"result": {"valid": True, "reason": None}})
+
+    monkeypatch.setattr("perago.conductor_runtime.execute_polled_task", fake_execute_polled_task)
+    worker = PeragoThreadWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        client=object(),
+        workspace_root="unused",
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+        failure_reason_max_length=37,
+    )
+
+    worker.execute(
+        Task(
+            workflow_instance_id="wf-7f3d",
+            task_id="task-9b4c",
+            retry_count=2,
+            task_def_name="metadata.validate",
+            reference_task_name="validate_metadata",
+            seq=3,
+            status="IN_PROGRESS",
+            input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+        )
+    )
+
+    assert captured["failure_reason_max_length"] == 37
+
+
 def test_process_dispatch_worker_configures_sdk_worker_contract() -> None:
     worker = PeragoProcessDispatchWorker(
         task=load_module_task("app.workers.metadata_validate"),
@@ -458,6 +495,42 @@ def test_process_dispatch_worker_fails_closed_on_invalid_completion() -> None:
 
     assert result.status == "FAILED"
     assert result.reason_for_incompletion == "executor returned invalid completion for task task-9b4c"
+
+
+def test_process_dispatch_worker_truncates_broker_side_failure_reasons() -> None:
+    class FakeAssignmentQueue:
+        def put(self, item) -> None:
+            self.item = item
+
+    class FakeCompletionQueue:
+        def get(self, timeout=None):
+            del timeout
+            return object()
+
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=FakeCompletionQueue(),
+        failure_reason_max_length=8,
+    )
+
+    result = worker.execute(
+        Task(
+            workflow_instance_id="wf-7f3d",
+            task_id="task-9b4c",
+            retry_count=2,
+            task_def_name="metadata.validate",
+            reference_task_name="validate_metadata",
+            seq=3,
+            status="IN_PROGRESS",
+            input_data={"params": {"song_id": "song-000123", "min_duration_seconds": 30}},
+        )
+    )
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "executor"
 
 
 def test_process_dispatch_worker_times_out_waiting_for_completion() -> None:
@@ -889,6 +962,46 @@ def test_process_executor_loop_executes_assignment_and_returns_completion() -> N
     }
 
 
+def test_process_executor_loop_passes_failure_reason_limit_to_execution(monkeypatch) -> None:
+    captured = {}
+
+    class FakeAssignmentQueue:
+        def __init__(self) -> None:
+            self.items = [
+                ProcessTaskAssignment(attempt=_attempt(), execution_id="exec-1"),
+                StopProcessExecutor(),
+            ]
+
+        def get(self):
+            return self.items.pop(0)
+
+    class FakeCompletionQueue:
+        def put(self, item) -> None:
+            pass
+
+    def fake_execute_polled_task(**kwargs):
+        captured.update(kwargs)
+        return completed_result({"result": {"valid": True, "reason": None}})
+
+    monkeypatch.setattr("perago.conductor_runtime.execute_polled_task", fake_execute_polled_task)
+
+    run_process_executor_loop(
+        task=load_module_task("app.workers.metadata_validate"),
+        worker_id="metadata0001",
+        workspace_root="unused",
+        assignment_queue=FakeAssignmentQueue(),
+        completion_queue=FakeCompletionQueue(),
+        load_current_attempt=lambda current_attempt: current_attempt,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: None,
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
+        cleanup_staging=lambda staged: None,
+        failure_reason_max_length=41,
+    )
+
+    assert captured["failure_reason_max_length"] == 41
+
+
 def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monkeypatch) -> None:
     handlers = {}
 
@@ -1047,11 +1160,13 @@ def test_execute_polled_task_uses_workspace_attempt_runner(monkeypatch, tmp_path
         publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "unused",
         cleanup_staging=lambda staged: None,
         owner_worker_id="featuresBuild0001",
+        failure_reason_max_length=321,
     )
 
     assert result == completed_result({"ok": True})
     assert calls["args"][:4] == (task, attempt.input_data, attempt, tmp_path)
     assert calls["kwargs"]["owner_worker_id"] == "featuresBuild0001"
+    assert calls["kwargs"]["failure_reason_max_length"] == 321
 
 
 def test_run_conductor_thread_runner_builds_sdk_runner() -> None:

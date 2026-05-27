@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from perago.errors import PreGuardrailViolation
+from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
+from perago.errors import PreGuardrailViolation, TaskFailed, TaskTerminalError
 
 
 TaskResultStatus = Literal["COMPLETED", "FAILED", "FAILED_WITH_TERMINAL_ERROR"]
@@ -148,7 +150,11 @@ def completed_result(output: dict[str, Any]) -> RuntimeTaskResult:
     return RuntimeTaskResult(status="COMPLETED", output=output)
 
 
-def failed_result(reason: object) -> RuntimeTaskResult:
+def failed_result(
+    reason: object,
+    *,
+    max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+) -> RuntimeTaskResult:
     """
     Build a failed worker attempt result.
 
@@ -160,6 +166,8 @@ def failed_result(reason: object) -> RuntimeTaskResult:
     reason : object
         Failure reason converted with :class:`str` for Conductor's
         ``reasonForIncompletion`` field.
+    max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+        Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
     -------
@@ -181,10 +189,17 @@ def failed_result(reason: object) -> RuntimeTaskResult:
     >>> failed_result("post guardrail failed").conductor_payload()
     {'status': 'FAILED', 'reasonForIncompletion': 'post guardrail failed'}
     """
-    return RuntimeTaskResult(status="FAILED", reason_for_incompletion=str(reason))
+    return RuntimeTaskResult(
+        status="FAILED",
+        reason_for_incompletion=_failure_reason(reason, max_length=max_length),
+    )
 
 
-def terminal_failed_result(reason: object) -> RuntimeTaskResult:
+def terminal_failed_result(
+    reason: object,
+    *,
+    max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+) -> RuntimeTaskResult:
     """
     Build a terminal failed worker attempt result.
 
@@ -196,6 +211,8 @@ def terminal_failed_result(reason: object) -> RuntimeTaskResult:
     reason : object
         Failure reason converted with :class:`str` for Conductor's
         ``reasonForIncompletion`` field.
+    max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+        Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
     -------
@@ -221,11 +238,15 @@ def terminal_failed_result(reason: object) -> RuntimeTaskResult:
     """
     return RuntimeTaskResult(
         status="FAILED_WITH_TERMINAL_ERROR",
-        reason_for_incompletion=str(reason),
+        reason_for_incompletion=_failure_reason(reason, max_length=max_length),
     )
 
 
-def result_for_exception(exc: Exception) -> RuntimeTaskResult:
+def result_for_exception(
+    exc: Exception,
+    *,
+    max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
+) -> RuntimeTaskResult:
     """
     Classify an exception into a worker attempt result.
 
@@ -238,6 +259,8 @@ def result_for_exception(exc: Exception) -> RuntimeTaskResult:
         Exception raised while validating input, running the task body,
         checking guardrails, staging workspace changes, publishing, or cleaning
         up an attempt.
+    max_length : int, default=DEFAULT_FAILURE_REASON_MAX_LENGTH
+        Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
     -------
@@ -265,6 +288,23 @@ def result_for_exception(exc: Exception) -> RuntimeTaskResult:
     >>> result_for_exception(RuntimeError("body failed")).status
     'FAILED'
     """
+    if isinstance(exc, TaskTerminalError):
+        return terminal_failed_result(exc.reason, max_length=max_length)
     if isinstance(exc, PreGuardrailViolation):
-        return terminal_failed_result(exc)
-    return failed_result(exc)
+        return terminal_failed_result(exc, max_length=max_length)
+    if isinstance(exc, TaskFailed):
+        return failed_result(exc.reason, max_length=max_length)
+    return failed_result(exc, max_length=max_length)
+
+
+def _failure_reason(reason: object, *, max_length: int) -> str:
+    if max_length < 1:
+        raise ValueError("max_length must be a positive integer")
+    text = str(reason)
+    original_length = len(text)
+    if original_length <= max_length:
+        return text
+    logger.bind(original_length=original_length, max_length=max_length).warning(
+        "truncated task failure reason"
+    )
+    return text[:max_length]

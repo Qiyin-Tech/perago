@@ -5,6 +5,7 @@ from pydantic import BaseModel, ValidationError
 
 from perago.config import (
     ConductorConfig,
+    DEFAULT_FAILURE_REASON_MAX_LENGTH,
     LakeFSConfig,
     RuntimeConfig,
     child_environment,
@@ -14,6 +15,7 @@ from perago.config import (
     parse_conductor_config,
     parse_duration,
     parse_execution_mode,
+    parse_failure_reason_max_length,
     parse_lakefs_config,
     parse_log_file_max_size,
     parse_log_retention,
@@ -62,6 +64,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "PERAGO_WORKSPACE_GC_TTL=30s",
                 "PERAGO_WORKSPACE_GC_INTERVAL=5m",
                 "PERAGO_SHUTDOWN_FORCE_KILL_AFTER=20s",
+                "PERAGO_FAILURE_REASON_MAX_LENGTH=1200",
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
                 "PERAGO_EXECUTION_MODE=thread",
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
@@ -87,6 +90,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.workspace_gc_ttl == timedelta(seconds=30)
     assert config.workspace_gc_interval == timedelta(minutes=5)
     assert config.shutdown_force_kill_after == timedelta(seconds=20)
+    assert config.failure_reason_max_length == 1200
     assert config.worker_id_prefix == "dotenvPrefix"
     assert config.execution_mode == "thread"
     assert config.conductor == ConductorConfig(
@@ -116,6 +120,22 @@ def test_load_runtime_config_empty_process_env_does_not_read_os_environ(monkeypa
     assert config.worker_id_prefix == "dotenvPrefix"
 
 
+def test_load_runtime_config_process_env_overrides_dotenv_failure_reason_limit(tmp_path) -> None:
+    (tmp_path / ".env").write_text(
+        "PERAGO_FAILURE_REASON_MAX_LENGTH=1200",
+        encoding="utf-8",
+    )
+
+    config = load_runtime_config(
+        "app.workers.features_build",
+        cwd=tmp_path,
+        process_env={"PERAGO_FAILURE_REASON_MAX_LENGTH": "640"},
+        probe_roots=False,
+    )
+
+    assert config.failure_reason_max_length == 640
+
+
 def test_check_writable_root_wraps_os_errors(monkeypatch, tmp_path) -> None:
     def fail_mkdir(*args, **kwargs) -> None:
         del args, kwargs
@@ -137,6 +157,7 @@ def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
     )
 
     assert isinstance(config, BaseModel)
+    assert config.failure_reason_max_length == DEFAULT_FAILURE_REASON_MAX_LENGTH
     with pytest.raises(ValidationError):
         config.worker_id_prefix = "other"
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
@@ -194,6 +215,19 @@ def test_parse_optional_duration_defaults_to_none() -> None:
     assert parse_optional_duration(None, name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER") is None
     assert parse_optional_duration("", name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER") is None
     assert parse_optional_duration("15s", name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER") == timedelta(seconds=15)
+
+
+def test_parse_failure_reason_max_length_defaults_and_validates() -> None:
+    assert parse_failure_reason_max_length(None) == DEFAULT_FAILURE_REASON_MAX_LENGTH
+    assert parse_failure_reason_max_length("") == DEFAULT_FAILURE_REASON_MAX_LENGTH
+    assert parse_failure_reason_max_length("1200") == 1200
+
+    with pytest.raises(RuntimeConfigError, match="greater than zero"):
+        parse_failure_reason_max_length("0")
+    with pytest.raises(RuntimeConfigError, match="positive integer"):
+        parse_failure_reason_max_length("-1")
+    with pytest.raises(RuntimeConfigError, match="positive integer"):
+        parse_failure_reason_max_length("1.5")
 
 
 def test_parse_connection_configs_are_optional() -> None:

@@ -1032,6 +1032,79 @@ If local workspace cleanup fails after an attempt-local workspace was created, P
 
 Guardrails are not emitted into the Conductor TaskDef schema. The generated TaskDef still describes only `workspace`, `params`, and `result`; guardrails remain Perago runtime metadata validated by module import and `perago check`.
 
+## Task failure signaling
+
+Task return values are success data. If a task function returns an output model,
+Perago treats the attempt as `COMPLETED` and writes the value under
+`output.result`. Business fields such as `status="REJECTED"` are part of the
+business result, not Conductor task status.
+
+Task authors use exceptions for execution failures:
+
+```python
+from pathlib import Path
+from pydantic import BaseModel
+
+from perago import TaskFailed, TaskTerminalError, WorkspaceSpec, task
+
+
+class GenerateParams(BaseModel):
+    song_id: str
+    prompt: str
+
+
+class GenerateOutput(BaseModel):
+    status: str
+    reason_code: str | None = None
+
+
+@task(
+    name="song.generate",
+    owner_email="music@example.com",
+    workspace=WorkspaceSpec(prefix="/generation"),
+)
+def generate_song(workspace: Path, params: GenerateParams) -> GenerateOutput:
+    if "blocked-word" in params.prompt:
+        return GenerateOutput(status="REJECTED", reason_code="PROMPT_POLICY_VIOLATION")
+
+    if params.song_id == "missing":
+        raise TaskTerminalError("song_id does not exist")
+
+    if model_service_returned_invalid_score():
+        raise TaskFailed("model service returned invalid score")
+
+    return GenerateOutput(status="READY")
+```
+
+The task failure quadrant is:
+
+| Quadrant | Meaning | Recommended mechanism |
+| --- | --- | --- |
+| Automatically recoverable and worth retrying | The same input may succeed when rerun later. | `raise TaskFailed("...")`, reported as `FAILED`. |
+| Business-recoverable but not worth automatic retry | A user, upstream system, or workflow branch must change state. | `return Output(status="REJECTED" / "NEEDS_ACTION")`, reported as `COMPLETED`. |
+| Not automatically recoverable and not worth retrying | The same input should not succeed until input, configuration, code, or workflow state changes. | `raise TaskTerminalError("...")`, reported as `FAILED_WITH_TERMINAL_ERROR`. |
+
+Examples of retryable execution failures include Suno 5xx responses, timeouts,
+temporary rate limits, and LLM output that cannot be parsed on this attempt.
+Examples of business branches include machine-review rejection, prompt policy
+violations, missing user-provided information, or an account balance case that
+the product flow can ask the user to fix. Examples of terminal execution
+failures include workflow or node misconfiguration, missing required resources,
+or a detectable implementation limitation where retrying the same input cannot
+help. Unknown, unhandled bugs should usually be allowed to bubble as ordinary
+exceptions so they become `FAILED` and follow the task retry policy.
+
+If a workspace task raises `TaskFailed` or `TaskTerminalError` after modifying
+the local Attempt Workspace, Perago must not stage or publish those changes.
+The attempt reports the selected failed status, does not return `workspace` or
+`result` output, and still runs best-effort local cleanup.
+
+The failure reason must be a string. Perago caps the text written to
+Conductor `reasonForIncompletion` using the configurable
+`PERAGO_FAILURE_REASON_MAX_LENGTH` limit and log truncation details in
+the worker JSONL log. The Conductor failed result remains a short operator-facing
+diagnostic, not a structured business payload.
+
 ## Conductor task output
 
 Perago wraps the business return value with the completed workspace reference.

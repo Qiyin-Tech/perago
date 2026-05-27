@@ -19,7 +19,7 @@ from conductor.client.orkes.orkes_task_client import OrkesTaskClient
 from conductor.client.worker.worker_interface import WorkerInterface
 from loguru import logger
 
-from perago.config import ConductorConfig
+from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH, ConductorConfig
 from perago.execution import (
     CleanupStaging,
     CompleteNoOpWorkspace,
@@ -131,6 +131,7 @@ class PeragoThreadWorker(WorkerInterface):
         publish_workspace: PublishWorkspace,
         cleanup_staging: CleanupStaging,
         complete_noop_workspace: CompleteNoOpWorkspace | None = None,
+        failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -146,6 +147,7 @@ class PeragoThreadWorker(WorkerInterface):
         self._publish_workspace = publish_workspace
         self._cleanup_staging = cleanup_staging
         self._complete_noop_workspace = complete_noop_workspace
+        self._failure_reason_max_length = failure_reason_max_length
 
     def get_identity(self) -> str:
         return self.worker_id
@@ -165,6 +167,7 @@ class PeragoThreadWorker(WorkerInterface):
             complete_noop_workspace=self._complete_noop_workspace,
             owner_worker_id=self.worker_id,
             execution_id=execution_id,
+            failure_reason_max_length=self._failure_reason_max_length,
         )
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 
@@ -182,6 +185,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         attempt_fence_response_queues: Mapping[str, Any] | None = None,
         client: ConductorRuntimeClient | None = None,
         completion_timeout_seconds: float | None = None,
+        failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -196,6 +200,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         self._attempt_fence_response_queues = attempt_fence_response_queues or {}
         self._client = client
         self._completion_timeout_seconds = completion_timeout_seconds
+        self._failure_reason_max_length = failure_reason_max_length
 
     def get_identity(self) -> str:
         return self.worker_id
@@ -221,21 +226,29 @@ class PeragoProcessDispatchWorker(WorkerInterface):
                 else:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        return failed_result(f"executor did not return result for task {attempt.task_id}")
+                        return failed_result(
+                            f"executor did not return result for task {attempt.task_id}",
+                            max_length=self._failure_reason_max_length,
+                        )
                     completion = self._completion_queue.get(timeout=min(0.1, remaining))
             except Empty:
                 continue
             break
 
         if not isinstance(completion, ProcessTaskCompletion):
-            return failed_result(f"executor returned invalid completion for task {attempt.task_id}")
+            return failed_result(
+                f"executor returned invalid completion for task {attempt.task_id}",
+                max_length=self._failure_reason_max_length,
+            )
         if completion.task_id != attempt.task_id:
             return failed_result(
-                f"executor returned completion for task {completion.task_id}; expected {attempt.task_id}"
+                f"executor returned completion for task {completion.task_id}; expected {attempt.task_id}",
+                max_length=self._failure_reason_max_length,
             )
         if completion.execution_id != execution_id:
             return failed_result(
-                f"executor returned completion for execution {completion.execution_id}; expected {execution_id}"
+                f"executor returned completion for execution {completion.execution_id}; expected {execution_id}",
+                max_length=self._failure_reason_max_length,
             )
         return completion.result
 
@@ -285,6 +298,7 @@ def run_conductor_thread_runner(
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
+    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoThreadWorker(
@@ -298,6 +312,7 @@ def run_conductor_thread_runner(
         publish_workspace=publish_workspace,
         cleanup_staging=cleanup_staging,
         complete_noop_workspace=complete_noop_workspace,
+        failure_reason_max_length=failure_reason_max_length,
     )
     runner = runner_cls(
         worker,
@@ -330,6 +345,7 @@ def run_conductor_process_broker(
     attempt_fence_response_queues: Mapping[str, Any] | None = None,
     client: ConductorRuntimeClient | None = None,
     completion_timeout_seconds: float | None = None,
+    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoProcessDispatchWorker(
@@ -342,6 +358,7 @@ def run_conductor_process_broker(
         attempt_fence_response_queues=attempt_fence_response_queues,
         client=client,
         completion_timeout_seconds=completion_timeout_seconds,
+        failure_reason_max_length=failure_reason_max_length,
     )
     runner = runner_cls(
         worker,
@@ -375,6 +392,7 @@ def run_process_executor_loop(
     publish_workspace: PublishWorkspace,
     cleanup_staging: CleanupStaging,
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
+    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
 ) -> None:
     logger.bind(worker_id=worker_id).info("process executor started")
     shutdown_requested = False
@@ -417,6 +435,7 @@ def run_process_executor_loop(
                 complete_noop_workspace=complete_noop_workspace,
                 owner_worker_id=worker_id,
                 execution_id=assignment.execution_id,
+                failure_reason_max_length=failure_reason_max_length,
             )
             completion_queue.put(
                 ProcessTaskCompletion(
@@ -500,6 +519,7 @@ def execute_polled_task(
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
+    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH,
 ) -> RuntimeTaskResult:
     if task.has_workspace:
         return run_workspace_task_attempt(
@@ -515,8 +535,13 @@ def execute_polled_task(
             complete_noop_workspace=complete_noop_workspace,
             owner_worker_id=owner_worker_id,
             execution_id=execution_id,
+            failure_reason_max_length=failure_reason_max_length,
         )
-    return run_workspace_free_task_attempt(task, attempt.input_data)
+    return run_workspace_free_task_attempt(
+        task,
+        attempt.input_data,
+        failure_reason_max_length=failure_reason_max_length,
+    )
 
 
 def _required_task_attr(task: object, name: str) -> Any:

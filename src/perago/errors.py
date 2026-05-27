@@ -64,6 +64,62 @@ class TaskInputError(ValueError):
     """
 
 
+class TaskExecutionError(RuntimeError):
+    """
+    Base class for task-authored execution failures.
+
+    Task execution errors are raised from task bodies when the task did not
+    complete successfully. The reason must be a string because Perago writes it
+    to Conductor's ``reasonForIncompletion`` field.
+
+    Parameters
+    ----------
+    reason : str
+        Short diagnostic reason reported to Conductor.
+
+    Attributes
+    ----------
+    reason : str
+        The original task-authored diagnostic reason.
+    """
+
+    reason: str
+
+    def __init__(self, reason: str) -> None:
+        if not isinstance(reason, str):
+            raise TypeError("reason must be str")
+        self.reason = reason
+        super().__init__(reason)
+
+
+class TaskFailed(TaskExecutionError):
+    """
+    Raised when a task attempt should be reported as retryable ``FAILED``.
+
+    Use this for execution failures where retrying the same Conductor input may
+    succeed, such as transient upstream service errors.
+
+    Parameters
+    ----------
+    reason : str
+        Short diagnostic reason reported to Conductor.
+    """
+
+
+class TaskTerminalError(TaskExecutionError):
+    """
+    Raised when a task attempt should be reported as terminal failure.
+
+    Use this for execution failures where retrying the same Conductor input has
+    no value. Perago maps it to ``FAILED_WITH_TERMINAL_ERROR``.
+
+    Parameters
+    ----------
+    reason : str
+        Short diagnostic reason reported to Conductor.
+    """
+
+
 class GuardrailViolation(RuntimeError):
     """
     Raised when a workspace guardrail check fails.

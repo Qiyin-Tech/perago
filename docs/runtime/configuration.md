@@ -30,6 +30,7 @@ PERAGO_LOG_ROOT=/var/tmp/perago/logs
 PERAGO_LOG_FILE_MAX_SIZE=100MB
 PERAGO_LOG_RETENTION=30d
 PERAGO_WORKER_ID_PREFIX=peragoLocalWorker
+PERAGO_FAILURE_REASON_MAX_LENGTH=500
 PERAGO_WORKSPACE_GC_TTL=24h
 PERAGO_WORKSPACE_GC_INTERVAL=1h
 # Optional; unset by default.
@@ -48,6 +49,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_LOG_RETENTION` | optional | `30d` | 日志保留天数。接受正整数加 `d`，例如 `7d` 或 `30d`。 |
 | `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | supervisor 为子进程生成 `PERAGO_WORKER_ID` 的前缀。显式配置时只能包含 ASCII 字母和数字。 |
 | `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 进程退回到 module target 加 pid | worker process 身份。`perago start -j` 会为每个 child slot 写入该值；用户一般不应在 `.env` 中配置。 |
+| `PERAGO_FAILURE_REASON_MAX_LENGTH` | optional | `500` | 写入 Conductor `reasonForIncompletion` 的最大字符数。只接受正整数；超长 failure reason 会截断并记录截断元数据到 worker 日志。 |
 | `PERAGO_WORKSPACE_GC_TTL` | optional | `24h` | supervisor workspace GC 删除 abandoned attempt workspace 前等待的最小年龄。接受正整数加 `s`、`m`、`h` 或 `d`。仍属于活跃 executor owner 的 workspace 不会被周期 GC 删除。 |
 | `PERAGO_WORKSPACE_GC_INTERVAL` | optional | `1h` | supervisor 后台 workspace GC loop 的运行间隔。接受正整数加 `s`、`m`、`h` 或 `d`。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` | optional | unset | shutdown drain 的可选强制 kill deadline。未配置时 Perago 不调用 `process.kill()`；配置后接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30s`。 |

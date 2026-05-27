@@ -8,7 +8,9 @@ from perago import (
     PostGuardrailViolation,
     PreGuardrailViolation,
     StagedWorkspace,
+    TaskFailed,
     TaskInputError,
+    TaskTerminalError,
     WorkspaceSpec,
     build_workspace_free_task_output,
     build_workspace_task_output,
@@ -38,6 +40,10 @@ class NestedParams(BaseModel):
 
 class NestedOutput(BaseModel):
     value: int
+
+
+class StatusOutput(BaseModel):
+    status: str
 
 
 @dataclass(frozen=True)
@@ -83,6 +89,34 @@ def same_content_workspace_task(workspace: Path, params: Params) -> Output:
     (workspace / "raw").mkdir(exist_ok=True)
     (workspace / "raw" / "input.parquet").write_text("ok", encoding="utf-8")
     return Output(value=params.value)
+
+
+@task(name="tests.workspace_free_failed", owner_email="data@example.com")
+def workspace_free_failed_task(params: Params) -> Output:
+    raise TaskFailed(f"retry value {params.value}")
+
+
+@task(name="tests.workspace_free_terminal", owner_email="data@example.com")
+def workspace_free_terminal_task(params: Params) -> Output:
+    raise TaskTerminalError(f"terminal value {params.value}")
+
+
+@task(name="tests.business_rejected", owner_email="data@example.com")
+def business_rejected_task(params: Params) -> StatusOutput:
+    del params
+    return StatusOutput(status="REJECTED")
+
+
+@task(name="tests.workspace_failed_after_write", owner_email="data@example.com", workspace=WorkspaceSpec())
+def workspace_failed_after_write_task(workspace: Path, params: Params) -> Output:
+    (workspace / "changed.txt").write_text(str(params.value), encoding="utf-8")
+    raise TaskFailed("workspace retryable failure")
+
+
+@task(name="tests.workspace_terminal_after_write", owner_email="data@example.com", workspace=WorkspaceSpec())
+def workspace_terminal_after_write_task(workspace: Path, params: Params) -> Output:
+    (workspace / "changed.txt").write_text(str(params.value), encoding="utf-8")
+    raise TaskTerminalError("workspace terminal failure")
 
 
 WORKSPACE_INPUT = {
@@ -442,6 +476,70 @@ def test_run_workspace_task_attempt_classifies_pre_guardrail_failure_and_cleans(
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
 
+def test_run_workspace_task_attempt_maps_task_failed_without_publishing(tmp_path) -> None:
+    task = workspace_failed_after_write_task.__perago_task__
+    calls: list[str] = []
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"value": 5},
+        },
+        _attempt(),
+        tmp_path,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        load_current_attempt=lambda current_attempt: calls.append("fence") or current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: pytest.fail(
+            "failed task must not stage"
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: pytest.fail(
+            "failed task must not publish"
+        ),
+        cleanup_staging=lambda staged: calls.append("cleanup"),
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.conductor_payload() == {
+        "status": "FAILED",
+        "reasonForIncompletion": "workspace retryable failure",
+    }
+    assert calls == []
+    assert not attempt_workspace_dir(tmp_path, _attempt()).exists()
+
+
+def test_run_workspace_task_attempt_maps_task_terminal_error_without_publishing(tmp_path) -> None:
+    task = workspace_terminal_after_write_task.__perago_task__
+    calls: list[str] = []
+
+    result = run_workspace_task_attempt(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"value": 5},
+        },
+        _attempt(),
+        tmp_path,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        load_current_attempt=lambda current_attempt: calls.append("fence") or current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: pytest.fail(
+            "terminal task failure must not stage"
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: pytest.fail(
+            "terminal task failure must not publish"
+        ),
+        cleanup_staging=lambda staged: calls.append("cleanup"),
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.conductor_payload() == {
+        "status": "FAILED_WITH_TERMINAL_ERROR",
+        "reasonForIncompletion": "workspace terminal failure",
+    }
+    assert calls == []
+    assert not attempt_workspace_dir(tmp_path, _attempt()).exists()
+
+
 def test_run_workspace_task_attempt_checks_attempt_fence_before_publish(tmp_path) -> None:
     task = load_module_task("app.workers.features_build")
     attempt = _attempt()
@@ -632,6 +730,42 @@ def test_run_workspace_free_task_attempt_returns_completed_result() -> None:
     assert result.conductor_payload() == {
         "status": "COMPLETED",
         "output": {"result": {"valid": True, "reason": None}},
+    }
+
+
+def test_run_workspace_free_task_attempt_maps_task_failed() -> None:
+    result = run_workspace_free_task_attempt(
+        workspace_free_failed_task.__perago_task__,
+        {"params": {"value": 3}},
+    )
+
+    assert result.conductor_payload() == {
+        "status": "FAILED",
+        "reasonForIncompletion": "retry value 3",
+    }
+
+
+def test_run_workspace_free_task_attempt_maps_task_terminal_error() -> None:
+    result = run_workspace_free_task_attempt(
+        workspace_free_terminal_task.__perago_task__,
+        {"params": {"value": 4}},
+    )
+
+    assert result.conductor_payload() == {
+        "status": "FAILED_WITH_TERMINAL_ERROR",
+        "reasonForIncompletion": "terminal value 4",
+    }
+
+
+def test_workspace_free_business_rejection_remains_completed() -> None:
+    result = run_workspace_free_task_attempt(
+        business_rejected_task.__perago_task__,
+        {"params": {"value": 1}},
+    )
+
+    assert result.conductor_payload() == {
+        "status": "COMPLETED",
+        "output": {"result": {"status": "REJECTED"}},
     }
 
 

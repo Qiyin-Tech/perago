@@ -10,6 +10,9 @@ Errors
 
    TaskDefinitionError
    TaskInputError
+   TaskExecutionError
+   TaskFailed
+   TaskTerminalError
    RuntimeConfigError
    GuardrailViolation
    PreGuardrailViolation

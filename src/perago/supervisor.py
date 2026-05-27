@@ -623,6 +623,7 @@ def _broker_process_main(
         attempt_fence_request_queue=attempt_fence_request_queue,
         attempt_fence_response_queues=attempt_fence_response_queues,
         client=conductor,
+        failure_reason_max_length=config.failure_reason_max_length,
     )
 
 
@@ -666,6 +667,7 @@ def _process_executor_main(
         publish_workspace=lakefs.publish_workspace,
         cleanup_staging=lakefs.cleanup_staging,
         complete_noop_workspace=lakefs.complete_noop_workspace,
+        failure_reason_max_length=config.failure_reason_max_length,
     )
 
 
@@ -704,6 +706,7 @@ def _thread_runner_main(
         publish_workspace=lakefs.publish_workspace,
         cleanup_staging=lakefs.cleanup_staging,
         complete_noop_workspace=lakefs.complete_noop_workspace,
+        failure_reason_max_length=config.failure_reason_max_length,
     )
 
 

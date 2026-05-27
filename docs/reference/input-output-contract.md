@@ -110,6 +110,11 @@ Workspace-free task 的完成输出只包含 `result`。
 ## Failed Output
 
 失败结果不会携带 `output`。Perago 只回写 Conductor status 和 `reasonForIncompletion`。
+失败原因是短诊断文本，不是业务结果结构。MVP failure API 目标是按
+`PERAGO_FAILURE_REASON_MAX_LENGTH` 配置限制写入 Conductor 的
+`reasonForIncompletion` 文本长度，完整细节应进入 worker JSONL 日志。业务可恢复分支应作为成功的
+`result` 返回，例如 `status="REJECTED"` 或 `status="NEEDS_ACTION"`，再由
+WorkflowDef 分支处理。
 
 ```json
 {
@@ -128,8 +133,8 @@ Workspace-free task 的完成输出只包含 `result`。
 | 状态 | 输出字段 | 典型来源 |
 | --- | --- | --- |
 | `COMPLETED` | `output` required, `reasonForIncompletion` forbidden | 业务函数成功、post guardrail 通过；workspace task 已完成 read-only、no-op 或 publication 路径。 |
-| `FAILED` | `reasonForIncompletion` required, `output` forbidden | 输入结构错误、Pydantic 校验失败、业务异常、post guardrail 失败、attempt fence 或 publish fence 失败。 |
-| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required, `output` forbidden | pre guardrail 失败，表示上游 workspace input 不满足任务输入文件契约。 |
+| `FAILED` | `reasonForIncompletion` required, `output` forbidden | 输入结构错误、Pydantic 校验失败、`TaskFailed`、未知业务异常、post guardrail、attempt fence 或 publish fence 失败。 |
+| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required, `output` forbidden | pre guardrail 失败或 `TaskTerminalError`，表示同一 input 自动重试没有意义。 |
 
 ## Strict Top-Level Shapes
 

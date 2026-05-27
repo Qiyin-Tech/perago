@@ -7,21 +7,27 @@ Perago 的运行时结果只有三个状态：
 | 状态 | 载荷结构 | Conductor 语义 |
 | --- | --- | --- |
 | `COMPLETED` | `output` required; `reasonForIncompletion` forbidden | attempt 成功完成。workspace task 已生成 workspace output；workspace-free task 已返回业务 `result`。 |
-| `FAILED` | `reasonForIncompletion` required; `output` forbidden | attempt 失败，Perago 未把它归类为 terminal input-workspace 契约错误。 |
-| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required; `output` forbidden | pre guardrail 失败，表示上游提供的 workspace input 不满足任务声明的输入文件契约。 |
+| `FAILED` | `reasonForIncompletion` required; `output` forbidden | attempt 执行失败，Perago 认为同一 input 自动重试仍可能有意义。 |
+| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required; `output` forbidden | attempt 执行失败，Perago 认为同一 input 自动重试没有意义。 |
 
 `RuntimeTaskResult` 会拒绝不一致的载荷结构：完成状态必须有 `output`，失败状态必须有 `reasonForIncompletion`，失败状态不能携带 `output`。
 
 ## Classification Rule
 
-`result_for_exception(...)` 目前只有一条特殊规则：
+`result_for_exception(...)` 当前运行时只有一条特殊规则：
 
 | 异常类型 | Result status | 说明 |
 | --- | --- | --- |
 | `PreGuardrailViolation` | `FAILED_WITH_TERMINAL_ERROR` | task body 尚未运行，输入 workspace 未满足 task 的 pre guardrail。 |
 | 其他异常 | `FAILED` | 包括 bad input、Pydantic 校验失败、业务异常、post guardrail、attempt fence、publish fence 和 LakeFS 操作失败。 |
 
-`FAILED_WITH_TERMINAL_ERROR` 只用于 Perago 判定的 terminal input-workspace 契约错误。Perago MVP 只把 pre guardrail 放进这个状态；其他失败都保持普通 `FAILED`，由 Conductor 按生成 TaskDef 中的 retry policy 决定是否重试。
+Perago 把这个分类扩展为显式 task failure API：
+
+- `raise TaskFailed("...")` 表示可自动恢复、值得重试的执行失败，映射为 `FAILED`。
+- `raise TaskTerminalError("...")` 表示同一 input 自动重试没有意义的执行失败，映射为 `FAILED_WITH_TERMINAL_ERROR`。
+- 未知、未处理的普通异常仍映射为 `FAILED`，让 Conductor 按 retry policy 处理。
+
+业务可恢复但不应自动重试的情况不使用 Conductor failed 机制。业务函数应返回成功的 `Result Output`，例如 `status="REJECTED"` 或 `status="NEEDS_ACTION"`，再由 WorkflowDef 的分支逻辑处理。
 
 ## Workspace Task Attempt
 
@@ -32,7 +38,9 @@ Workspace task 的 attempt 生命周期中，失败分类如下。
 | input validation | input 顶层字段缺少 `workspace` 或 `params`；`WorkspaceInput` 无效；`params` 额外字段或类型错误 | `FAILED` | 否 |
 | download | LakeFS repository/ref 不存在、连接失败、本机 workspace 写入失败 | `FAILED` | 否 |
 | pre guardrails | 输入 workspace 缺少必需文件/目录/glob，或命中 forbidden glob | `FAILED_WITH_TERMINAL_ERROR` | 否 |
-| task body | 用户函数抛异常，或返回值不能通过 output Pydantic model 校验 | `FAILED` | 否 |
+| task body retryable failure | 用户函数抛出普通异常、`TaskFailed`，或返回值不能通过 output Pydantic model 校验 | `FAILED` | 否 |
+| task body terminal failure | 用户函数抛出 `TaskTerminalError`，表示可检测且不可重试的执行前提错误 | `FAILED_WITH_TERMINAL_ERROR` | 否 |
+| task body business branch | 用户函数成功判定业务无法继续自动执行，但 workflow 可处理该分支 | `COMPLETED` | 视 workspace access mode 而定 |
 | post guardrails | 输出 workspace 文件未通过 task 的 post guardrail | `FAILED` | 否 |
 | read-only completion | `WorkspaceSpec(read_only=True)` 的 task 成功完成 | `COMPLETED` | 否，output ref 保持 input ref |
 | no-op writable completion | `read_only=False` 且 workspace diff 为空，target HEAD 状态可解释 | `COMPLETED` | 否，output ref 保持 input ref |
@@ -52,7 +60,9 @@ Workspace-free task 不下载、不发布 workspace，也没有 guardrail 或 pu
 | 阶段 | 典型原因 | Result status |
 | --- | --- | --- |
 | input validation | input 顶层字段缺少 `params`；`params` 额外字段或类型错误 | `FAILED` |
-| task body | 用户函数抛异常 | `FAILED` |
+| task body retryable failure | 用户函数抛出普通异常或 `TaskFailed` | `FAILED` |
+| task body terminal failure | 用户函数抛出 `TaskTerminalError` | `FAILED_WITH_TERMINAL_ERROR` |
+| task body business branch | 用户函数成功判定业务无法继续自动执行，但 workflow 可处理该分支 | `COMPLETED` |
 | result validation | 返回值不能通过 output Pydantic model 校验 | `FAILED` |
 | success | 业务函数返回值通过 output model 校验 | `COMPLETED` |
 
@@ -100,6 +110,7 @@ Perago 内部先构造 `RuntimeTaskResult`，再转换成 Conductor SDK 的 `Tas
 Perago 的失败分类是 fail-closed 的：
 
 - publish fence、stale attempt 和 LakeFS merge 错误不会被包装成成功。
+- 业务可恢复分支不会被包装成 Conductor failure；它们应作为成功的 `Result Output` 交给 workflow 分支处理。
 - staging cleanup 和 local cleanup 的错误只写日志，不覆盖原始 task result。
 - publish timeout 或 result update 失败后，不应直接假设 publish 没发生；下一次 retry 按 [LakeFS 发布协议](../lakefs-publication-protocol.md) 检查 target HEAD 状态。
 

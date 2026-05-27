@@ -3,6 +3,8 @@ from perago import (
     PreGuardrailViolation,
     PublishFenceError,
     RuntimeTaskResult,
+    TaskFailed,
+    TaskTerminalError,
     completed_result,
     failed_result,
     result_for_exception,
@@ -44,6 +46,36 @@ def test_result_for_exception_classifies_guardrail_failures_by_phase() -> None:
     assert result_for_exception(PreGuardrailViolation("missing input")).status == "FAILED_WITH_TERMINAL_ERROR"
     assert result_for_exception(PostGuardrailViolation("missing output")).status == "FAILED"
     assert result_for_exception(RuntimeError("transient")).status == "FAILED"
+
+
+def test_result_for_exception_classifies_task_execution_errors() -> None:
+    retryable = result_for_exception(TaskFailed("retry later"))
+    terminal = result_for_exception(TaskTerminalError("invalid input"))
+
+    assert retryable.conductor_payload() == {
+        "status": "FAILED",
+        "reasonForIncompletion": "retry later",
+    }
+    assert terminal.conductor_payload() == {
+        "status": "FAILED_WITH_TERMINAL_ERROR",
+        "reasonForIncompletion": "invalid input",
+    }
+
+
+def test_task_execution_errors_require_string_reasons() -> None:
+    with pytest.raises(TypeError, match="reason must be str"):
+        TaskFailed({"code": "x"})  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="reason must be str"):
+        TaskTerminalError({"code": "x"})  # type: ignore[arg-type]
+
+
+def test_failure_reason_is_truncated_without_output() -> None:
+    result = result_for_exception(TaskFailed("abcdef"), max_length=3)
+
+    assert result.conductor_payload() == {
+        "status": "FAILED",
+        "reasonForIncompletion": "abc",
+    }
 
 
 def test_result_for_exception_fails_closed_on_publish_fence_errors() -> None:

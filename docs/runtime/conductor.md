@@ -88,10 +88,12 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 | Perago status | Conductor 字段 | 典型来源 |
 | --- | --- | --- |
 | `COMPLETED` | `outputData` | task body 成功；workspace task 包含 read-only、no-op 或 published workspace output。 |
-| `FAILED` | `reasonForIncompletion` | bad input、post guardrail、stale attempt、task body exception、publish failure。 |
-| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` | pre guardrail failure。 |
+| `FAILED` | `reasonForIncompletion` | bad input、MVP `TaskFailed`、未知 task body exception、post guardrail、stale attempt、publish failure。 |
+| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` | pre guardrail failure 或 MVP `TaskTerminalError`。 |
 
 `COMPLETED` 必须带 output，且不能带 failure reason。失败状态必须带 `reasonForIncompletion`，且不能带 output。worker id 会写入 Conductor result，便于从 Conductor 结果反查 worker 日志目录。
+可预期的业务拒绝、待补充信息或人工处理分支不应伪装成 Conductor task failure；
+worker 应返回成功的 `result`，让 WorkflowDef 用分支逻辑处理。
 
 可写 workspace task 如果配置了有效 `PublishBudget`，TaskDef 会使用派生出的 `responseTimeoutSeconds`，让 SDK runner 的 LeaseManager 按 publication 预算续租。LakeFS merge request timeout 仍由 LakeFS runtime 使用 `lakefs_merge_timeout_seconds` 约束。`conductor_completion_timeout_seconds` 只是 `responseTimeoutSeconds` 中的 completion reserve；当前不传给 SDK `TaskRunner` 作为 result update HTTP timeout。没有 publish budget，或 `WorkspaceSpec(read_only=True)` 导致 publish budget 被忽略时，使用普通 task timeout。
 

@@ -18,6 +18,7 @@ LOG_SIZE_UNITS = {
     "MB": 1024 * 1024,
     "GB": 1024 * 1024 * 1024,
 }
+DEFAULT_FAILURE_REASON_MAX_LENGTH = 500
 ExecutionMode = Literal["process", "thread"]
 
 
@@ -154,6 +155,10 @@ class RuntimeConfig(BaseModel):
         Optional shutdown drain deadline. When configured through
         ``PERAGO_SHUTDOWN_FORCE_KILL_AFTER``, child processes still alive after
         the deadline are force-killed.
+    failure_reason_max_length : int, default=500
+        Maximum number of characters written to Conductor
+        ``reasonForIncompletion`` for failed attempts. Parsed from
+        ``PERAGO_FAILURE_REASON_MAX_LENGTH``.
     conductor : ConductorConfig or None, default=None
         Optional Conductor connection config. ``perago start`` requires it.
     lakefs : LakeFSConfig or None, default=None
@@ -195,6 +200,7 @@ class RuntimeConfig(BaseModel):
     workspace_gc_ttl: timedelta = timedelta(hours=24)
     workspace_gc_interval: timedelta = timedelta(hours=1)
     shutdown_force_kill_after: timedelta | None = None
+    failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH
     conductor: ConductorConfig | None = None
     lakefs: LakeFSConfig | None = None
 
@@ -289,6 +295,9 @@ def load_runtime_config(
         shutdown_force_kill_after=parse_optional_duration(
             env.get("PERAGO_SHUTDOWN_FORCE_KILL_AFTER"),
             name="PERAGO_SHUTDOWN_FORCE_KILL_AFTER",
+        ),
+        failure_reason_max_length=parse_failure_reason_max_length(
+            env.get("PERAGO_FAILURE_REASON_MAX_LENGTH")
         ),
         conductor=parse_conductor_config(env),
         lakefs=parse_lakefs_config(env),
@@ -391,6 +400,18 @@ def parse_optional_duration(value: str | None, *, name: str) -> timedelta | None
     if value is None or value.strip() == "":
         return None
     return parse_duration(value, default=timedelta(seconds=1), name=name)
+
+
+def parse_failure_reason_max_length(value: str | None) -> int:
+    if value is None or value.strip() == "":
+        return DEFAULT_FAILURE_REASON_MAX_LENGTH
+    stripped = value.strip()
+    if not re.fullmatch(r"[0-9]+", stripped):
+        raise RuntimeConfigError("PERAGO_FAILURE_REASON_MAX_LENGTH must be a positive integer")
+    parsed = int(stripped)
+    if parsed <= 0:
+        raise RuntimeConfigError("PERAGO_FAILURE_REASON_MAX_LENGTH must be greater than zero")
+    return parsed
 
 
 def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:

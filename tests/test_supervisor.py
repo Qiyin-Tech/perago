@@ -622,6 +622,7 @@ def test_broker_process_main_prepares_runtime_and_runs_dispatch_broker(monkeypat
         "process_count": 2,
         "conductor_config": config.conductor,
         "client": conductor,
+        "failure_reason_max_length": config.failure_reason_max_length,
         **queues,
     }
 
@@ -719,6 +720,7 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
     assert ran["publish_workspace"] is lakefs_runtime.publish_workspace
     assert ran["cleanup_staging"] is lakefs_runtime.cleanup_staging
     assert ran["complete_noop_workspace"] is lakefs_runtime.complete_noop_workspace
+    assert ran["failure_reason_max_length"] == config.failure_reason_max_length
 
 
 def test_process_executor_main_ignores_publish_budget_for_read_only_workspace(monkeypatch, tmp_path) -> None:
@@ -850,6 +852,7 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
         "publish_workspace": lakefs_runtime.publish_workspace,
         "cleanup_staging": lakefs_runtime.cleanup_staging,
         "complete_noop_workspace": lakefs_runtime.complete_noop_workspace,
+        "failure_reason_max_length": config.failure_reason_max_length,
     }
 
 

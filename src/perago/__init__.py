@@ -9,7 +9,10 @@ from perago.errors import (
     RuntimeConfigError,
     StaleAttemptError,
     TaskDefinitionError,
+    TaskExecutionError,
+    TaskFailed,
     TaskInputError,
+    TaskTerminalError,
 )
 from perago.execution import (
     StagedWorkspace,
@@ -82,7 +85,10 @@ __all__ = [
     "TaskDefinition",
     "TaskDefinitionError",
     "TaskExecutionContext",
+    "TaskExecutionError",
+    "TaskFailed",
     "TaskInputError",
+    "TaskTerminalError",
     "TimeoutPolicy",
     "WorkerChildSpec",
     "WorkerRuntime",
