@@ -56,6 +56,7 @@ def check(module_target: str) -> None:
     typer.echo(f"workspace_root: {config.workspace_root}")
     typer.echo(f"log_root: {config.log_root}")
     typer.echo(f"worker_id_prefix: {config.worker_id_prefix}")
+    typer.echo(f"telemetry: {_configured(config.telemetry.enabled)}")
     typer.echo(f"conductor: {_configured(config.conductor is not None)}")
     typer.echo(f"lakefs: {_configured(config.lakefs is not None)}")
 

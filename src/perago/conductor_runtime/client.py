@@ -5,6 +5,7 @@ from conductor.client.orkes.orkes_metadata_client import OrkesMetadataClient
 from conductor.client.orkes.orkes_task_client import OrkesTaskClient
 
 from perago.config import ConductorConfig
+from perago.telemetry import conductor_operation_timer
 
 from .models import ConductorTaskAttempt
 from .sdk_mapping import conductor_task_to_attempt
@@ -29,16 +30,18 @@ class OrkesConductorRuntimeClient:
         return cls(task_client=OrkesTaskClient(sdk_config), metadata_client=OrkesMetadataClient(sdk_config))
 
     def taskdef_exists(self, task_name: str) -> bool:
-        try:
-            self._metadata_client.get_task_def(task_name)
-        except Exception as exc:  # noqa: BLE001
-            if _looks_like_not_found(exc):
-                return False
-            raise
-        return True
+        with conductor_operation_timer(operation="taskdef_exists"):
+            try:
+                self._metadata_client.get_task_def(task_name)
+            except Exception as exc:  # noqa: BLE001
+                if _looks_like_not_found(exc):
+                    return False
+                raise
+            return True
 
     def get_task(self, task_id: str) -> ConductorTaskAttempt:
-        return conductor_task_to_attempt(self._task_client.get_task(task_id))
+        with conductor_operation_timer(operation="get_task"):
+            return conductor_task_to_attempt(self._task_client.get_task(task_id))
 
 
 def _looks_like_not_found(exc: Exception) -> bool:

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from perago.config import RuntimeConfig, resolve_worker_id
 from perago.runtime_logging import configure_worker_logging
+from perago.telemetry import configure_telemetry
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ def prepare_worker_runtime(
     config: RuntimeConfig,
     module_target: str,
     env: dict[str, str],
+    runtime_role: str = "worker",
 ) -> WorkerRuntime:
     """
     Prepare local runtime state for one worker process.
@@ -129,6 +131,12 @@ def prepare_worker_runtime(
         worker_id=worker_id,
         max_bytes=config.log_file_max_size,
         retention=config.log_retention,
+    )
+    configure_telemetry(
+        config=config.telemetry,
+        module_target=module_target,
+        worker_id=worker_id,
+        runtime_role=runtime_role,
     )
     return WorkerRuntime(
         worker_id=worker_id,

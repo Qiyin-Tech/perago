@@ -13,6 +13,7 @@ from perago.errors import PublishFenceError
 from perago.execution import StagedWorkspace
 from perago.models import PublishBudget, WorkspaceInput, WorkspaceSpec
 from perago.staging import staging_branch_name
+from perago.telemetry import lakefs_operation_timer
 from perago.workspace import (
     build_workspace_sync_plan,
     workspace_download_files,
@@ -47,17 +48,18 @@ class LakeFSWorkspaceRuntime:
         workspace_spec: WorkspaceSpec,
         workspace_dir: Path,
     ) -> None:
-        ref = self._repo(workspace_input.repository).ref(workspace_input.ref)
-        object_paths = [
-            getattr(item, "path")
-            for item in ref.objects(prefix=workspace_object_prefix(workspace_spec))
-            if getattr(item, "path_type", "object") == "object"
-        ]
-        for file in workspace_download_files(workspace_dir, workspace_spec, object_paths):
-            file.local_path.parent.mkdir(parents=True, exist_ok=True)
-            with ref.object(file.object_path).reader(mode="rb") as reader:
-                with file.local_path.open("wb") as output:
-                    shutil.copyfileobj(reader, output)
+        with lakefs_operation_timer(operation="download_workspace"):
+            ref = self._repo(workspace_input.repository).ref(workspace_input.ref)
+            object_paths = [
+                getattr(item, "path")
+                for item in ref.objects(prefix=workspace_object_prefix(workspace_spec))
+                if getattr(item, "path_type", "object") == "object"
+            ]
+            for file in workspace_download_files(workspace_dir, workspace_spec, object_paths):
+                file.local_path.parent.mkdir(parents=True, exist_ok=True)
+                with ref.object(file.object_path).reader(mode="rb") as reader:
+                    with file.local_path.open("wb") as output:
+                        shutil.copyfileobj(reader, output)
 
     def stage_workspace(
         self,
@@ -66,23 +68,24 @@ class LakeFSWorkspaceRuntime:
         workspace_spec: WorkspaceSpec,
         attempt: object,
     ) -> StagedWorkspace:
-        repo = self._repo(workspace_input.repository)
-        staging_branch = staging_branch_name(attempt)
-        branch = repo.branch(staging_branch).create(workspace_input.ref, exist_ok=False)
-        existing_paths = [
-            getattr(item, "path")
-            for item in branch.objects(prefix=workspace_object_prefix(workspace_spec))
-            if getattr(item, "path_type", "object") == "object"
-        ]
-        plan = build_workspace_sync_plan(workspace_dir, workspace_spec, existing_paths)
+        with lakefs_operation_timer(operation="stage_workspace"):
+            repo = self._repo(workspace_input.repository)
+            staging_branch = staging_branch_name(attempt)
+            branch = repo.branch(staging_branch).create(workspace_input.ref, exist_ok=False)
+            existing_paths = [
+                getattr(item, "path")
+                for item in branch.objects(prefix=workspace_object_prefix(workspace_spec))
+                if getattr(item, "path_type", "object") == "object"
+            ]
+            plan = build_workspace_sync_plan(workspace_dir, workspace_spec, existing_paths)
 
-        for object_path in plan.delete_object_paths:
-            branch.object(object_path).delete()
-        for file in plan.upload_files:
-            branch.object(file.object_path).upload(file.local_path.read_bytes(), mode="wb")
+            for object_path in plan.delete_object_paths:
+                branch.object(object_path).delete()
+            for file in plan.upload_files:
+                branch.object(file.object_path).upload(file.local_path.read_bytes(), mode="wb")
 
-        commit_ref = branch.commit("perago try")
-        return StagedWorkspace(repository=workspace_input.repository, branch=staging_branch, commit=commit_ref.id)
+            commit_ref = branch.commit("perago try")
+            return StagedWorkspace(repository=workspace_input.repository, branch=staging_branch, commit=commit_ref.id)
 
     def publish_workspace(
         self,
@@ -91,20 +94,21 @@ class LakeFSWorkspaceRuntime:
         workspace_spec: WorkspaceSpec,
         attempt: object,
     ) -> str:
-        repo = self._repo(workspace_input.repository)
-        target_branch = repo.branch(workspace_input.branch)
-        head_commit = target_branch.get_commit()
-        current_head = head_commit.id
-        if current_head == workspace_input.ref:
-            return self._merge_staged_workspace(staged, workspace_input, target_branch)
+        with lakefs_operation_timer(operation="publish_workspace"):
+            repo = self._repo(workspace_input.repository)
+            target_branch = repo.branch(workspace_input.branch)
+            head_commit = target_branch.get_commit()
+            current_head = head_commit.id
+            if current_head == workspace_input.ref:
+                return self._merge_staged_workspace(staged, workspace_input, target_branch)
 
-        if _first_parent_id(head_commit) == workspace_input.ref:
-            return self._hard_reset_target_to_staged_commit(staged, workspace_input)
+            if _first_parent_id(head_commit) == workspace_input.ref:
+                return self._hard_reset_target_to_staged_commit(staged, workspace_input)
 
-        raise PublishFenceError(
-            f"{workspace_input.branch} cannot publish from input ref {workspace_input.ref}; "
-            f"current head is {current_head}"
-        )
+            raise PublishFenceError(
+                f"{workspace_input.branch} cannot publish from input ref {workspace_input.ref}; "
+                f"current head is {current_head}"
+            )
 
     def complete_noop_workspace(
         self,
@@ -113,23 +117,25 @@ class LakeFSWorkspaceRuntime:
         attempt: object,
     ) -> str:
         del workspace_spec, attempt
-        repo = self._repo(workspace_input.repository)
-        target_branch = repo.branch(workspace_input.branch)
-        head_commit = target_branch.get_commit()
-        current_head = head_commit.id
-        if current_head == workspace_input.ref:
-            return workspace_input.ref
+        with lakefs_operation_timer(operation="complete_noop_workspace"):
+            repo = self._repo(workspace_input.repository)
+            target_branch = repo.branch(workspace_input.branch)
+            head_commit = target_branch.get_commit()
+            current_head = head_commit.id
+            if current_head == workspace_input.ref:
+                return workspace_input.ref
 
-        if _first_parent_id(head_commit) == workspace_input.ref:
-            return self._hard_reset_target_to_ref(workspace_input, workspace_input.ref)
+            if _first_parent_id(head_commit) == workspace_input.ref:
+                return self._hard_reset_target_to_ref(workspace_input, workspace_input.ref)
 
-        raise PublishFenceError(
-            f"{workspace_input.branch} cannot complete no-op from input ref {workspace_input.ref}; "
-            f"current head is {current_head}"
-        )
+            raise PublishFenceError(
+                f"{workspace_input.branch} cannot complete no-op from input ref {workspace_input.ref}; "
+                f"current head is {current_head}"
+            )
 
     def cleanup_staging(self, staged: StagedWorkspace) -> None:
-        self._repo(staged.repository).branch(staged.branch).delete()
+        with lakefs_operation_timer(operation="cleanup_staging"):
+            self._repo(staged.repository).branch(staged.branch).delete()
 
     def _merge_staged_workspace(
         self,

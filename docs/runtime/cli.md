@@ -29,11 +29,12 @@ ok: features.build
 workspace_root: /var/folders/.../perago/workspaces
 log_root: /var/folders/.../perago/logs
 worker_id_prefix: appworkersfeaturesbuild
+telemetry: not configured
 conductor: not configured
 lakefs: not configured
 ```
 
-`conductor: not configured` 和 `lakefs: not configured` 对 `check` 属于提示信息。它们只说明当前进程环境还不足以启动 worker。
+`telemetry: not configured`、`conductor: not configured` 和 `lakefs: not configured` 对 `check` 属于提示信息。它们只说明当前进程环境还不足以启动对应运行时能力。
 
 `check` 会拒绝以下情况：
 

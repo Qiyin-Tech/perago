@@ -38,6 +38,20 @@ Perago 目前不会把 Conductor auth key、Conductor auth secret 或 LakeFS 配
 | `PERAGO_WORKSPACE_GC_INTERVAL` | optional | `1h` | `RuntimeConfig.workspace_gc_interval` | 接受正整数加 `s`、`m`、`h` 或 `d`。控制 supervisor 后台 workspace GC loop 的运行间隔。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` | optional | unset | `RuntimeConfig.shutdown_force_kill_after` | 接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30s`。未配置时 Perago shutdown 只 drain 并等待 child 自然退出，不调用 `process.kill()`；配置后超过 deadline 的 child 会被 kill。 |
 
+## Telemetry 变量
+
+| 变量 | 状态 | 默认值 | 读取位置 | 校验和说明 |
+| --- | --- | --- | --- | --- |
+| `PERAGO_OTEL_ENABLED` | optional | `false` | `RuntimeConfig.telemetry.enabled` | 接受 `true`/`false`、`1`/`0`、`yes`/`no` 等布尔值。默认关闭；启用后 Perago 会在 broker、executor 或 thread runner 进程中初始化 OpenTelemetry metrics SDK。 |
+| `OTEL_SERVICE_NAME` | optional | `perago` | `RuntimeConfig.telemetry.service_name` 和 resource attributes | 标准 OpenTelemetry service name。会覆盖 `OTEL_RESOURCE_ATTRIBUTES` 中的 `service.name`。 |
+| `OTEL_RESOURCE_ATTRIBUTES` | optional | `service.name=perago` | `RuntimeConfig.telemetry.resource_attributes` | 逗号分隔的 `key=value` resource attributes。VictoriaMetrics 默认会将 resource attributes 提升为指标 labels；不要放 task id、workflow id、repo/ref、文件路径或业务 payload。 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | required when `PERAGO_OTEL_ENABLED=true` | 无 | `RuntimeConfig.telemetry.metrics_endpoint` | 必须是 `http` 或 `https` URL。VictoriaMetrics single-node/vmagent 常用路径是 `/opentelemetry/v1/metrics`，例如 `http://vmagent:8429/opentelemetry/v1/metrics`。 |
+| `OTEL_EXPORTER_OTLP_HEADERS` | optional | 无 | `RuntimeConfig.telemetry.metrics_headers` | 标准 OTLP exporter headers，格式为逗号分隔的 `key=value`。值按 secret 处理，不会在 `RuntimeConfig` printable forms 中明文展示。 |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | optional | 无 | `RuntimeConfig.telemetry.metrics_headers` | metrics 专用 headers；同名 key 会覆盖 `OTEL_EXPORTER_OTLP_HEADERS`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_COMPRESSION` | optional | SDK 默认 | `RuntimeConfig.telemetry.metrics_compression` | 支持 `none`、`gzip` 或 `deflate`。推向 VictoriaMetrics 或 vmagent 时建议使用 `gzip`。 |
+| `OTEL_METRIC_EXPORT_INTERVAL` | optional | `60000` | `RuntimeConfig.telemetry.metric_export_interval_millis` | OpenTelemetry periodic metric reader 导出间隔，单位毫秒，只接受正整数。 |
+| `OTEL_METRIC_EXPORT_TIMEOUT` | optional | `30000` | `RuntimeConfig.telemetry.metric_export_timeout_millis` | 单次 metrics export timeout，单位毫秒，只接受正整数。 |
+
 ## `.env` 解析规则
 
 `.env` 解析是有意保持简单的：
@@ -60,6 +74,9 @@ PERAGO_FAILURE_REASON_MAX_LENGTH=500
 PERAGO_WORKSPACE_GC_TTL=24h
 PERAGO_WORKSPACE_GC_INTERVAL=1h
 PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
+PERAGO_OTEL_ENABLED=false
+# OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://vmagent:8429/opentelemetry/v1/metrics
+# OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip
 ```
 
 ## 命令要求
@@ -91,3 +108,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_WORKSPACE_GC_TTL must be a positive duration ...` | workspace GC TTL 格式非法。 | 使用 `30m`、`1h`、`24h` 这类正数 duration。 |
 | `PERAGO_WORKSPACE_GC_INTERVAL must be a positive duration ...` | workspace GC interval 格式非法。 | 使用 `30s`、`5m`、`1h` 这类正数 duration。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER must be a positive duration ...` | shutdown force-kill deadline 格式非法。 | 使用 `30s`、`5m`、`1h` 这类正数 duration，或不配置该变量。 |
+| `PERAGO_OTEL_ENABLED must be a boolean ...` | telemetry 开关格式非法。 | 使用 `true` 或 `false`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required when PERAGO_OTEL_ENABLED is true` | 开启 telemetry 但未配置 metrics endpoint。 | 配置完整 OTLP metrics URL，例如 `http://vmagent:8429/opentelemetry/v1/metrics`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT must be an http or https URL` | metrics endpoint 不是 URL。 | 使用带 scheme 和 host 的 URL。 |
+| `OTEL exporter headers must use comma-separated key=value pairs` | OTLP headers 格式非法。 | 使用 `Authorization=Bearer ...,tenant=qiyin` 这类格式。 |

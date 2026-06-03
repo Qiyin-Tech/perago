@@ -9,14 +9,19 @@ from perago.config import (
     DEFAULT_FAILURE_REASON_MAX_LENGTH,
     DEFAULT_LOG_FILE_MAX_SIZE,
     DEFAULT_LOG_RETENTION,
+    DEFAULT_OTEL_METRIC_EXPORT_INTERVAL_MILLIS,
+    DEFAULT_OTEL_METRIC_EXPORT_TIMEOUT_MILLIS,
+    DEFAULT_OTEL_SERVICE_NAME,
     DEFAULT_WORKSPACE_GC_TTL,
     DEFAULT_WORKSPACE_GC_INTERVAL,
     LakeFSConfig,
     RuntimeConfig,
+    TelemetryConfig,
     child_environment,
     check_writable_root,
     load_runtime_config,
     load_runtime_env,
+    parse_bool,
     parse_conductor_config,
     parse_duration,
     parse_execution_mode,
@@ -24,6 +29,9 @@ from perago.config import (
     parse_lakefs_config,
     parse_log_file_max_size,
     parse_log_retention,
+    parse_otel_headers,
+    parse_otel_resource_attributes,
+    parse_telemetry_config,
     parse_optional_duration,
     read_dotenv,
     resolve_worker_id,
@@ -70,6 +78,15 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "PERAGO_WORKSPACE_GC_INTERVAL=5m",
                 "PERAGO_SHUTDOWN_FORCE_KILL_AFTER=20s",
                 "PERAGO_FAILURE_REASON_MAX_LENGTH=1200",
+                "PERAGO_OTEL_ENABLED=true",
+                "OTEL_SERVICE_NAME=qiyin-perago-worker",
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://vmagent:8429/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer dotenv",
+                "OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer metrics,tenant=qiyin",
+                "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip",
+                "OTEL_METRIC_EXPORT_INTERVAL=15000",
+                "OTEL_METRIC_EXPORT_TIMEOUT=5000",
+                "OTEL_RESOURCE_ATTRIBUTES=deployment.environment=test,service.name=ignored",
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
                 "PERAGO_EXECUTION_MODE=thread",
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
@@ -96,6 +113,23 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.workspace_gc_interval == timedelta(minutes=5)
     assert config.shutdown_force_kill_after == timedelta(seconds=20)
     assert config.failure_reason_max_length == 1200
+    assert config.telemetry == TelemetryConfig(
+        enabled=True,
+        service_name="qiyin-perago-worker",
+        metrics_endpoint="http://vmagent:8429/opentelemetry/v1/metrics",
+        metrics_headers={
+            "Authorization": "Bearer metrics",
+            "tenant": "qiyin",
+        },
+        metrics_compression="gzip",
+        metric_export_interval_millis=15000,
+        metric_export_timeout_millis=5000,
+        resource_attributes={
+            "deployment.environment": "test",
+            "service.name": "qiyin-perago-worker",
+        },
+    )
+    assert config.telemetry.metrics_headers["Authorization"].get_secret_value() == "Bearer metrics"
     assert config.worker_id_prefix == "dotenvPrefix"
     assert config.execution_mode == "thread"
     assert config.conductor == ConductorConfig(
@@ -187,6 +221,7 @@ def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
     assert config.workspace_gc_ttl == DEFAULT_WORKSPACE_GC_TTL
     assert config.workspace_gc_interval == DEFAULT_WORKSPACE_GC_INTERVAL
     assert config.failure_reason_max_length == DEFAULT_FAILURE_REASON_MAX_LENGTH
+    assert config.telemetry == TelemetryConfig()
     with pytest.raises(ValidationError):
         config.worker_id_prefix = "other"
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
@@ -264,6 +299,87 @@ def test_parse_failure_reason_max_length_defaults_and_validates() -> None:
         parse_failure_reason_max_length("-1")
     with pytest.raises(RuntimeConfigError, match="positive integer"):
         parse_failure_reason_max_length("1.5")
+
+
+def test_parse_bool_defaults_and_validates() -> None:
+    assert parse_bool(None, default=False, name="PERAGO_OTEL_ENABLED") is False
+    assert parse_bool("", default=True, name="PERAGO_OTEL_ENABLED") is True
+    assert parse_bool("yes", default=False, name="PERAGO_OTEL_ENABLED") is True
+    assert parse_bool("OFF", default=True, name="PERAGO_OTEL_ENABLED") is False
+
+    with pytest.raises(RuntimeConfigError, match="PERAGO_OTEL_ENABLED"):
+        parse_bool("maybe", default=False, name="PERAGO_OTEL_ENABLED")
+
+
+def test_parse_otel_headers_are_secret_and_specific_headers_override() -> None:
+    headers = parse_otel_headers(
+        "Authorization=Bearer generic,tenant=default",
+        "Authorization=Bearer metrics",
+    )
+
+    assert headers["Authorization"].get_secret_value() == "Bearer metrics"
+    assert headers["tenant"].get_secret_value() == "default"
+    assert "Bearer metrics" not in str(headers)
+
+    with pytest.raises(RuntimeConfigError, match="key=value"):
+        parse_otel_headers("Authorization")
+
+
+def test_parse_otel_resource_attributes_and_service_name_precedence() -> None:
+    assert parse_otel_resource_attributes(None) == {}
+    assert parse_otel_resource_attributes("deployment.environment=prod,team=qiyin") == {
+        "deployment.environment": "prod",
+        "team": "qiyin",
+    }
+
+    config = parse_telemetry_config(
+        {
+            "PERAGO_OTEL_ENABLED": "false",
+            "OTEL_RESOURCE_ATTRIBUTES": "service.name=from-resource,deployment.environment=prod",
+            "OTEL_SERVICE_NAME": "from-service-env",
+        }
+    )
+
+    assert config.service_name == "from-service-env"
+    assert config.resource_attributes["service.name"] == "from-service-env"
+
+    with pytest.raises(RuntimeConfigError, match="OTEL_RESOURCE_ATTRIBUTES"):
+        parse_otel_resource_attributes("missing-equals")
+
+
+def test_parse_telemetry_config_defaults_disabled() -> None:
+    config = parse_telemetry_config({})
+
+    assert config.enabled is False
+    assert config.service_name == DEFAULT_OTEL_SERVICE_NAME
+    assert config.metrics_endpoint is None
+    assert config.metrics_headers == {}
+    assert config.metrics_compression is None
+    assert config.metric_export_interval_millis == DEFAULT_OTEL_METRIC_EXPORT_INTERVAL_MILLIS
+    assert config.metric_export_timeout_millis == DEFAULT_OTEL_METRIC_EXPORT_TIMEOUT_MILLIS
+    assert config.resource_attributes == {"service.name": DEFAULT_OTEL_SERVICE_NAME}
+
+
+def test_parse_telemetry_config_requires_metrics_endpoint_when_enabled() -> None:
+    with pytest.raises(RuntimeConfigError, match="OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"):
+        parse_telemetry_config({"PERAGO_OTEL_ENABLED": "true"})
+
+    with pytest.raises(RuntimeConfigError, match="http or https URL"):
+        parse_telemetry_config(
+            {
+                "PERAGO_OTEL_ENABLED": "true",
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "vmagent:8429/opentelemetry/v1/metrics",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="OTEL_EXPORTER_OTLP_METRICS_COMPRESSION"):
+        parse_telemetry_config(
+            {
+                "PERAGO_OTEL_ENABLED": "true",
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://vmagent:8429/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION": "brotli",
+            }
+        )
 
 
 def test_parse_connection_configs_are_optional() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
@@ -22,6 +23,7 @@ from perago.guards import check_guardrails
 from perago.models import WorkspaceInput, WorkspaceSpec
 from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
+from perago.telemetry import record_task_attempt, task_phase_timer
 from perago.workspace import (
     ATTEMPT_WORKSPACE_MARKER,
     cleanup_attempt_workspace_safely,
@@ -220,6 +222,18 @@ def run_workspace_task_attempt(
 
     workspace_dir: Path | None = None
     staged: StagedWorkspace | None = None
+    attempt_start = time.monotonic()
+    workspace_kind = "read_only" if workspace.read_only else "writable"
+
+    def finish(result: RuntimeTaskResult) -> RuntimeTaskResult:
+        record_task_attempt(
+            task_name=task.name,
+            workspace_kind=workspace_kind,
+            status=result.status,
+            duration_seconds=time.monotonic() - attempt_start,
+        )
+        return result
+
     execution = TaskExecutionContext(
         attempt=attempt,
         execution_id=execution_id or getattr(attempt, "execution_id", uuid4().hex),
@@ -230,10 +244,13 @@ def run_workspace_task_attempt(
         if set(input_data) != {"workspace", "params"}:
             raise TaskInputError("workspace task input must contain only workspace and params")
         workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
-        workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
-        download_workspace(workspace_input, workspace, workspace_dir)
+        with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="prepare_workspace"):
+            workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
+        with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="download_workspace"):
+            download_workspace(workspace_input, workspace, workspace_dir)
         initial_snapshot = None if workspace.read_only else _snapshot_workspace(workspace_dir)
-        body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
+        with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="task_body"):
+            body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
 
         if workspace.read_only:
             # Read-only completion has no LakeFS side effect to fence. The final
@@ -241,47 +258,60 @@ def run_workspace_task_attempt(
             # contract; Perago's attempt fence is reserved for writable
             # workspace publication and no-op branch relocation.
             output_workspace = workspace_input.published_output(workspace_input.ref)
-            return completed_result(
-                {
-                    "workspace": output_workspace.model_dump(mode="json"),
-                    **body_output,
-                }
+            return finish(
+                completed_result(
+                    {
+                        "workspace": output_workspace.model_dump(mode="json"),
+                        **body_output,
+                    }
+                )
             )
 
         workspace_changed = _snapshot_workspace(workspace_dir) != initial_snapshot
-        assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
+        with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="attempt_fence"):
+            assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
         if not workspace_changed:
-            published_ref = _complete_noop_workspace(
-                complete_noop_workspace,
-                workspace_input,
-                workspace,
-                execution,
-            )
+            with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="complete_noop_workspace"):
+                published_ref = _complete_noop_workspace(
+                    complete_noop_workspace,
+                    workspace_input,
+                    workspace,
+                    execution,
+                )
             output_workspace = workspace_input.published_output(published_ref)
-            return completed_result(
+            return finish(
+                completed_result(
+                    {
+                        "workspace": output_workspace.model_dump(mode="json"),
+                        **body_output,
+                    }
+                )
+            )
+
+        with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="stage_workspace"):
+            staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
+        with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="attempt_fence"):
+            assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
+        with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="publish_workspace"):
+            published_ref = publish_workspace(staged, workspace_input, workspace, execution)
+        output_workspace = workspace_input.published_output(published_ref)
+        return finish(
+            completed_result(
                 {
                     "workspace": output_workspace.model_dump(mode="json"),
                     **body_output,
                 }
             )
-
-        staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
-        assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
-        published_ref = publish_workspace(staged, workspace_input, workspace, execution)
-        output_workspace = workspace_input.published_output(published_ref)
-        return completed_result(
-            {
-                "workspace": output_workspace.model_dump(mode="json"),
-                **body_output,
-            }
         )
     except Exception as exc:
-        return result_for_exception(exc, max_length=failure_reason_max_length)
+        return finish(result_for_exception(exc, max_length=failure_reason_max_length))
     finally:
         if staged is not None:
-            _cleanup_staging_safely(staged, cleanup_staging)
+            with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="cleanup_staging"):
+                _cleanup_staging_safely(staged, cleanup_staging)
         if workspace_dir is not None:
-            cleanup_attempt_workspace_safely(workspace_dir, attempt)
+            with task_phase_timer(task_name=task.name, workspace_kind=workspace_kind, phase="cleanup_workspace"):
+                cleanup_attempt_workspace_safely(workspace_dir, attempt)
         unregister_active_workspace_owner(owner)
 
 
@@ -342,10 +372,23 @@ def run_workspace_free_task_attempt(
     if task.has_workspace:
         raise TaskInputError("run_workspace_free_task_attempt only supports workspace-free tasks")
 
+    attempt_start = time.monotonic()
+
+    def finish(result: RuntimeTaskResult) -> RuntimeTaskResult:
+        record_task_attempt(
+            task_name=task.name,
+            workspace_kind="none",
+            status=result.status,
+            duration_seconds=time.monotonic() - attempt_start,
+        )
+        return result
+
     try:
-        return completed_result(invoke_workspace_free_task(task, input_data))
+        with task_phase_timer(task_name=task.name, workspace_kind="none", phase="task_body"):
+            output = invoke_workspace_free_task(task, input_data)
+        return finish(completed_result(output))
     except Exception as exc:
-        return result_for_exception(exc, max_length=failure_reason_max_length)
+        return finish(result_for_exception(exc, max_length=failure_reason_max_length))
 
 
 def invoke_workspace_task_body(

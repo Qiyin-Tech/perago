@@ -26,6 +26,7 @@ def test_check_cli_reports_task(monkeypatch, tmp_path) -> None:
     assert result.exit_code == 0
     assert "ok: metadata.validate" in result.output
     assert "worker_id_prefix: appworkersmetadatavalidate" in result.output
+    assert "telemetry: not configured" in result.output
     assert "conductor: not configured" in result.output
     assert "lakefs: not configured" in result.output
 
@@ -73,6 +74,7 @@ def test_check_cli_reports_connection_config_status_without_secrets(monkeypatch,
     result = runner.invoke(app, ["check", "app.workers.metadata_validate"])
 
     assert result.exit_code == 0
+    assert "telemetry: not configured" in result.output
     assert "conductor: configured" in result.output
     assert "lakefs: configured" in result.output
     assert "lakefs-secret" not in result.output

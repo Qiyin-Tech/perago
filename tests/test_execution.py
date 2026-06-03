@@ -25,6 +25,7 @@ from perago.execution import (
     run_workspace_free_task_attempt as _run_workspace_free_task_attempt,
     run_workspace_task_attempt as _run_workspace_task_attempt,
 )
+from perago.telemetry import NoopRecorder, _set_recorder_for_tests
 from perago.workspace import attempt_workspace_dir
 from perago.workspace import active_workspace_owner_tokens
 
@@ -57,6 +58,21 @@ class Attempt:
     task_id: str = "9b4c"
     retry_count: int = 2
     execution_id: str = "exec-1"
+
+
+class FakeRecorder:
+    def __init__(self) -> None:
+        self.counters: list[tuple[str, int, dict[str, object]]] = []
+        self.histograms: list[tuple[str, float, dict[str, object]]] = []
+
+    def record_counter(self, name: str, amount: int, attributes: dict[str, object]) -> None:
+        self.counters.append((name, amount, dict(attributes)))
+
+    def record_histogram(self, name: str, value: float, attributes: dict[str, object]) -> None:
+        self.histograms.append((name, value, dict(attributes)))
+
+    def shutdown(self) -> None:
+        return
 
 
 @task(
@@ -746,7 +762,69 @@ def test_run_workspace_free_task_attempt_returns_completed_result() -> None:
     }
 
 
+def test_run_workspace_free_task_attempt_records_attempt_and_phase_metrics() -> None:
+    task = load_module_task("app.workers.metadata_validate")
+    recorder = FakeRecorder()
+    _set_recorder_for_tests(recorder)
+    try:
+        result = run_workspace_free_task_attempt(
+            task,
+            {
+                "params": {
+                    "song_id": "song-000123",
+                    "min_duration_seconds": 30,
+                },
+            },
+        )
+    finally:
+        _set_recorder_for_tests(NoopRecorder())
+
+    assert result.status == "COMPLETED"
+    assert (
+        "perago.task.attempts",
+        1,
+        {"task_name": "metadata.validate", "workspace_kind": "none", "status": "COMPLETED"},
+    ) in recorder.counters
+    assert any(
+        name == "perago.task.phase.duration"
+        and attributes == {
+            "task_name": "metadata.validate",
+            "workspace_kind": "none",
+            "phase": "task_body",
+            "status": "succeeded",
+        }
+        and value >= 0
+        for name, value, attributes in recorder.histograms
+    )
+
+
 def test_run_workspace_free_task_attempt_maps_task_failed() -> None:
+    recorder = FakeRecorder()
+    _set_recorder_for_tests(recorder)
+    try:
+        result = run_workspace_free_task_attempt(
+            workspace_free_failed_task.__perago_task__,
+            {"params": {"value": 3}},
+        )
+    finally:
+        _set_recorder_for_tests(NoopRecorder())
+
+    assert (
+        "perago.task.attempts",
+        1,
+        {"task_name": "tests.workspace_free_failed", "workspace_kind": "none", "status": "FAILED"},
+    ) in recorder.counters
+    assert any(
+        name == "perago.task.phase.duration"
+        and attributes == {
+            "task_name": "tests.workspace_free_failed",
+            "workspace_kind": "none",
+            "phase": "task_body",
+            "status": "failed",
+        }
+        for name, _, attributes in recorder.histograms
+    )
+
     result = run_workspace_free_task_attempt(
         workspace_free_failed_task.__perago_task__,
         {"params": {"value": 3}},

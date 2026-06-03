@@ -26,6 +26,7 @@ from perago.conductor_runtime.runners import run_conductor_process_broker, run_c
 from perago.config import ExecutionMode, RuntimeConfig, child_environment
 from perago.errors import RuntimeConfigError
 from perago.lakefs_runtime import LakeFSWorkspaceRuntime
+from perago.telemetry import shutdown_telemetry
 from perago.task import load_module_task
 from perago.worker_runtime import prepare_worker_runtime
 from perago.workspace import garbage_collect_attempt_workspaces
@@ -647,27 +648,35 @@ def _broker_process_main(
 ) -> None:
     os.environ.update(_broker_environment(config.worker_id_prefix))
     task = load_module_task(module_target)
-    runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
-    conductor_config = config.conductor
-    if conductor_config is None:
-        raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
-    conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    runtime = prepare_worker_runtime(
+        config=config,
+        module_target=module_target,
+        env=os.environ.copy(),
+        runtime_role="broker",
+    )
+    try:
+        conductor_config = config.conductor
+        if conductor_config is None:
+            raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
+        conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
 
-    logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
-        "process broker started"
-    )
-    run_conductor_process_broker(
-        task=task,
-        worker_id=runtime.worker_id,
-        process_count=process_count,
-        conductor_config=conductor_config,
-        slots=slots,
-        executor_event_queue=executor_event_queue,
-        attempt_fence_request_queue=attempt_fence_request_queue,
-        attempt_fence_response_queues=attempt_fence_response_queues,
-        client=conductor,
-        failure_reason_max_length=config.failure_reason_max_length,
-    )
+        logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
+            "process broker started"
+        )
+        run_conductor_process_broker(
+            task=task,
+            worker_id=runtime.worker_id,
+            process_count=process_count,
+            conductor_config=conductor_config,
+            slots=slots,
+            executor_event_queue=executor_event_queue,
+            attempt_fence_request_queue=attempt_fence_request_queue,
+            attempt_fence_response_queues=attempt_fence_response_queues,
+            client=conductor,
+            failure_reason_max_length=config.failure_reason_max_length,
+        )
+    finally:
+        shutdown_telemetry()
 
 
 def _process_executor_main(
@@ -681,26 +690,34 @@ def _process_executor_main(
 ) -> None:
     os.environ.update(child_env)
     task = load_module_task(module_target)
-    runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
-    lakefs = _lakefs_runtime_for_task(task, config)
+    runtime = prepare_worker_runtime(
+        config=config,
+        module_target=module_target,
+        env=os.environ.copy(),
+        runtime_role="executor",
+    )
+    try:
+        lakefs = _lakefs_runtime_for_task(task, config)
 
-    logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
-        "process executor started"
-    )
-    run_process_executor_loop(
-        task=task,
-        worker_id=runtime.worker_id,
-        workspace_root=config.workspace_root,
-        connection=connection,
-        load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
-            current_attempt,
+        logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
+            "process executor started"
+        )
+        run_process_executor_loop(
+            task=task,
             worker_id=runtime.worker_id,
-            request_queue=attempt_fence_request_queue,
-            response_queue=attempt_fence_response_queue,
-        ),
-        failure_reason_max_length=config.failure_reason_max_length,
-        workspace_runtime=lakefs,
-    )
+            workspace_root=config.workspace_root,
+            connection=connection,
+            load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
+                current_attempt,
+                worker_id=runtime.worker_id,
+                request_queue=attempt_fence_request_queue,
+                response_queue=attempt_fence_response_queue,
+            ),
+            failure_reason_max_length=config.failure_reason_max_length,
+            workspace_runtime=lakefs,
+        )
+    finally:
+        shutdown_telemetry()
 
 
 def _thread_runner_main(
@@ -711,27 +728,35 @@ def _thread_runner_main(
 ) -> None:
     os.environ.update(_broker_environment(config.worker_id_prefix))
     task = load_module_task(module_target)
-    runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
-    conductor_config = config.conductor
-    if conductor_config is None:
-        raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
-
-    lakefs = _lakefs_runtime_for_task(task, config)
-    conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
-
-    logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
-        "thread runner started"
+    runtime = prepare_worker_runtime(
+        config=config,
+        module_target=module_target,
+        env=os.environ.copy(),
+        runtime_role="thread-runner",
     )
-    run_conductor_thread_runner(
-        task=task,
-        worker_id=runtime.worker_id,
-        thread_count=thread_count,
-        conductor_config=conductor_config,
-        client=conductor,
-        workspace_root=config.workspace_root,
-        failure_reason_max_length=config.failure_reason_max_length,
-        workspace_runtime=lakefs,
-    )
+    try:
+        conductor_config = config.conductor
+        if conductor_config is None:
+            raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
+
+        lakefs = _lakefs_runtime_for_task(task, config)
+        conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+
+        logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
+            "thread runner started"
+        )
+        run_conductor_thread_runner(
+            task=task,
+            worker_id=runtime.worker_id,
+            thread_count=thread_count,
+            conductor_config=conductor_config,
+            client=conductor,
+            workspace_root=config.workspace_root,
+            failure_reason_max_length=config.failure_reason_max_length,
+            workspace_runtime=lakefs,
+        )
+    finally:
+        shutdown_telemetry()
 
 
 def _broker_environment(worker_id_prefix: str) -> dict[str, str]:

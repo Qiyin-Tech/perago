@@ -7,8 +7,9 @@ from datetime import timedelta
 from decimal import Decimal, ROUND_CEILING
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from perago.errors import RuntimeConfigError
 
@@ -19,12 +20,17 @@ LOG_SIZE_UNITS = {
     "GB": 1024 * 1024 * 1024,
 }
 ExecutionMode = Literal["process", "thread"]
+OtelCompression = Literal["none", "gzip", "deflate"]
 DEFAULT_LOG_FILE_MAX_SIZE = 100 * LOG_SIZE_UNITS["MB"]
 DEFAULT_LOG_RETENTION = timedelta(days=30)
 DEFAULT_EXECUTION_MODE: ExecutionMode = "process"
 DEFAULT_WORKSPACE_GC_TTL = timedelta(hours=24)
 DEFAULT_WORKSPACE_GC_INTERVAL = timedelta(hours=1)
 DEFAULT_FAILURE_REASON_MAX_LENGTH = 500
+DEFAULT_OTEL_ENABLED = False
+DEFAULT_OTEL_SERVICE_NAME = "perago"
+DEFAULT_OTEL_METRIC_EXPORT_INTERVAL_MILLIS = 60_000
+DEFAULT_OTEL_METRIC_EXPORT_TIMEOUT_MILLIS = 30_000
 
 
 class ConductorConfig(BaseModel):
@@ -121,6 +127,28 @@ class LakeFSConfig(BaseModel):
     secret_access_key: SecretStr
 
 
+class TelemetryConfig(BaseModel):
+    """
+    Worker-local OpenTelemetry metrics export settings.
+
+    ``TelemetryConfig`` is parsed from Perago-owned and standard OpenTelemetry
+    environment variables. Metrics export is disabled by default; when enabled,
+    Perago requires an explicit OTLP metrics endpoint so deployments do not
+    accidentally send data to SDK defaults.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    enabled: bool = DEFAULT_OTEL_ENABLED
+    service_name: str = DEFAULT_OTEL_SERVICE_NAME
+    metrics_endpoint: str | None = None
+    metrics_headers: dict[str, SecretStr] = Field(default_factory=dict)
+    metrics_compression: OtelCompression | None = None
+    metric_export_interval_millis: int = DEFAULT_OTEL_METRIC_EXPORT_INTERVAL_MILLIS
+    metric_export_timeout_millis: int = DEFAULT_OTEL_METRIC_EXPORT_TIMEOUT_MILLIS
+    resource_attributes: dict[str, str] = Field(default_factory=dict)
+
+
 class RuntimeConfig(BaseModel):
     """
     Complete worker-local runtime configuration.
@@ -165,6 +193,9 @@ class RuntimeConfig(BaseModel):
         Maximum number of characters written to Conductor
         ``reasonForIncompletion`` for failed attempts. Parsed from
         ``PERAGO_FAILURE_REASON_MAX_LENGTH``.
+    telemetry : TelemetryConfig, default=disabled
+        Worker-local OpenTelemetry metrics export settings. Parsed from
+        ``PERAGO_OTEL_ENABLED`` and standard ``OTEL_*`` variables.
     conductor : ConductorConfig or None, default=None
         Optional Conductor connection config. ``perago start`` requires it.
     lakefs : LakeFSConfig or None, default=None
@@ -207,6 +238,7 @@ class RuntimeConfig(BaseModel):
     workspace_gc_interval: timedelta = DEFAULT_WORKSPACE_GC_INTERVAL
     shutdown_force_kill_after: timedelta | None = None
     failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     conductor: ConductorConfig | None = None
     lakefs: LakeFSConfig | None = None
 
@@ -305,6 +337,7 @@ def load_runtime_config(
         failure_reason_max_length=parse_failure_reason_max_length(
             env.get("PERAGO_FAILURE_REASON_MAX_LENGTH")
         ),
+        telemetry=parse_telemetry_config(env),
         conductor=parse_conductor_config(env),
         lakefs=parse_lakefs_config(env),
     )
@@ -420,6 +453,119 @@ def parse_failure_reason_max_length(value: str | None) -> int:
     return parsed
 
 
+def parse_bool(value: str | None, *, default: bool, name: str) -> bool:
+    if value is None or value.strip() == "":
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise RuntimeConfigError(f"{name} must be a boolean such as 'true' or 'false'")
+
+
+def parse_positive_int(value: str | None, *, default: int, name: str) -> int:
+    if value is None or value.strip() == "":
+        return default
+    stripped = value.strip()
+    if not re.fullmatch(r"[0-9]+", stripped):
+        raise RuntimeConfigError(f"{name} must be a positive integer")
+    parsed = int(stripped)
+    if parsed <= 0:
+        raise RuntimeConfigError(f"{name} must be greater than zero")
+    return parsed
+
+
+def parse_otel_compression(value: str | None) -> OtelCompression | None:
+    if value is None or value.strip() == "":
+        return None
+    normalized = value.strip().lower()
+    if normalized not in {"none", "gzip", "deflate"}:
+        raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION must be one of 'none', 'gzip', or 'deflate'")
+    return normalized
+
+
+def parse_otel_headers(*values: str | None) -> dict[str, SecretStr]:
+    headers: dict[str, SecretStr] = {}
+    for value in values:
+        if value is None or value.strip() == "":
+            continue
+        for raw_pair in value.split(","):
+            pair = raw_pair.strip()
+            if not pair:
+                continue
+            if "=" not in pair:
+                raise RuntimeConfigError("OTEL exporter headers must use comma-separated key=value pairs")
+            key, header_value = pair.split("=", 1)
+            key = key.strip()
+            if not key:
+                raise RuntimeConfigError("OTEL exporter header names must not be empty")
+            headers[key] = SecretStr(header_value.strip())
+    return headers
+
+
+def parse_otel_resource_attributes(value: str | None) -> dict[str, str]:
+    if value is None or value.strip() == "":
+        return {}
+    attributes: dict[str, str] = {}
+    for raw_pair in value.split(","):
+        pair = raw_pair.strip()
+        if not pair:
+            continue
+        if "=" not in pair:
+            raise RuntimeConfigError("OTEL_RESOURCE_ATTRIBUTES must use comma-separated key=value pairs")
+        key, item_value = pair.split("=", 1)
+        key = key.strip()
+        if not key:
+            raise RuntimeConfigError("OTEL_RESOURCE_ATTRIBUTES keys must not be empty")
+        attributes[key] = item_value.strip()
+    return attributes
+
+
+def parse_otel_endpoint(value: str | None, *, enabled: bool) -> str | None:
+    endpoint = _env_optional_raw(value)
+    if endpoint is None:
+        if enabled:
+            raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required when PERAGO_OTEL_ENABLED is true")
+        return None
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT must be an http or https URL")
+    return endpoint
+
+
+def parse_telemetry_config(env: dict[str, str]) -> TelemetryConfig:
+    enabled = parse_bool(
+        env.get("PERAGO_OTEL_ENABLED"),
+        default=DEFAULT_OTEL_ENABLED,
+        name="PERAGO_OTEL_ENABLED",
+    )
+    resource_attributes = parse_otel_resource_attributes(env.get("OTEL_RESOURCE_ATTRIBUTES"))
+    service_name = _env_optional_raw(env.get("OTEL_SERVICE_NAME")) or resource_attributes.get("service.name") or DEFAULT_OTEL_SERVICE_NAME
+    resource_attributes["service.name"] = service_name
+    return TelemetryConfig(
+        enabled=enabled,
+        service_name=service_name,
+        metrics_endpoint=parse_otel_endpoint(env.get("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"), enabled=enabled),
+        metrics_headers=parse_otel_headers(
+            env.get("OTEL_EXPORTER_OTLP_HEADERS"),
+            env.get("OTEL_EXPORTER_OTLP_METRICS_HEADERS"),
+        ),
+        metrics_compression=parse_otel_compression(env.get("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION")),
+        metric_export_interval_millis=parse_positive_int(
+            env.get("OTEL_METRIC_EXPORT_INTERVAL"),
+            default=DEFAULT_OTEL_METRIC_EXPORT_INTERVAL_MILLIS,
+            name="OTEL_METRIC_EXPORT_INTERVAL",
+        ),
+        metric_export_timeout_millis=parse_positive_int(
+            env.get("OTEL_METRIC_EXPORT_TIMEOUT"),
+            default=DEFAULT_OTEL_METRIC_EXPORT_TIMEOUT_MILLIS,
+            name="OTEL_METRIC_EXPORT_TIMEOUT",
+        ),
+        resource_attributes=resource_attributes,
+    )
+
+
 def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:
     server_url = _env_optional(env, "CONDUCTOR_SERVER_URL")
     if server_url is None:
@@ -497,10 +643,14 @@ def _strip_env_value(value: str) -> str:
 
 
 def _env_optional(env: dict[str, str], name: str) -> str | None:
-    value = env.get(name)
+    return _env_optional_raw(env.get(name), name=name)
+
+
+def _env_optional_raw(value: str | None, *, name: str | None = None) -> str | None:
     if value is None or value.strip() == "":
         return None
     stripped = value.strip()
     if stripped == "replace-me":
-        raise RuntimeConfigError(f"{name} must be replaced with a real value")
+        configured_name = name or "configured value"
+        raise RuntimeConfigError(f"{configured_name} must be replaced with a real value")
     return stripped

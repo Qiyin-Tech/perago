@@ -1,6 +1,6 @@
 from perago._version import __version__
 from perago.attempt import assert_current_attempt_snapshot
-from perago.config import ConductorConfig, ExecutionMode, LakeFSConfig, RuntimeConfig, load_runtime_config
+from perago.config import ConductorConfig, ExecutionMode, LakeFSConfig, RuntimeConfig, TelemetryConfig, load_runtime_config
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
@@ -81,6 +81,7 @@ __all__ = [
     "TaskFailed",
     "TaskInputError",
     "TaskTerminalError",
+    "TelemetryConfig",
     "TimeoutPolicy",
     "WorkerChildSpec",
     "WorkerRuntime",

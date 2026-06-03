@@ -36,6 +36,11 @@ PERAGO_WORKSPACE_GC_TTL=24h
 PERAGO_WORKSPACE_GC_INTERVAL=1h
 # Optional; unset by default.
 PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
+
+# Optional OpenTelemetry metrics export.
+PERAGO_OTEL_ENABLED=false
+# OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://vmagent:8429/opentelemetry/v1/metrics
+# OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip
 ```
 
 `replace-me` 属于占位值。Perago 看到未替换的连接密钥占位值时会拒绝启动。workspace-free task 不需要 LakeFS 连接变量；不要为了启动 workspace-free worker 配置占位 LakeFS 值。
@@ -54,12 +59,34 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_WORKSPACE_GC_TTL` | optional | `24h` | supervisor workspace GC 删除 abandoned attempt workspace 前等待的最小年龄。接受正整数加 `s`、`m`、`h` 或 `d`。仍属于活跃 executor owner 的 workspace 不会被周期 GC 删除。 |
 | `PERAGO_WORKSPACE_GC_INTERVAL` | optional | `1h` | supervisor 后台 workspace GC loop 的运行间隔。接受正整数加 `s`、`m`、`h` 或 `d`。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` | optional | unset | shutdown drain 的可选强制 kill deadline。未配置时 Perago 不调用 `process.kill()`；配置后接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30s`。 |
+| `PERAGO_OTEL_ENABLED` | optional | `false` | 开启 OpenTelemetry metrics SDK。默认关闭；开启后必须设置 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`。 |
+| `OTEL_SERVICE_NAME` | optional | `perago` | 标准 OpenTelemetry service name。会覆盖 `OTEL_RESOURCE_ATTRIBUTES` 里的 `service.name`。 |
+| `OTEL_RESOURCE_ATTRIBUTES` | optional | `service.name=perago` | 逗号分隔的 resource attributes，例如 `deployment.environment=prod,team=qiyin`。不要放 task id、workflow id、repo/ref、文件路径或业务 payload。 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | required when telemetry enabled | 无 | OTLP metrics HTTP endpoint。VictoriaMetrics single-node/vmagent 常用 `/opentelemetry/v1/metrics` 路径。 |
+| `OTEL_EXPORTER_OTLP_HEADERS` | optional | 无 | 通用 OTLP exporter headers，格式为逗号分隔的 `key=value`，按 secret 处理。 |
+| `OTEL_EXPORTER_OTLP_METRICS_HEADERS` | optional | 无 | metrics 专用 headers；同名 key 覆盖通用 headers。 |
+| `OTEL_EXPORTER_OTLP_METRICS_COMPRESSION` | optional | SDK 默认 | 支持 `none`、`gzip` 或 `deflate`。 |
+| `OTEL_METRIC_EXPORT_INTERVAL` | optional | `60000` | metrics 导出间隔，单位毫秒。 |
+| `OTEL_METRIC_EXPORT_TIMEOUT` | optional | `30000` | 单次 metrics 导出 timeout，单位毫秒。 |
 | `CONDUCTOR_SERVER_URL` | required for `perago start` | 无 | Conductor API endpoint。`perago check` 和 `perago extract` 可在未配置时运行并报告 `not configured`。 |
 | `LAKECTL_SERVER_ENDPOINT_URL` | required for workspace-task `perago start` | 无 | LakeFS endpoint。LakeFS 三个变量必须同时配置或同时省略；workspace-free `perago start` 不需要 LakeFS。 |
 | `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for workspace-task `perago start` | 无 | LakeFS access key id。 |
 | `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for workspace-task `perago start` | 无 | LakeFS secret access key。 |
 
 Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。Conductor auth key/secret 可以由底层 SDK 或部署环境使用；Perago `RuntimeConfig` 暂不建模这两个字段。
+
+## OpenTelemetry metrics
+
+Perago 的 OpenTelemetry metrics 默认关闭。开启时，broker、executor 或 thread runner 进程会在完成 worker id 和 JSONL 日志初始化后配置 metrics SDK；process 模式不会在 supervisor fork 子进程前启动 exporter 后台线程。
+
+推荐把 worker metrics 推给 vmagent 或 OpenTelemetry Collector，再由它转发到 VictoriaMetrics。VictoriaMetrics single-node 和 vmagent 支持 OTLP metrics HTTP/protobuf 写入，常用 endpoint 是：
+
+```text
+OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://vmagent:8429/opentelemetry/v1/metrics
+OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip
+```
+
+Perago 会记录 task attempt、task phase、Conductor runtime client、LakeFS workspace runtime、broker slot wait 和 executor lifecycle 指标。指标 labels 控制为低基数：task name、workspace kind、phase、runtime status、operation 和 executor lifecycle event。task id、workflow id、execution id、LakeFS repo/ref、workspace path、prompt、歌词、token 或 secret 不会作为 Perago 指标 label。
 
 ## 本地目录校验
 
@@ -80,6 +107,7 @@ ok: features.build
 workspace_root: /var/tmp/perago/workspaces
 log_root: /var/tmp/perago/logs
 worker_id_prefix: peragoLocalWorker
+telemetry: not configured
 conductor: configured
 lakefs: configured
 ```

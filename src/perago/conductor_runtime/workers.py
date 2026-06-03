@@ -14,6 +14,7 @@ from loguru import logger
 
 from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
+from perago.telemetry import record_broker_slot_wait, record_executor_lifecycle
 
 from .constants import PROCESS_QUEUE_POLL_INTERVAL_SECONDS
 from .execution import execute_polled_task
@@ -133,6 +134,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 
     def _lease_slot(self) -> tuple[ProcessExecutorSlot, int, Any]:
+        start = time.monotonic()
         while True:
             self._drain_executor_events()
             try:
@@ -144,6 +146,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
                     continue
                 self._available_worker_ids.remove(slot.worker_id)
                 self._busy_worker_ids.add(slot.worker_id)
+                record_broker_slot_wait(task_name=self.task.name, duration_seconds=time.monotonic() - start)
                 return slot, slot.generation, slot.connection
 
     def _release_slot(self, slot: ProcessExecutorSlot) -> None:
@@ -252,6 +255,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         logger.bind(event_type=type(event).__name__).error("broker received invalid executor lifecycle event")
 
     def _handle_executor_exited(self, event: ProcessExecutorExited) -> None:
+        record_executor_lifecycle(event="exited", exit_code=event.exit_code)
         with self._slot_lock:
             slot = self._slots_by_worker_id.get(event.worker_id)
             if slot is None or slot.generation != event.generation:
@@ -261,6 +265,7 @@ class PeragoProcessDispatchWorker(WorkerInterface):
             self._available_worker_ids.discard(event.worker_id)
 
     def _handle_executor_started(self, event: ProcessExecutorStarted) -> None:
+        record_executor_lifecycle(event="started")
         with self._slot_lock:
             slot = self._slots_by_worker_id.get(event.worker_id)
             if slot is None or event.generation <= slot.generation:
