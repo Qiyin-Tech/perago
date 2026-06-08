@@ -7,6 +7,8 @@ from pydantic import BaseModel, ValidationError
 import perago
 from perago import (
     GuardrailViolation,
+    MetricRecorder,
+    MetricSpec,
     PublishBudget,
     TaskDefinitionError,
     TaskControls,
@@ -50,6 +52,19 @@ def test_loads_workspace_free_task_definition() -> None:
 
     assert task.name == "metadata.validate"
     assert task.workspace is None
+
+
+def test_declares_metrics_enabled_workspace_free_task_definition() -> None:
+    @task(name="metrics.workspace_free", owner_email="data@example.com", metrics=MetricSpec())
+    def metrics_workspace_free(params: Params, metrics: MetricRecorder) -> Output:
+        del metrics
+        return Output(value=params.value)
+
+    task_definition = metrics_workspace_free.__perago_task__
+
+    assert task_definition.metrics == MetricSpec()
+    assert task_definition.params_model is Params
+    assert task_definition.output_model is Output
 
 
 def test_rejects_bad_signature() -> None:

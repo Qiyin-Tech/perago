@@ -10,7 +10,8 @@ from typing import Any, get_type_hints
 from pydantic import BaseModel, ValidationError
 
 from perago.errors import TaskDefinitionError
-from perago.models import TaskControls, WorkspaceSpec
+from perago.metrics import MetricRecorder
+from perago.models import MetricSpec, TaskControls, WorkspaceSpec
 
 
 _REGISTERED_TASKS: dict[str, list["TaskDefinition"]] = {}
@@ -44,6 +45,8 @@ class TaskDefinition:
     workspace : WorkspaceSpec or None, default=None
         Workspace declaration for workspace tasks, or ``None`` for
         workspace-free tasks.
+    metrics : MetricSpec or None, default=None
+        Runtime metrics declaration, or ``None`` for tasks without metrics.
     controls : TaskControls, optional
         Retry, timeout, execution limit, and publish budget controls.
 
@@ -76,6 +79,7 @@ class TaskDefinition:
     output_model: type[BaseModel]
     description: str | None = None
     workspace: WorkspaceSpec | None = None
+    metrics: MetricSpec | None = None
     controls: TaskControls = field(default_factory=TaskControls)
 
     @property
@@ -90,6 +94,7 @@ def task(
     owner_email: str,
     description: str | None = None,
     workspace: WorkspaceSpec | None = None,
+    metrics: MetricSpec | None = None,
     controls: TaskControls | None = None,
     **unsupported: object,
 ) -> Callable[[Callable[..., BaseModel]], Callable[..., BaseModel]]:
@@ -163,6 +168,7 @@ def task(
                 owner_email=owner_email,
                 description=description,
                 workspace=workspace,
+                metrics=metrics,
                 controls=controls if controls is not None else TaskControls(),
             )
         except ValidationError as exc:
@@ -240,11 +246,14 @@ def _build_task_definition(
     owner_email: str,
     description: str | None,
     workspace: WorkspaceSpec | None,
+    metrics: MetricSpec | None,
     controls: TaskControls,
 ) -> TaskDefinition:
     _validate_required_metadata(name=name, owner_email=owner_email)
     if workspace is not None and not isinstance(workspace, WorkspaceSpec):
         raise TaskDefinitionError("workspace must be a WorkspaceSpec")
+    if metrics is not None and not isinstance(metrics, MetricSpec):
+        raise TaskDefinitionError("metrics must be a MetricSpec")
     if not isinstance(controls, TaskControls):
         raise TaskDefinitionError("controls must be a TaskControls")
     if workspace is None and controls.publish_budget is not None:
@@ -264,13 +273,20 @@ def _build_task_definition(
     except Exception as exc:  # noqa: BLE001
         raise TaskDefinitionError(f"failed to resolve task type hints: {exc}") from exc
 
-    if len(parameters) == 2:
-        _validate_workspace_signature(parameters, hints, workspace)
+    if len(parameters) == 3:
+        _validate_workspace_metrics_signature(parameters, hints, workspace, metrics)
+    elif len(parameters) == 2:
+        if parameters[0].name == "params" and parameters[1].name == "metrics":
+            _validate_workspace_free_metrics_signature(parameters, hints, metrics)
+        else:
+            _validate_workspace_signature(parameters, hints, workspace, metrics)
     elif len(parameters) == 1:
-        _validate_workspace_free_signature(parameters, workspace)
+        _validate_workspace_free_signature(parameters, workspace, metrics)
     else:
         raise TaskDefinitionError(
-            "task function must be exactly (workspace: Path, params: ParamsModel) or (params: ParamsModel)"
+            "task function must be exactly (workspace: Path, params: ParamsModel), "
+            "(workspace: Path, params: ParamsModel, metrics: MetricRecorder), "
+            "(params: ParamsModel), or (params: ParamsModel, metrics: MetricRecorder)"
         )
 
     params_model = hints.get("params")
@@ -285,11 +301,40 @@ def _build_task_definition(
         owner_email=owner_email,
         description=description,
         workspace=workspace,
+        metrics=metrics,
         controls=controls,
         fn=fn,
         params_model=params_model,
         output_model=output_model,
     )
+
+
+def _validate_workspace_metrics_signature(
+    parameters: list[inspect.Parameter],
+    hints: dict[str, Any],
+    workspace: WorkspaceSpec | None,
+    metrics: MetricSpec | None,
+) -> None:
+    _validate_workspace_signature(parameters[:2], hints, workspace, None)
+    if parameters[2].name != "metrics":
+        raise TaskDefinitionError("metrics-enabled task parameter must be named metrics")
+    if hints.get("metrics") is not MetricRecorder:
+        raise TaskDefinitionError("metrics must be annotated as perago.MetricRecorder")
+    if metrics is None:
+        raise TaskDefinitionError("metrics parameter requires metrics=MetricSpec(...)")
+
+
+def _validate_workspace_free_metrics_signature(
+    parameters: list[inspect.Parameter],
+    hints: dict[str, Any],
+    metrics: MetricSpec | None,
+) -> None:
+    if parameters[0].name != "params" or parameters[1].name != "metrics":
+        raise TaskDefinitionError("metrics-enabled workspace-free task parameters must be named params and metrics")
+    if hints.get("metrics") is not MetricRecorder:
+        raise TaskDefinitionError("metrics must be annotated as perago.MetricRecorder")
+    if metrics is None:
+        raise TaskDefinitionError("metrics parameter requires metrics=MetricSpec(...)")
 
 
 def _validate_required_metadata(*, name: str, owner_email: str) -> None:
@@ -305,6 +350,7 @@ def _validate_workspace_signature(
     parameters: list[inspect.Parameter],
     hints: dict[str, Any],
     workspace: WorkspaceSpec | None,
+    metrics: MetricSpec | None,
 ) -> None:
     if parameters[0].name != "workspace" or parameters[1].name != "params":
         raise TaskDefinitionError("workspace task parameters must be named workspace and params")
@@ -312,16 +358,21 @@ def _validate_workspace_signature(
         raise TaskDefinitionError("workspace must be annotated as pathlib.Path")
     if workspace is None:
         raise TaskDefinitionError("workspace task functions require workspace=WorkspaceSpec(...)")
+    if metrics is not None:
+        raise TaskDefinitionError("metrics=MetricSpec(...) requires a metrics parameter")
 
 
 def _validate_workspace_free_signature(
     parameters: list[inspect.Parameter],
     workspace: WorkspaceSpec | None,
+    metrics: MetricSpec | None,
 ) -> None:
     if parameters[0].name != "params":
         raise TaskDefinitionError("workspace-free task parameter must be named params")
     if workspace is not None:
         raise TaskDefinitionError("workspace-free task functions must not declare workspace=WorkspaceSpec(...)")
+    if metrics is not None:
+        raise TaskDefinitionError("metrics=MetricSpec(...) requires a metrics parameter")
 
 
 def _is_pydantic_model(value: object) -> bool:

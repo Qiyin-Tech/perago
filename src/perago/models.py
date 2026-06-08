@@ -310,6 +310,16 @@ class TaskControls(BaseModel):
         return self.timeout.response_seconds
 
 
+class MetricSpec(BaseModel):
+    """Runtime metric categories enabled for one task worker."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    attempts: bool = True
+    workspace_io: bool = True
+    worker_capacity: bool = True
+
+
 class WorkspaceSpec(BaseModel):
     """Workspace declaration for a workspace task.
 

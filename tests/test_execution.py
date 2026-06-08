@@ -1,5 +1,8 @@
+from collections.abc import Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -7,6 +10,8 @@ from pydantic import BaseModel, Field, ValidationError
 from perago import (
     PostGuardrailViolation,
     PreGuardrailViolation,
+    MetricRecorder,
+    MetricSpec,
     StagedWorkspace,
     TaskFailed,
     TaskInputError,
@@ -47,6 +52,18 @@ class NestedOutput(BaseModel):
 
 class StatusOutput(BaseModel):
     status: str
+
+
+class FakeMetricRecorder(MetricRecorder):
+    def histogram(self, name: str, value: int | float, *, labels: Mapping[str, str] | None = None) -> None:
+        del name, value, labels
+
+    def gauge(self, name: str, value: int | float, *, labels: Mapping[str, str] | None = None) -> None:
+        del name, value, labels
+
+    def timer(self, name: str, *, labels: Mapping[str, str] | None = None) -> AbstractContextManager[Any]:
+        del name, labels
+        return nullcontext()
 
 
 @dataclass(frozen=True)
@@ -94,6 +111,13 @@ def same_content_workspace_task(workspace: Path, params: Params) -> Output:
     return Output(value=params.value)
 
 
+@task(name="tests.metrics_workspace", owner_email="data@example.com", workspace=WorkspaceSpec(), metrics=MetricSpec())
+def metrics_workspace_task(workspace: Path, params: Params, metrics: MetricRecorder) -> Output:
+    assert workspace.exists()
+    assert isinstance(metrics, FakeMetricRecorder)
+    return Output(value=params.value)
+
+
 @task(name="tests.workspace_free_failed", owner_email="data@example.com")
 def workspace_free_failed_task(params: Params) -> Output:
     raise TaskFailed(f"retry value {params.value}")
@@ -108,6 +132,12 @@ def workspace_free_terminal_task(params: Params) -> Output:
 def business_rejected_task(params: Params) -> StatusOutput:
     del params
     return StatusOutput(status="REJECTED")
+
+
+@task(name="tests.metrics_workspace_free", owner_email="data@example.com", metrics=MetricSpec())
+def metrics_workspace_free_task(params: Params, metrics: MetricRecorder) -> Output:
+    assert isinstance(metrics, FakeMetricRecorder)
+    return Output(value=params.value)
 
 
 @task(name="tests.workspace_failed_after_write", owner_email="data@example.com", workspace=WorkspaceSpec())
@@ -818,6 +848,38 @@ def test_invokes_workspace_free_task_from_wrapped_params() -> None:
     )
 
     assert output == {"result": {"valid": True, "reason": None}}
+
+
+def test_invokes_metrics_enabled_workspace_free_task_with_recorder() -> None:
+    output = invoke_workspace_free_task(
+        metrics_workspace_free_task.__perago_task__,
+        {"params": {"value": 7}},
+        metric_recorder=FakeMetricRecorder(),
+    )
+
+    assert output == {"result": {"value": 7}}
+
+
+def test_invokes_metrics_enabled_workspace_task_with_recorder(tmp_path: Path) -> None:
+    output = invoke_workspace_task_body(
+        metrics_workspace_task.__perago_task__,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"value": 7},
+        },
+        tmp_path,
+        metric_recorder=FakeMetricRecorder(),
+    )
+
+    assert output == {"result": {"value": 7}}
+
+
+def test_metrics_enabled_workspace_free_task_requires_recorder() -> None:
+    with pytest.raises(TaskInputError, match="MetricRecorder"):
+        invoke_workspace_free_task(
+            metrics_workspace_free_task.__perago_task__,
+            {"params": {"value": 7}},
+        )
 
 
 def test_builds_workspace_task_output_with_published_ref() -> None:

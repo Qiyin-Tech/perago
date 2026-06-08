@@ -31,8 +31,10 @@ from perago.guards import (
     require_file,
     require_glob,
 )
+from perago.metrics import MetricRecorder
 from perago.models import (
     ExecutionLimits,
+    MetricSpec,
     PublishBudget,
     RetryPolicy,
     TaskControls,
@@ -69,6 +71,8 @@ __all__ = [
     "PublishBudget",
     "RetryPolicy",
     "LakeFSConfig",
+    "MetricRecorder",
+    "MetricSpec",
     "RuntimeConfig",
     "RuntimeConfigError",
     "StagedWorkspace",

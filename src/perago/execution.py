@@ -19,6 +19,7 @@ from perago.errors import (
     TaskInputError,
 )
 from perago.guards import check_guardrails
+from perago.metrics import MetricRecorder
 from perago.models import WorkspaceInput, WorkspaceSpec
 from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
@@ -352,6 +353,8 @@ def invoke_workspace_task_body(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
     workspace_dir: Path,
+    *,
+    metric_recorder: MetricRecorder | None = None,
 ) -> dict[str, Any]:
     """
     Invoke a workspace task body against a prepared local workspace.
@@ -420,13 +423,23 @@ def invoke_workspace_task_body(
         raise TaskInputError("workspace task definition is missing WorkspaceSpec")
 
     _check_phase_guardrails(workspace_dir, workspace.pre, "pre", PreGuardrailViolation)
-    raw_result = task.fn(workspace_dir, params)
+    if task.metrics is None:
+        raw_result = task.fn(workspace_dir, params)
+    else:
+        if metric_recorder is None:
+            raise TaskInputError("metrics-enabled task invocation requires a MetricRecorder")
+        raw_result = task.fn(workspace_dir, params, metric_recorder)
     result = _validate_result(task, raw_result)
     _check_phase_guardrails(workspace_dir, workspace.post, "post", PostGuardrailViolation)
     return {"result": result.model_dump(mode="json")}
 
 
-def invoke_workspace_free_task(task: TaskDefinition, input_data: Mapping[str, Any]) -> dict[str, Any]:
+def invoke_workspace_free_task(
+    task: TaskDefinition,
+    input_data: Mapping[str, Any],
+    *,
+    metric_recorder: MetricRecorder | None = None,
+) -> dict[str, Any]:
     """
     Invoke a workspace-free task and validate its output wrapper.
 
@@ -476,7 +489,12 @@ def invoke_workspace_free_task(task: TaskDefinition, input_data: Mapping[str, An
         raise TaskInputError("workspace-free task input must contain only params")
 
     params = task.params_model.model_validate(input_data["params"], extra="forbid")
-    raw_result = task.fn(params)
+    if task.metrics is None:
+        raw_result = task.fn(params)
+    else:
+        if metric_recorder is None:
+            raise TaskInputError("metrics-enabled task invocation requires a MetricRecorder")
+        raw_result = task.fn(params, metric_recorder)
     return build_workspace_free_task_output(task, raw_result)
 
 
