@@ -128,7 +128,7 @@ def build_features(
 runtime.task_attempt_duration_seconds{task_name}
 runtime.workspace_io_duration_seconds{task_name, operation}
 runtime.workspace_io_bytes{task_name, operation}
-runtime.busy_slots{task_name}
+runtime.busy_slots{task_name, perago_instance_id}
 ```
 
 第一版不设计 counter 指标，也不记录 runtime failure count。失败细节留在 Conductor 状态和 worker logs 中。
@@ -140,6 +140,14 @@ download
 upload
 publish
 ```
+
+`runtime.busy_slots` 表示一个 Perago runtime instance 内当前正在执行 task body 的 slot 数，不表示全局 task 并发总量。process mode 必须由 broker 汇总 executor slot state 后导出一次；executor process 和 supervisor parent 都不导出 worker capacity metric。thread mode 由运行 `TaskRunner` 的 worker runtime owner 导出一次。多个 Perago instance 跑同一个 Task Worker 时，operator 通过 `PERAGO_INSTANCE_ID` 提供低基数实例身份，并在 dashboard 中按 `task_name` 聚合：
+
+```text
+sum by (task_name) (runtime_busy_slots)
+```
+
+`perago_instance_id` 不是 task attempt 身份，也不是 `worker_id`。它来自 worker-local runtime config `PERAGO_INSTANCE_ID`，用于区分同一个 `task_name` 的多个 Perago runtime instance。Nomad 部署可以由 job/group/allocation 生成稳定短标识后注入该环境变量。
 
 Application metrics 使用 `app.` 前缀，并自动带 `task_name` label：
 
@@ -211,8 +219,9 @@ metrics export 使用 OpenTelemetry Python SDK 的 OTLP/HTTP protobuf exporter�
 ```text
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria-metrics:8428/opentelemetry/v1/metrics
 OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip
-OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10s
+OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10
 OTEL_METRIC_EXPORT_INTERVAL=60000
+PERAGO_INSTANCE_ID=features-build-prod-a-alloc-01
 ```
 
 第一版只支持这些 env：
@@ -222,7 +231,10 @@ OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
 OTEL_EXPORTER_OTLP_METRICS_COMPRESSION
 OTEL_EXPORTER_OTLP_METRICS_TIMEOUT
 OTEL_METRIC_EXPORT_INTERVAL
+PERAGO_INSTANCE_ID
 ```
+
+`OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` 直接按 OpenTelemetry Python OTLP/HTTP metrics exporter 当前接受的秒数数字传递，例如 `10` 表示 10 秒；不接受 `10s` 这类带单位后缀。`OTEL_METRIC_EXPORT_INTERVAL` 仍使用 OTel SDK 的毫秒整数语义。
 
 第一版不支持：
 
@@ -235,7 +247,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT
 
 `perago check` 和 `perago extract` 可以在未配置 metrics endpoint 时运行。它们校验 task declaration、function signature 和 TaskDef 生成，并报告 metrics 配置状态。
 
-`perago start` 对 metrics-enabled task 更严格：只要 task 声明 `metrics=MetricSpec(...)`，就必须配置 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`，否则启动失败。这和 workspace task 在启动时要求 LakeFS config 的边界一致。
+`perago start` 对 metrics-enabled task 更严格：只要 task 声明 `metrics=MetricSpec(...)`，就必须配置 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`。如果该 task 保留 `worker_capacity=True`，还必须配置 `PERAGO_INSTANCE_ID`，否则启动失败。这和 workspace task 在启动时要求 LakeFS config 的边界一致。
 
 ## 备选方案
 
@@ -243,7 +255,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT
 
 - **优点**: 可以快速暴露大量内部事件和耗时。
 - **缺点**: metrics 会退化成 log-like event stream，dashboard 噪音大，标签和指标名难以治理。
-- **不采用原因**: Perago 第一版 metrics 只记录少量可长期聚合的问题：attempt 耗时/失败、workspace I/O 成本、busy slots。
+- **不采用原因**: Perago 第一版 metrics 只记录少量可长期聚合的问题：attempt 耗时、workspace I/O 成本、busy slots。
 
 ### 方案 2: 直接把 OpenTelemetry SDK object 注入给 task
 
@@ -286,3 +298,5 @@ OTEL_EXPORTER_OTLP_ENDPOINT
   **缓解**: 第一版不开放 `OTEL_RESOURCE_ATTRIBUTES` 和 `OTEL_SERVICE_NAME`，查询主维度使用自动 `task_name` label。
 - **Risk**: 未来部署需要鉴权 headers。
   **缓解**: 等出现真实部署需求时，再以显式 RuntimeConfig 字段支持 `OTEL_EXPORTER_OTLP_METRICS_HEADERS`。
+- **Risk**: 多个 Perago instance 跑同一个 Task Worker 时，`runtime.busy_slots` 时序互相覆盖。
+  **缓解**: worker capacity metric 必须带 `perago_instance_id`；process mode 只由 broker 汇总导出，executor process 和 supervisor parent 不导出 busy slots。

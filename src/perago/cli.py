@@ -93,6 +93,8 @@ def start(
             raise RuntimeConfigError("LakeFS config is required for workspace tasks")
         if task.metrics is not None and config.metrics is None:
             raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks")
+        if task.metrics is not None and task.metrics.worker_capacity and config.metrics.instance_id is None:
+            raise RuntimeConfigError("PERAGO_INSTANCE_ID is required when worker_capacity metrics are enabled")
         _warn_ignored_publish_budget(task)
         validate_no_root_task_models(task)
         _warn_task_model_config(task)

@@ -561,6 +561,7 @@ def test_start_cli_allows_metrics_enabled_task_with_metrics_endpoint(monkeypatch
             [
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
                 "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria.local/opentelemetry/v1/metrics",
+                "PERAGO_INSTANCE_ID=metrics-validate-prod-a",
             ]
         ),
         encoding="utf-8",
@@ -580,6 +581,29 @@ def test_start_cli_allows_metrics_enabled_task_with_metrics_endpoint(monkeypatch
 
     assert result.exit_code == 0
     assert started["module_target"] == "app.workers.metrics_validate"
+
+
+def test_start_cli_requires_instance_id_for_worker_capacity_metrics(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria.local/opentelemetry/v1/metrics",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "perago.cli.OrkesConductorRuntimeClient.from_config",
+        lambda config: (_ for _ in ()).throw(AssertionError("Conductor must not be checked before instance id")),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.metrics_validate"])
+
+    assert result.exit_code == 1
+    assert "PERAGO_INSTANCE_ID is required" in result.output
 
 
 def test_start_cli_rejects_root_model_task_contracts(monkeypatch, tmp_path) -> None:

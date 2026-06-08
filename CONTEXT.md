@@ -36,6 +36,10 @@ _Avoid_: workflow input, business params, global worker state
 A Metric Context scoped to Perago runtime code outside one Task Attempt.
 _Avoid_: Task Attempt Metric Context, business params, runtime exporter config
 
+**Perago Instance ID**:
+A low-cardinality operator-provided identity for one Perago runtime instance, used to distinguish runtime metrics from multiple instances running the same Task Worker.
+_Avoid_: worker id, task id, workflow instance id, execution id
+
 **Metric Recorder**:
 The Perago-created object used by runtime code and metrics-enabled Task Workers to record metrics with Perago context.
 _Avoid_: logger, OpenTelemetry SDK object, business result
@@ -198,6 +202,7 @@ _Avoid_: file path, object path, module:app target
 - A **Metric Recorder** records histograms, gauges, and timed durations.
 - **Metric Recorder** labels are optional.
 - Perago runtime code may use a **Metric Recorder** with a **Runtime Metric Context**.
+- **Runtime Metrics** may carry one **Perago Instance ID** when the metric describes one runtime instance rather than one Task Attempt.
 - A **Task Attempt Metric Context** exposes the current **Task Attempt** identity to the metrics-enabled **Task Worker**.
 - A **Task Contract** is derived from the **Task Function Signature**.
 - A **Task Worker** without a **Metric Spec** uses the non-metrics **Task Function Signature**.
@@ -208,7 +213,7 @@ _Avoid_: file path, object path, module:app target
 - Runtime and application metrics automatically carry the Task Worker name as a metric label.
 - The `attempts` metric category records **Task Attempt** duration.
 - The `workspace_io` metric category records workspace I/O duration and bytes using a low-cardinality operation label.
-- The `worker_capacity` metric category records current busy worker slots.
+- The `worker_capacity` metric category records current busy worker slots per **Perago Instance ID**.
 - A **Workspace Task Worker** receives external Conductor input as one **Workspace Input** plus one **Params Input**.
 - A **Workspace Task Worker** emits external Conductor output as one **Workspace Output** plus one **Result Output**.
 - A **Workspace-Free Task Worker** receives external Conductor input as one **Params Input**.

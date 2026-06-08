@@ -127,6 +127,7 @@ class MetricsConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     endpoint: str
+    instance_id: str | None = None
     compression: Literal["gzip"] | None = None
     timeout: timedelta | None = None
     export_interval_millis: int | None = None
@@ -479,8 +480,9 @@ def parse_metrics_config(env: dict[str, str]) -> MetricsConfig | None:
         return None
     return MetricsConfig(
         endpoint=endpoint,
+        instance_id=parse_perago_instance_id(env.get("PERAGO_INSTANCE_ID")),
         compression=parse_metrics_compression(env.get("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION")),
-        timeout=parse_optional_duration(
+        timeout=parse_metrics_timeout_seconds(
             env.get("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT"),
             name="OTEL_EXPORTER_OTLP_METRICS_TIMEOUT",
         ),
@@ -498,6 +500,27 @@ def parse_metrics_compression(value: str | None) -> Literal["gzip"] | None:
     if normalized != "gzip":
         raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION must be 'gzip'")
     return "gzip"
+
+
+def parse_perago_instance_id(value: str | None) -> str | None:
+    if value is None or value.strip() == "":
+        return None
+    stripped = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", stripped):
+        raise RuntimeConfigError("PERAGO_INSTANCE_ID must contain only ASCII letters, digits, dots, underscores, or hyphens")
+    return stripped
+
+
+def parse_metrics_timeout_seconds(value: str | None, *, name: str) -> timedelta | None:
+    if value is None or value.strip() == "":
+        return None
+    stripped = value.strip()
+    if not re.fullmatch(r"[0-9]+", stripped):
+        raise RuntimeConfigError(f"{name} must be a positive integer number of seconds")
+    parsed = int(stripped)
+    if parsed <= 0:
+        raise RuntimeConfigError(f"{name} must be greater than zero")
+    return timedelta(seconds=parsed)
 
 
 def parse_positive_millis(value: str | None, *, name: str) -> int | None:
