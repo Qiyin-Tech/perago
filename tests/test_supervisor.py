@@ -29,7 +29,6 @@ from perago.supervisor import (
     _active_process_workspace_owners,
     _broker_environment,
     _broker_process_main,
-    _duration_seconds,
     _pid_is_alive,
     _process_executor_main,
     _read_supervisor_workspace_lock,
@@ -1164,6 +1163,17 @@ def test_stop_worker_processes_kills_only_after_configured_deadline(tmp_path) ->
     ]
 
 
+def test_stop_worker_processes_clamps_force_kill_join_timeout() -> None:
+    process = FakeProcess()
+
+    _stop_worker_processes(
+        [process],  # type: ignore[list-item]
+        force_kill_after=timedelta(seconds=-1),
+    )
+
+    assert process.events[0] == ("join", MIN_DURATION_SECONDS)
+
+
 def test_unlink_supervisor_workspace_lock_handles_races(monkeypatch, tmp_path) -> None:
     lock_path = tmp_path / SUPERVISOR_WORKSPACE_LOCK_FILE
     lock_path.write_text("lock", encoding="utf-8")
@@ -1293,7 +1303,3 @@ def test_workspace_gc_loop_run_logs_removed_workspaces_and_errors(monkeypatch, t
     loop._run()
 
     assert calls == ["run", "run"]
-
-
-def test_duration_seconds_never_returns_zero() -> None:
-    assert _duration_seconds(timedelta(seconds=-1)) == MIN_DURATION_SECONDS
