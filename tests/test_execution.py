@@ -25,6 +25,7 @@ from perago import (
     require_dir,
     task,
 )
+from perago.metrics import TaskAttemptMetricContext
 from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
 from perago.execution import (
     run_workspace_free_task_attempt as _run_workspace_free_task_attempt,
@@ -55,6 +56,17 @@ class StatusOutput(BaseModel):
 
 
 class FakeMetricRecorder(MetricRecorder):
+    @property
+    def context(self) -> TaskAttemptMetricContext:
+        return TaskAttemptMetricContext(
+            task_name="tests.metrics",
+            task_id="task-9b4c",
+            workflow_instance_id="wf-7f3d",
+            execution_id="exec-1",
+            worker_id="worker-1",
+            retry_count=2,
+        )
+
     def histogram(self, name: str, value: int | float, *, labels: Mapping[str, str] | None = None) -> None:
         del name, value, labels
 
