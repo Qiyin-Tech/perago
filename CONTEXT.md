@@ -195,7 +195,7 @@ _Avoid_: file path, object path, module:app target
 - Perago may emit **Runtime Metrics** about **Task Attempts**, **Worker Processes**, and runtime integrations.
 - Perago runtime code records **Runtime Metrics** through a **Metric Recorder**.
 - A **Metric Recorder** carries one **Metric Context**.
-- A **Metric Recorder** records counters, histograms, gauges, and timed durations.
+- A **Metric Recorder** records histograms, gauges, and timed durations.
 - **Metric Recorder** labels are optional.
 - Perago runtime code may use a **Metric Recorder** with a **Runtime Metric Context**.
 - A **Task Attempt Metric Context** exposes the current **Task Attempt** identity to the metrics-enabled **Task Worker**.
@@ -206,7 +206,7 @@ _Avoid_: file path, object path, module:app target
 - Built-in **Runtime Metrics** must not use **Task Attempt** identifiers such as task id, workflow instance id, execution id, or worker id as metric labels.
 - Metrics-enabled **Task Workers** may read **Task Attempt Metric Context** identifiers, but should not put those identifiers into metric labels.
 - Runtime and application metrics automatically carry the Task Worker name as a metric label.
-- The `attempts` metric category records **Task Attempt** duration and failure counts.
+- The `attempts` metric category records **Task Attempt** duration.
 - The `workspace_io` metric category records workspace I/O duration and bytes using a low-cardinality operation label.
 - The `worker_capacity` metric category records current busy worker slots.
 - A **Workspace Task Worker** receives external Conductor input as one **Workspace Input** plus one **Params Input**.

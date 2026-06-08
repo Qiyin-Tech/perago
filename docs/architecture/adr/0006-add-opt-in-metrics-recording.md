@@ -47,7 +47,7 @@ def build_features(
     with metrics.timer("model_call", labels={"provider": "openai"}):
         ...
 
-    metrics.counter("rows_processed", 100, labels={"stage": "normalize"})
+    metrics.histogram("batch_rows", 100, labels={"stage": "normalize"})
     metrics.histogram("audio_seconds", 31.4, labels={"format": "wav"})
 
     return BuildFeaturesOutput(row_count=100, feature_count=24)
@@ -69,7 +69,7 @@ def validate_metadata(
     params: ValidateMetadataParams,
     metrics: MetricRecorder,
 ) -> ValidateMetadataOutput:
-    metrics.counter("model_calls")
+    metrics.histogram("payload_bytes", 2048)
     ...
 ```
 
@@ -126,18 +126,12 @@ def build_features(
 
 ```text
 runtime.task_attempt_duration_seconds{task_name}
-runtime.task_failures_total{task_name, failure_kind}
 runtime.workspace_io_duration_seconds{task_name, operation}
 runtime.workspace_io_bytes{task_name, operation}
 runtime.busy_slots{task_name}
 ```
 
-`failure_kind` 只使用低基数值：
-
-```text
-retryable
-terminal
-```
+第一版不设计 counter 指标，也不记录 runtime failure count。失败细节留在 Conductor 状态和 worker logs 中。
 
 `operation` 只使用低基数值：
 
@@ -150,12 +144,9 @@ publish
 Application metrics 使用 `app.` 前缀，并自动带 `task_name` label：
 
 ```python
-metrics.counter("rows_processed")
-metrics.counter("rows_processed", 100)
-metrics.counter("rows_processed", 100, labels={"stage": "normalize"})
-
 metrics.histogram("audio_seconds", 31.4)
 metrics.histogram("audio_seconds", 31.4, labels={"format": "wav"})
+metrics.histogram("batch_rows", 100, labels={"stage": "normalize"})
 
 metrics.gauge("busy_slots", 3)
 
@@ -169,8 +160,8 @@ with metrics.timer("model_call", labels={"provider": "openai"}):
 上面的 application metrics 导出时命名为：
 
 ```text
-app.rows_processed{task_name="features.build", stage="normalize"}
 app.audio_seconds{task_name="features.build", format="wav"}
+app.batch_rows{task_name="features.build", stage="normalize"}
 app.model_call{task_name="features.build", provider="openai"}
 ```
 
@@ -193,23 +184,23 @@ task author 可以读取这些字段，但不能把它们放进 metric labels。
 Perago 自动 labels 优先于用户 labels。冲突时保留 Perago 值，丢弃用户值，并写 worker log：
 
 ```python
-metrics.counter(
-    "rows_processed",
-    100,
-    labels={"task_name": "fake", "stage": "normalize"},
+metrics.histogram(
+    "audio_seconds",
+    31.4,
+    labels={"task_name": "fake", "format": "wav"},
 )
 ```
 
 实际导出：
 
 ```text
-app.rows_processed{task_name="features.build", stage="normalize"}
+app.audio_seconds{task_name="features.build", format="wav"}
 ```
 
 warning 至少包含：
 
 ```text
-metric_name=app.rows_processed
+metric_name=app.audio_seconds
 label_key=task_name
 perago_label_value=features.build
 ignored_user_label_value=fake
