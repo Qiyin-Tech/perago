@@ -165,6 +165,8 @@ with metrics.timer("model_call", labels={"provider": "openai"}):
     ...
 ```
 
+`timer` context 只用于包住短小、已经成块的操作。一个 `with metrics.timer(...):` block 下不应直接包含超过 20 行代码；如果需要计时的流程更长，应先把该流程抽成独立函数，再在调用点用 timer 包住函数调用。这个约束避免 metrics 埋点把复杂业务流程藏进长 context block，也让被计时的操作有清晰名称和测试边界。
+
 上面的 application metrics 导出时命名为：
 
 ```text
@@ -173,7 +175,13 @@ app.batch_rows{task_name="features.build", stage="normalize"}
 app.model_call{task_name="features.build", provider="openai"}
 ```
 
-`MetricRecorder` 是 Perago 抽象，不是裸 OpenTelemetry SDK object。它携带只读 task attempt context：
+`MetricRecorder` 是 Perago 抽象，不是裸 OpenTelemetry SDK object。进程级 recorder 由 runtime config 创建，初始 `context` 为 `None`；当前 task attempt 的 recorder 必须通过 `with_context(TaskAttemptMetricContext(...))` 派生。`with_context` 是 runtime 内部绑定 API，不是 task 函数入参。对已经绑定 context 的 recorder 再调用 `with_context` 必须写 warning。
+
+`OtelMetricRecorder` 是 OTel SDK 特化实现，构造函数接收 Perago metrics 配置并在内部创建 OTel provider/meter；`Meter`、OTel lifecycle helper、factory 之类概念不能泄漏到 execution core 或 task author API。测试用 in-memory recorder 独立放在测试 adapter 路径，不作为生产创建路径。
+
+当前代码结构按职责拆分为 `perago.metrics.core`、`perago.metrics.otel` 和 `perago.metrics.in_memory`，同时保留 `from perago.metrics import MetricRecorder` 的公开导入入口。
+
+task body 收到的是已经绑定 task attempt context 的 recorder：
 
 ```python
 def build_features(
@@ -181,9 +189,11 @@ def build_features(
     params: BuildFeaturesParams,
     metrics: MetricRecorder,
 ) -> BuildFeaturesOutput:
-    task_id = metrics.context.task_id
-    workflow_instance_id = metrics.context.workflow_instance_id
-    retry_count = metrics.context.retry_count
+    context = metrics.context
+    assert context is not None
+    task_id = context.task_id
+    workflow_instance_id = context.workflow_instance_id
+    retry_count = context.retry_count
     ...
 ```
 

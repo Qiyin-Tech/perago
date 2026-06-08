@@ -114,6 +114,7 @@ def run_workspace_task_attempt(
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
+    metrics: MetricRecorder | None = None,
     failure_reason_max_length: int,
 ) -> RuntimeTaskResult:
     """
@@ -234,7 +235,7 @@ def run_workspace_task_attempt(
         workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
         download_workspace(workspace_input, workspace, workspace_dir)
         initial_snapshot = None if workspace.read_only else _snapshot_workspace(workspace_dir)
-        body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
+        body_output = invoke_workspace_task_body(task, input_data, workspace_dir, metrics=metrics)
 
         if workspace.read_only:
             # Read-only completion has no LakeFS side effect to fence. The final
@@ -290,6 +291,7 @@ def run_workspace_free_task_attempt(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
     *,
+    metrics: MetricRecorder | None = None,
     failure_reason_max_length: int,
 ) -> RuntimeTaskResult:
     """
@@ -344,7 +346,7 @@ def run_workspace_free_task_attempt(
         raise TaskInputError("run_workspace_free_task_attempt only supports workspace-free tasks")
 
     try:
-        return completed_result(invoke_workspace_free_task(task, input_data))
+        return completed_result(invoke_workspace_free_task(task, input_data, metrics=metrics))
     except Exception as exc:
         return result_for_exception(exc, max_length=failure_reason_max_length)
 
@@ -354,7 +356,7 @@ def invoke_workspace_task_body(
     input_data: Mapping[str, Any],
     workspace_dir: Path,
     *,
-    metric_recorder: MetricRecorder | None = None,
+    metrics: MetricRecorder | None = None,
 ) -> dict[str, Any]:
     """
     Invoke a workspace task body against a prepared local workspace.
@@ -426,9 +428,9 @@ def invoke_workspace_task_body(
     if task.metrics is None:
         raw_result = task.fn(workspace_dir, params)
     else:
-        if metric_recorder is None:
+        if metrics is None:
             raise TaskInputError("metrics-enabled task invocation requires a MetricRecorder")
-        raw_result = task.fn(workspace_dir, params, metric_recorder)
+        raw_result = task.fn(workspace_dir, params, metrics)
     result = _validate_result(task, raw_result)
     _check_phase_guardrails(workspace_dir, workspace.post, "post", PostGuardrailViolation)
     return {"result": result.model_dump(mode="json")}
@@ -438,7 +440,7 @@ def invoke_workspace_free_task(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
     *,
-    metric_recorder: MetricRecorder | None = None,
+    metrics: MetricRecorder | None = None,
 ) -> dict[str, Any]:
     """
     Invoke a workspace-free task and validate its output wrapper.
@@ -492,9 +494,9 @@ def invoke_workspace_free_task(
     if task.metrics is None:
         raw_result = task.fn(params)
     else:
-        if metric_recorder is None:
+        if metrics is None:
             raise TaskInputError("metrics-enabled task invocation requires a MetricRecorder")
-        raw_result = task.fn(params, metric_recorder)
+        raw_result = task.fn(params, metrics)
     return build_workspace_free_task_output(task, raw_result)
 
 

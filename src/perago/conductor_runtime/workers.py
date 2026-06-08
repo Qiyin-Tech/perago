@@ -12,6 +12,7 @@ from conductor.client.http.models.task_result import TaskResult
 from conductor.client.worker.worker_interface import WorkerInterface
 from loguru import logger
 
+from perago.metrics import MetricRecorder, TaskAttemptMetricContext
 from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
 
@@ -41,6 +42,7 @@ class PeragoThreadWorker(WorkerInterface):
         workspace_root: Any,
         failure_reason_max_length: int,
         workspace_runtime: WorkspaceRuntime | None = None,
+        metrics: MetricRecorder | None = None,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -53,6 +55,7 @@ class PeragoThreadWorker(WorkerInterface):
         self._workspace_root = workspace_root
         self._workspace_runtime = workspace_runtime
         self._failure_reason_max_length = failure_reason_max_length
+        self.metrics = metrics
 
     def get_identity(self) -> str:
         return self.worker_id
@@ -60,6 +63,18 @@ class PeragoThreadWorker(WorkerInterface):
     def execute(self, task: Task) -> TaskResult:
         attempt = conductor_task_to_attempt(task)
         execution_id = uuid4().hex
+        metrics = None
+        if self.metrics is not None and self.task.metrics is not None:
+            metrics = self.metrics.with_context(
+                TaskAttemptMetricContext(
+                    task_name=self.task.name,
+                    task_id=attempt.task_id,
+                    workflow_instance_id=attempt.workflow_instance_id,
+                    execution_id=execution_id,
+                    worker_id=self.worker_id,
+                    retry_count=attempt.retry_count,
+                )
+            )
         result = execute_polled_task(
             task=self.task,
             attempt=attempt,
@@ -69,6 +84,7 @@ class PeragoThreadWorker(WorkerInterface):
             owner_worker_id=self.worker_id,
             execution_id=execution_id,
             failure_reason_max_length=self._failure_reason_max_length,
+            metrics=metrics,
         )
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
 

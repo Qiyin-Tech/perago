@@ -8,6 +8,7 @@ from perago.execution import (
     run_workspace_free_task_attempt,
     run_workspace_task_attempt,
 )
+from perago.metrics import MetricRecorder
 from perago.result import RuntimeTaskResult
 from perago.task import TaskDefinition
 
@@ -24,6 +25,7 @@ def execute_polled_task(
     execution_id: str | None = None,
     failure_reason_max_length: int,
     workspace_runtime: WorkspaceRuntime | None = None,
+    metrics: MetricRecorder | None = None,
 ) -> RuntimeTaskResult:
     if task.has_workspace:
         workspace_runtime = _require_workspace_runtime(workspace_runtime)
@@ -40,11 +42,13 @@ def execute_polled_task(
             complete_noop_workspace=workspace_runtime.complete_noop_workspace,
             owner_worker_id=owner_worker_id,
             execution_id=execution_id,
+            metrics=metrics,
             failure_reason_max_length=failure_reason_max_length,
         )
     return run_workspace_free_task_attempt(
         task,
         attempt.input_data,
+        metrics=metrics,
         failure_reason_max_length=failure_reason_max_length,
     )
 

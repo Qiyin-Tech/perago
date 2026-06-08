@@ -56,8 +56,12 @@ class StatusOutput(BaseModel):
 
 
 class FakeMetricRecorder(MetricRecorder):
+    def with_context(self, context: TaskAttemptMetricContext) -> MetricRecorder:
+        del context
+        return self
+
     @property
-    def context(self) -> TaskAttemptMetricContext:
+    def context(self) -> TaskAttemptMetricContext | None:
         return TaskAttemptMetricContext(
             task_name="tests.metrics",
             task_id="task-9b4c",
@@ -866,7 +870,7 @@ def test_invokes_metrics_enabled_workspace_free_task_with_recorder() -> None:
     output = invoke_workspace_free_task(
         metrics_workspace_free_task.__perago_task__,
         {"params": {"value": 7}},
-        metric_recorder=FakeMetricRecorder(),
+        metrics=FakeMetricRecorder(),
     )
 
     assert output == {"result": {"value": 7}}
@@ -880,7 +884,7 @@ def test_invokes_metrics_enabled_workspace_task_with_recorder(tmp_path: Path) ->
             "params": {"value": 7},
         },
         tmp_path,
-        metric_recorder=FakeMetricRecorder(),
+        metrics=FakeMetricRecorder(),
     )
 
     assert output == {"result": {"value": 7}}

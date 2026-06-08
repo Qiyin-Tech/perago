@@ -26,6 +26,7 @@ from perago.conductor_runtime.runners import run_conductor_process_broker, run_c
 from perago.config import ExecutionMode, RuntimeConfig, child_environment
 from perago.errors import RuntimeConfigError
 from perago.lakefs_runtime import LakeFSWorkspaceRuntime
+from perago.metrics import MetricRecorder, OtelMetricRecorder
 from perago.task import load_module_task
 from perago.worker_runtime import prepare_worker_runtime
 from perago.workspace import garbage_collect_attempt_workspaces
@@ -683,24 +684,29 @@ def _process_executor_main(
     task = load_module_task(module_target)
     runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
     lakefs = _lakefs_runtime_for_task(task, config)
+    metrics = _metrics_for_task(task, config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process executor started"
     )
-    run_process_executor_loop(
-        task=task,
-        worker_id=runtime.worker_id,
-        workspace_root=config.workspace_root,
-        connection=connection,
-        load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
-            current_attempt,
+    try:
+        run_process_executor_loop(
+            task=task,
             worker_id=runtime.worker_id,
-            request_queue=attempt_fence_request_queue,
-            response_queue=attempt_fence_response_queue,
-        ),
-        failure_reason_max_length=config.failure_reason_max_length,
-        workspace_runtime=lakefs,
-    )
+            workspace_root=config.workspace_root,
+            connection=connection,
+            load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
+                current_attempt,
+                worker_id=runtime.worker_id,
+                request_queue=attempt_fence_request_queue,
+                response_queue=attempt_fence_response_queue,
+            ),
+            failure_reason_max_length=config.failure_reason_max_length,
+            workspace_runtime=lakefs,
+            metrics=metrics,
+        )
+    finally:
+        _shutdown_metrics(metrics)
 
 
 def _thread_runner_main(
@@ -718,20 +724,25 @@ def _thread_runner_main(
 
     lakefs = _lakefs_runtime_for_task(task, config)
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    metrics = _metrics_for_task(task, config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "thread runner started"
     )
-    run_conductor_thread_runner(
-        task=task,
-        worker_id=runtime.worker_id,
-        thread_count=thread_count,
-        conductor_config=conductor_config,
-        client=conductor,
-        workspace_root=config.workspace_root,
-        failure_reason_max_length=config.failure_reason_max_length,
-        workspace_runtime=lakefs,
-    )
+    try:
+        run_conductor_thread_runner(
+            task=task,
+            worker_id=runtime.worker_id,
+            thread_count=thread_count,
+            conductor_config=conductor_config,
+            client=conductor,
+            workspace_root=config.workspace_root,
+            failure_reason_max_length=config.failure_reason_max_length,
+            workspace_runtime=lakefs,
+            metrics=metrics,
+        )
+    finally:
+        _shutdown_metrics(metrics)
 
 
 def _broker_environment(worker_id_prefix: str) -> dict[str, str]:
@@ -750,6 +761,20 @@ def _lakefs_runtime_for_task(task: object, config: RuntimeConfig) -> LakeFSWorks
         raise RuntimeConfigError("LakeFS config is required for workspace tasks")
 
     return LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=_effective_publish_budget(task))
+
+
+def _metrics_for_task(task: object, config: RuntimeConfig) -> MetricRecorder | None:
+    if getattr(task, "metrics", None) is None:
+        return None
+    metrics_config = config.metrics
+    if metrics_config is None:
+        raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks")
+    return OtelMetricRecorder(metrics_config)
+
+
+def _shutdown_metrics(metrics: MetricRecorder | None) -> None:
+    if isinstance(metrics, OtelMetricRecorder):
+        metrics.shutdown()
 
 
 def _effective_publish_budget(task: object) -> object:

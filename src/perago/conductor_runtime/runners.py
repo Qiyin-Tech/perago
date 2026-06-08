@@ -9,6 +9,7 @@ from conductor.client.automator.task_runner import TaskRunner
 from conductor.client.configuration.configuration import Configuration
 
 from perago.config import ConductorConfig
+from perago.metrics import MetricRecorder
 from perago.task import TaskDefinition
 
 from .models import ConductorRuntimeClient, WorkspaceRuntime
@@ -26,6 +27,7 @@ def run_conductor_thread_runner(
     workspace_root: Any,
     failure_reason_max_length: int,
     workspace_runtime: WorkspaceRuntime | None = None,
+    metrics: MetricRecorder | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoThreadWorker(
@@ -36,6 +38,7 @@ def run_conductor_thread_runner(
         workspace_root=workspace_root,
         failure_reason_max_length=failure_reason_max_length,
         workspace_runtime=workspace_runtime,
+        metrics=metrics,
     )
     runner = runner_cls(
         worker,
