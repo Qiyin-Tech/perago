@@ -12,6 +12,7 @@ from perago.config import (
     DEFAULT_WORKSPACE_GC_TTL,
     DEFAULT_WORKSPACE_GC_INTERVAL,
     LakeFSConfig,
+    MetricsConfig,
     RuntimeConfig,
     child_environment,
     check_writable_root,
@@ -24,6 +25,7 @@ from perago.config import (
     parse_lakefs_config,
     parse_log_file_max_size,
     parse_log_retention,
+    parse_metrics_config,
     parse_optional_duration,
     read_dotenv,
     resolve_worker_id,
@@ -76,6 +78,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
                 "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria.local/opentelemetry/v1/metrics",
             ]
         ),
         encoding="utf-8",
@@ -105,6 +108,9 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
         endpoint_url="http://lakefs.local",
         access_key_id="lakefs-key",
         secret_access_key="lakefs-secret",
+    )
+    assert config.metrics == MetricsConfig(
+        endpoint="http://victoria.local/opentelemetry/v1/metrics",
     )
     assert config.lakefs.secret_access_key.get_secret_value() == "lakefs-secret"
 
@@ -269,10 +275,14 @@ def test_parse_failure_reason_max_length_defaults_and_validates() -> None:
 def test_parse_connection_configs_are_optional() -> None:
     assert parse_conductor_config({}) is None
     assert parse_lakefs_config({}) is None
+    assert parse_metrics_config({}) is None
 
     assert parse_conductor_config({"CONDUCTOR_SERVER_URL": " http://localhost:8080/api "}) == ConductorConfig(
         server_url="http://localhost:8080/api"
     )
+    assert parse_metrics_config(
+        {"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": " http://victoria.local/opentelemetry/v1/metrics "}
+    ) == MetricsConfig(endpoint="http://victoria.local/opentelemetry/v1/metrics")
     with pytest.raises(RuntimeConfigError, match="LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY"):
         parse_lakefs_config(
             {

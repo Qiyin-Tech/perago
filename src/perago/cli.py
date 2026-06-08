@@ -58,6 +58,7 @@ def check(module_target: str) -> None:
     typer.echo(f"worker_id_prefix: {config.worker_id_prefix}")
     typer.echo(f"conductor: {_configured(config.conductor is not None)}")
     typer.echo(f"lakefs: {_configured(config.lakefs is not None)}")
+    typer.echo(f"metrics: {_configured(config.metrics is not None)}")
 
 
 @app.command()
@@ -90,6 +91,8 @@ def start(
         task = load_module_task(module_target)
         if task.has_workspace and config.lakefs is None:
             raise RuntimeConfigError("LakeFS config is required for workspace tasks")
+        if task.metrics is not None and config.metrics is None:
+            raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks")
         _warn_ignored_publish_budget(task)
         validate_no_root_task_models(task)
         _warn_task_model_config(task)

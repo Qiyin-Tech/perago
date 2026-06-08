@@ -121,6 +121,14 @@ class LakeFSConfig(BaseModel):
     secret_access_key: SecretStr
 
 
+class MetricsConfig(BaseModel):
+    """Worker-local OTLP metrics export settings."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    endpoint: str
+
+
 class RuntimeConfig(BaseModel):
     """
     Complete worker-local runtime configuration.
@@ -209,6 +217,7 @@ class RuntimeConfig(BaseModel):
     failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH
     conductor: ConductorConfig | None = None
     lakefs: LakeFSConfig | None = None
+    metrics: MetricsConfig | None = None
 
 
 def load_runtime_config(
@@ -307,6 +316,7 @@ def load_runtime_config(
         ),
         conductor=parse_conductor_config(env),
         lakefs=parse_lakefs_config(env),
+        metrics=parse_metrics_config(env),
     )
     if probe_roots:
         check_writable_root(config.workspace_root)
@@ -449,6 +459,13 @@ def parse_lakefs_config(env: dict[str, str]) -> LakeFSConfig | None:
         access_key_id=access_key_id,
         secret_access_key=secret_access_key,
     )
+
+
+def parse_metrics_config(env: dict[str, str]) -> MetricsConfig | None:
+    endpoint = _env_optional(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+    if endpoint is None:
+        return None
+    return MetricsConfig(endpoint=endpoint)
 
 
 def validate_worker_id_prefix(value: str) -> str:

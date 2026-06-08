@@ -1,6 +1,6 @@
 from perago._version import __version__
 from perago.attempt import assert_current_attempt_snapshot
-from perago.config import ConductorConfig, ExecutionMode, LakeFSConfig, RuntimeConfig, load_runtime_config
+from perago.config import ConductorConfig, ExecutionMode, LakeFSConfig, MetricsConfig, RuntimeConfig, load_runtime_config
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
@@ -73,6 +73,7 @@ __all__ = [
     "LakeFSConfig",
     "MetricRecorder",
     "MetricSpec",
+    "MetricsConfig",
     "RuntimeConfig",
     "RuntimeConfigError",
     "StagedWorkspace",

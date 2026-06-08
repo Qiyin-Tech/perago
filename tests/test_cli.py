@@ -78,6 +78,18 @@ def test_check_cli_reports_connection_config_status_without_secrets(monkeypatch,
     assert "lakefs-secret" not in result.output
 
 
+def test_check_cli_reports_metrics_config_status_without_requiring_endpoint(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.metrics_validate"])
+
+    assert result.exit_code == 0
+    assert "ok: metrics.validate" in result.output
+    assert "metrics: not configured" in result.output
+
+
 def test_check_cli_warns_when_read_only_workspace_ignores_publish_budget(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
@@ -525,6 +537,49 @@ def test_start_cli_allows_workspace_free_task_without_lakefs_config(monkeypatch,
 
     assert result.exit_code == 0
     assert started["module_target"] == "app.workers.metadata_validate"
+
+
+def test_start_cli_requires_metrics_endpoint_for_metrics_enabled_tasks(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("CONDUCTOR_SERVER_URL=http://conductor.local/api", encoding="utf-8")
+    monkeypatch.setattr(
+        "perago.cli.OrkesConductorRuntimeClient.from_config",
+        lambda config: (_ for _ in ()).throw(AssertionError("Conductor must not be checked before metrics endpoint")),
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.metrics_validate"])
+
+    assert result.exit_code == 1
+    assert "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required" in result.output
+
+
+def test_start_cli_allows_metrics_enabled_task_with_metrics_endpoint(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria.local/opentelemetry/v1/metrics",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeConductor:
+        def taskdef_exists(self, task_name: str) -> bool:
+            return task_name == "metrics.validate"
+
+    started = {}
+
+    monkeypatch.setattr("perago.cli.OrkesConductorRuntimeClient.from_config", lambda config: FakeConductor())
+    monkeypatch.setattr("perago.cli.run_worker_supervisor", lambda **kwargs: started.update(kwargs))
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["start", "app.workers.metrics_validate"])
+
+    assert result.exit_code == 0
+    assert started["module_target"] == "app.workers.metrics_validate"
 
 
 def test_start_cli_rejects_root_model_task_contracts(monkeypatch, tmp_path) -> None:
