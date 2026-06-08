@@ -79,6 +79,9 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
                 "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
                 "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip",
+                "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10s",
+                "OTEL_METRIC_EXPORT_INTERVAL=60000",
             ]
         ),
         encoding="utf-8",
@@ -111,6 +114,9 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     )
     assert config.metrics == MetricsConfig(
         endpoint="http://victoria.local/opentelemetry/v1/metrics",
+        compression="gzip",
+        timeout=timedelta(seconds=10),
+        export_interval_millis=60000,
     )
     assert config.lakefs.secret_access_key.get_secret_value() == "lakefs-secret"
 
@@ -281,13 +287,65 @@ def test_parse_connection_configs_are_optional() -> None:
         server_url="http://localhost:8080/api"
     )
     assert parse_metrics_config(
-        {"OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": " http://victoria.local/opentelemetry/v1/metrics "}
-    ) == MetricsConfig(endpoint="http://victoria.local/opentelemetry/v1/metrics")
+        {
+            "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": " http://victoria.local/opentelemetry/v1/metrics ",
+            "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION": "gzip",
+            "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "10s",
+            "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+        }
+    ) == MetricsConfig(
+        endpoint="http://victoria.local/opentelemetry/v1/metrics",
+        compression="gzip",
+        timeout=timedelta(seconds=10),
+        export_interval_millis=60000,
+    )
     with pytest.raises(RuntimeConfigError, match="LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY"):
         parse_lakefs_config(
             {
                 "LAKECTL_SERVER_ENDPOINT_URL": "http://localhost:8000",
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID": "key",
+            }
+        )
+
+
+def test_parse_metrics_config_rejects_unsupported_otel_env() -> None:
+    for name in [
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+    ]:
+        with pytest.raises(RuntimeConfigError, match=f"{name} is not supported"):
+            parse_metrics_config(
+                {
+                    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                    name: "configured",
+                }
+            )
+
+
+def test_parse_metrics_config_validates_supported_otel_env_values() -> None:
+    with pytest.raises(RuntimeConfigError, match="OTEL_EXPORTER_OTLP_METRICS_COMPRESSION"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION": "deflate",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="OTEL_EXPORTER_OTLP_METRICS_TIMEOUT"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "0s",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="OTEL_METRIC_EXPORT_INTERVAL"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_METRIC_EXPORT_INTERVAL": "1.5",
             }
         )
     with pytest.raises(RuntimeConfigError, match="CONDUCTOR_SERVER_URL"):

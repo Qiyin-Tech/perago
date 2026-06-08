@@ -127,6 +127,9 @@ class MetricsConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     endpoint: str
+    compression: Literal["gzip"] | None = None
+    timeout: timedelta | None = None
+    export_interval_millis: int | None = None
 
 
 class RuntimeConfig(BaseModel):
@@ -462,10 +465,51 @@ def parse_lakefs_config(env: dict[str, str]) -> LakeFSConfig | None:
 
 
 def parse_metrics_config(env: dict[str, str]) -> MetricsConfig | None:
+    for name in [
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+    ]:
+        if _env_optional(env, name) is not None:
+            raise RuntimeConfigError(f"{name} is not supported by Perago metrics v1")
+
     endpoint = _env_optional(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
     if endpoint is None:
         return None
-    return MetricsConfig(endpoint=endpoint)
+    return MetricsConfig(
+        endpoint=endpoint,
+        compression=parse_metrics_compression(env.get("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION")),
+        timeout=parse_optional_duration(
+            env.get("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT"),
+            name="OTEL_EXPORTER_OTLP_METRICS_TIMEOUT",
+        ),
+        export_interval_millis=parse_positive_millis(
+            env.get("OTEL_METRIC_EXPORT_INTERVAL"),
+            name="OTEL_METRIC_EXPORT_INTERVAL",
+        ),
+    )
+
+
+def parse_metrics_compression(value: str | None) -> Literal["gzip"] | None:
+    if value is None or value.strip() == "":
+        return None
+    normalized = value.strip().lower()
+    if normalized != "gzip":
+        raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION must be 'gzip'")
+    return "gzip"
+
+
+def parse_positive_millis(value: str | None, *, name: str) -> int | None:
+    if value is None or value.strip() == "":
+        return None
+    stripped = value.strip()
+    if not re.fullmatch(r"[0-9]+", stripped):
+        raise RuntimeConfigError(f"{name} must be a positive integer number of milliseconds")
+    parsed = int(stripped)
+    if parsed <= 0:
+        raise RuntimeConfigError(f"{name} must be greater than zero")
+    return parsed
 
 
 def validate_worker_id_prefix(value: str) -> str:
