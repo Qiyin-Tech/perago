@@ -1,0 +1,10 @@
+services:
+  victoria-metrics:
+    image: victoriametrics/victoria-metrics:v1.143.0
+    ports:
+      - "${PERAGO_VICTORIA_METRICS_PORT:-8428}:8428"
+    volumes:
+      - perago-victoria-metrics-data:/victoria-metrics-data
+
+volumes:
+  perago-victoria-metrics-data:

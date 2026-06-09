@@ -129,7 +129,7 @@ class MetricsConfig(BaseModel):
     endpoint: str
     instance_id: str | None = None
     compression: Literal["gzip"] | None = None
-    timeout: timedelta | None = None
+    timeout_millis: int | None = None
     export_interval_millis: int | None = None
 
 
@@ -181,6 +181,8 @@ class RuntimeConfig(BaseModel):
         Optional Conductor connection config. ``perago start`` requires it.
     lakefs : LakeFSConfig or None, default=None
         Optional LakeFS connection config. ``perago start`` requires it.
+    metrics : MetricsConfig or None, default=None
+        Optional OTLP metrics export config for metrics-enabled tasks.
 
     See Also
     --------
@@ -482,7 +484,7 @@ def parse_metrics_config(env: dict[str, str]) -> MetricsConfig | None:
         endpoint=endpoint,
         instance_id=parse_perago_instance_id(env.get("PERAGO_INSTANCE_ID")),
         compression=parse_metrics_compression(env.get("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION")),
-        timeout=parse_metrics_timeout_seconds(
+        timeout_millis=parse_metrics_timeout_millis(
             env.get("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT"),
             name="OTEL_EXPORTER_OTLP_METRICS_TIMEOUT",
         ),
@@ -511,16 +513,16 @@ def parse_perago_instance_id(value: str | None) -> str | None:
     return stripped
 
 
-def parse_metrics_timeout_seconds(value: str | None, *, name: str) -> timedelta | None:
+def parse_metrics_timeout_millis(value: str | None, *, name: str) -> int | None:
     if value is None or value.strip() == "":
         return None
     stripped = value.strip()
     if not re.fullmatch(r"[0-9]+", stripped):
-        raise RuntimeConfigError(f"{name} must be a positive integer number of seconds")
+        raise RuntimeConfigError(f"{name} must be a positive integer number of milliseconds")
     parsed = int(stripped)
     if parsed <= 0:
         raise RuntimeConfigError(f"{name} must be greater than zero")
-    return timedelta(seconds=parsed)
+    return parsed
 
 
 def parse_positive_millis(value: str | None, *, name: str) -> int | None:

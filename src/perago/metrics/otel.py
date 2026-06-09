@@ -15,10 +15,14 @@ from perago.config import MetricsConfig
 from perago.metrics.core import (
     MetricRecorder,
     MetricTimer,
+    RuntimeMetricContext,
+    RuntimeMetricTimer,
     TaskAttemptMetricContext,
     application_metric_name,
     merge_metric_labels,
+    merge_runtime_metric_labels,
     require_metric_context,
+    runtime_metric_name,
     warn_rebinding_context,
 )
 
@@ -86,6 +90,41 @@ class OtelMetricRecorder(MetricRecorder):
     def timer(self, name: str, *, labels: Mapping[str, str] | None = None) -> AbstractContextManager[Any]:
         return MetricTimer(self, name, labels)
 
+    def runtime_histogram(
+        self,
+        name: str,
+        value: int | float,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
+        metric_name = runtime_metric_name(name)
+        attributes = merge_runtime_metric_labels(metric_name, context, labels)
+        histogram = self._histogram_instrument(metric_name)
+        histogram.record(value, attributes)
+
+    def runtime_gauge(
+        self,
+        name: str,
+        value: int | float,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
+        metric_name = runtime_metric_name(name)
+        attributes = merge_runtime_metric_labels(metric_name, context, labels)
+        gauge = self._gauge_instrument(metric_name)
+        gauge.set(value, attributes)
+
+    def runtime_timer(
+        self,
+        name: str,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> AbstractContextManager[Any]:
+        return RuntimeMetricTimer(self, name, context, labels)
+
     def shutdown(self) -> None:
         self._meter_provider.shutdown()
 
@@ -107,17 +146,16 @@ class OtelMetricRecorder(MetricRecorder):
 
 
 def _meter_provider_from_config(config: MetricsConfig) -> MeterProvider:
+    timeout_seconds = config.timeout_millis / 1000 if config.timeout_millis is not None else None
     exporter = OTLPMetricExporter(
         endpoint=config.endpoint,
         compression=_otel_compression(config.compression),
-        timeout=config.timeout.total_seconds() if config.timeout is not None else None,
+        timeout=timeout_seconds,
     )
     reader = PeriodicExportingMetricReader(
         exporter,
         export_interval_millis=config.export_interval_millis,
-        export_timeout_millis=(
-            config.timeout.total_seconds() * 1000 if config.timeout is not None else None
-        ),
+        export_timeout_millis=config.timeout_millis,
     )
     return MeterProvider(metric_readers=[reader])
 

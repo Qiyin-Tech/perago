@@ -80,7 +80,7 @@ metrics-enabled task 还会读取第一版支持的 OTLP metrics 环境变量：
 | --- | --- | --- | --- | --- |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | required for metrics-enabled `perago start`; optional for `check`/`extract` | 无 | `RuntimeConfig.metrics.endpoint` | 只支持 metrics-specific endpoint，Perago 不读取 `OTEL_EXPORTER_OTLP_ENDPOINT` 并自动拼接 `/v1/metrics`。VictoriaMetrics 示例：`http://victoria-metrics:8428/opentelemetry/v1/metrics`。 |
 | `OTEL_EXPORTER_OTLP_METRICS_COMPRESSION` | optional | unset | `RuntimeConfig.metrics.compression` | 第一版只接受 `gzip`；其他压缩值会被拒绝。 |
-| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` | optional | OTel Python exporter 默认值 | `RuntimeConfig.metrics.timeout` | 按 OpenTelemetry Python OTLP/HTTP metrics exporter 当前接受的秒数数字解析，例如 `10` 表示 10 秒；不接受 `10s`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` | optional | OTel Python exporter 默认值 | `RuntimeConfig.metrics.timeout_millis` | 按 OpenTelemetry 环境变量语义解析为正整数毫秒，例如 `10000` 表示 10 秒，`500` 表示 500ms；不接受 `10s` 或 `0`。Perago 构造 Python exporter 时会转换为秒数。 |
 | `OTEL_METRIC_EXPORT_INTERVAL` | optional | OTel SDK 默认值 | `RuntimeConfig.metrics.export_interval_millis` | 正整数毫秒，例如 `60000`。 |
 
 第一版明确不支持 `OTEL_EXPORTER_OTLP_METRICS_HEADERS`、`OTEL_SERVICE_NAME`、`OTEL_RESOURCE_ATTRIBUTES` 和 `OTEL_EXPORTER_OTLP_ENDPOINT`；配置这些变量会在 runtime config 阶段失败。
@@ -103,7 +103,7 @@ metrics-enabled task 还会读取第一版支持的 OTLP metrics 环境变量：
 | `PERAGO_INSTANCE_ID must contain only ASCII letters, digits, dots, underscores, or hyphens` | Perago instance id 含空格或其他非法字符。 | 使用低基数部署实例名，例如 `features-build-prod-a-001`。 |
 | `PERAGO_INSTANCE_ID is required when worker_capacity metrics are enabled` | metrics-enabled task 默认开启 `worker_capacity`，但启动时未配置 instance id。 | 在 Nomad 或 `.env` 中配置 `PERAGO_INSTANCE_ID`，或在 task 的 `MetricSpec` 中关闭 `worker_capacity`。 |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks` | metrics-enabled task 启动时未配置 OTLP metrics endpoint。 | 配置 metrics-specific endpoint，例如 `http://victoria-metrics:8428/opentelemetry/v1/metrics`。 |
-| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT must be a positive integer number of seconds` | timeout 写成了 `10s` 或其他非整数秒格式。 | 使用纯数字秒，例如 `10`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT must be a positive integer number of milliseconds` | timeout 写成了 `10s`、`0` 或其他非整数毫秒格式。 | 使用正整数毫秒，例如 `10000` 或 `500`。 |
 | `OTEL_METRIC_EXPORT_INTERVAL must be a positive integer number of milliseconds` | export interval 不是正整数毫秒。 | 使用毫秒整数，例如 `60000`。 |
 | `PERAGO_EXECUTION_MODE must be either 'process' or 'thread'` | execution mode 超出支持范围。 | 使用默认 `process`，或显式设置为 `thread`。 |
 | `PERAGO_FAILURE_REASON_MAX_LENGTH must be a positive integer` | failure reason 长度上限不是整数。 | 使用正整数，例如 `500` 或 `1200`。 |

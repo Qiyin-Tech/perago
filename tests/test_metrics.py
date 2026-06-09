@@ -1,9 +1,8 @@
-from datetime import timedelta
-
 from perago.config import MetricsConfig
 from perago.metrics import (
     InMemoryMetricRecorder,
     OtelMetricRecorder,
+    RuntimeMetricContext,
     TaskAttemptMetricContext,
 )
 
@@ -23,7 +22,7 @@ def _config() -> MetricsConfig:
     return MetricsConfig(
         endpoint="http://victoria.local/opentelemetry/v1/metrics",
         compression="gzip",
-        timeout=timedelta(seconds=10),
+        timeout_millis=10000,
         export_interval_millis=60000,
     )
 
@@ -49,6 +48,104 @@ def test_metric_recorder_context_is_unbound_until_with_context() -> None:
 
     assert recorder.context is None
     assert bound_recorder.context == _context()
+
+
+def test_metric_recorder_records_runtime_metrics_with_exact_names_and_labels() -> None:
+    recorder = InMemoryMetricRecorder()
+    context = RuntimeMetricContext(task_name="features.build", perago_instance_id="prod-a")
+
+    recorder.runtime_histogram(
+        "task_attempt_duration_seconds",
+        1.25,
+        context=context,
+    )
+    recorder.runtime_histogram(
+        "workspace_io_duration_seconds",
+        0.5,
+        context=context,
+        labels={"operation": "download"},
+    )
+    recorder.runtime_histogram(
+        "workspace_io_bytes",
+        1024,
+        context=context,
+        labels={"operation": "upload"},
+    )
+    recorder.runtime_gauge("busy_slots", 2, context=context)
+
+    assert [sample.name for sample in recorder.histograms] == [
+        "runtime.task_attempt_duration_seconds",
+        "runtime.workspace_io_duration_seconds",
+        "runtime.workspace_io_bytes",
+    ]
+    assert recorder.histograms[0].labels == {
+        "task_name": "features.build",
+        "perago_instance_id": "prod-a",
+    }
+    assert recorder.histograms[1].labels == {
+        "task_name": "features.build",
+        "perago_instance_id": "prod-a",
+        "operation": "download",
+    }
+    assert recorder.histograms[2].labels == {
+        "task_name": "features.build",
+        "perago_instance_id": "prod-a",
+        "operation": "upload",
+    }
+    assert recorder.gauges[0].name == "runtime.busy_slots"
+    assert recorder.gauges[0].labels == {
+        "task_name": "features.build",
+        "perago_instance_id": "prod-a",
+    }
+
+
+def test_runtime_metric_labels_drop_attempt_identity() -> None:
+    warnings: list[str] = []
+    recorder = InMemoryMetricRecorder()
+
+    from perago.metrics import core
+
+    original_warning = core.logger.warning
+    core.logger.warning = lambda message, **kwargs: warnings.append(message.format(**kwargs))
+    try:
+        recorder.runtime_gauge(
+            "busy_slots",
+            1,
+            context=RuntimeMetricContext(task_name="features.build"),
+            labels={"task_id": "task-1", "queue": "high"},
+        )
+    finally:
+        core.logger.warning = original_warning
+
+    assert recorder.gauges[0].labels == {"task_name": "features.build", "queue": "high"}
+    assert warnings == [
+        "metric_name=runtime.busy_slots label_key=task_id "
+        "perago_label_value=<reserved> ignored_user_label_value=task-1"
+    ]
+
+
+def test_metric_recorder_context_wrappers_share_storage_without_mutating_base() -> None:
+    base = InMemoryMetricRecorder()
+    first = base.with_context(_context())
+    second = base.with_context(
+        TaskAttemptMetricContext(
+            task_name="metadata.validate",
+            task_id="task-next",
+            workflow_instance_id="wf-next",
+            execution_id="exec-next",
+            worker_id="worker-2",
+            retry_count=0,
+        )
+    )
+
+    first.histogram("rows", 3)
+    second.histogram("rows", 5)
+
+    assert base.context is None
+    assert [sample.labels["task_name"] for sample in base.histograms] == [
+        "features.build",
+        "metadata.validate",
+    ]
 
 
 def test_metric_recorder_keeps_perago_label_on_conflict_and_warns(monkeypatch) -> None:

@@ -119,6 +119,9 @@ def task(
     workspace : WorkspaceSpec or None, default=None
         Workspace declaration for workspace tasks. Leave as ``None`` for
         workspace-free tasks.
+    metrics : MetricSpec or None, default=None
+        Metrics declaration for metrics-enabled tasks. Leave as ``None`` for
+        tasks that do not receive a ``MetricRecorder`` argument.
     controls : TaskControls or None, default=None
         Optional retry, timeout, execution limit, and publish budget controls.
         ``None`` uses default controls.

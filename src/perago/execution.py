@@ -19,7 +19,7 @@ from perago.errors import (
     TaskInputError,
 )
 from perago.guards import check_guardrails
-from perago.metrics import MetricRecorder
+from perago.metrics import MetricRecorder, RuntimeMetricContext
 from perago.models import WorkspaceInput, WorkspaceSpec
 from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
@@ -167,6 +167,9 @@ def run_workspace_task_attempt(
     execution_id : str or None, default=None
         Execution-scoped id used to isolate local attempt workspace and LakeFS
         staging branch names. A new id is generated when omitted.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder for metrics-enabled tasks and Perago
+        runtime workspace I/O metrics.
     failure_reason_max_length : int
         Maximum number of characters written to ``reasonForIncompletion`` for
         failed attempts.
@@ -233,7 +236,22 @@ def run_workspace_task_attempt(
             raise TaskInputError("workspace task input must contain only workspace and params")
         workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
         workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
-        download_workspace(workspace_input, workspace, workspace_dir)
+        runtime_metrics_context = RuntimeMetricContext(task_name=task.name)
+        if _workspace_io_metrics_enabled(task, metrics):
+            with metrics.runtime_timer(
+                "workspace_io_duration_seconds",
+                context=runtime_metrics_context,
+                labels={"operation": "download"},
+            ):
+                download_workspace(workspace_input, workspace, workspace_dir)
+            metrics.runtime_histogram(
+                "workspace_io_bytes",
+                _workspace_file_bytes(workspace_dir),
+                context=runtime_metrics_context,
+                labels={"operation": "download"},
+            )
+        else:
+            download_workspace(workspace_input, workspace, workspace_dir)
         initial_snapshot = None if workspace.read_only else _snapshot_workspace(workspace_dir)
         body_output = invoke_workspace_task_body(task, input_data, workspace_dir, metrics=metrics)
 
@@ -253,12 +271,25 @@ def run_workspace_task_attempt(
         workspace_changed = _snapshot_workspace(workspace_dir) != initial_snapshot
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
         if not workspace_changed:
-            published_ref = _complete_noop_workspace(
-                complete_noop_workspace,
-                workspace_input,
-                workspace,
-                execution,
-            )
+            if _workspace_io_metrics_enabled(task, metrics):
+                with metrics.runtime_timer(
+                    "workspace_io_duration_seconds",
+                    context=runtime_metrics_context,
+                    labels={"operation": "publish"},
+                ):
+                    published_ref = _complete_noop_workspace(
+                        complete_noop_workspace,
+                        workspace_input,
+                        workspace,
+                        execution,
+                    )
+            else:
+                published_ref = _complete_noop_workspace(
+                    complete_noop_workspace,
+                    workspace_input,
+                    workspace,
+                    execution,
+                )
             output_workspace = workspace_input.published_output(published_ref)
             return completed_result(
                 {
@@ -267,9 +298,32 @@ def run_workspace_task_attempt(
                 }
             )
 
-        staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
+        if _workspace_io_metrics_enabled(task, metrics):
+            upload_bytes = _workspace_file_bytes(workspace_dir)
+            with metrics.runtime_timer(
+                "workspace_io_duration_seconds",
+                context=runtime_metrics_context,
+                labels={"operation": "upload"},
+            ):
+                staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
+            metrics.runtime_histogram(
+                "workspace_io_bytes",
+                upload_bytes,
+                context=runtime_metrics_context,
+                labels={"operation": "upload"},
+            )
+        else:
+            staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
-        published_ref = publish_workspace(staged, workspace_input, workspace, execution)
+        if _workspace_io_metrics_enabled(task, metrics):
+            with metrics.runtime_timer(
+                "workspace_io_duration_seconds",
+                context=runtime_metrics_context,
+                labels={"operation": "publish"},
+            ):
+                published_ref = publish_workspace(staged, workspace_input, workspace, execution)
+        else:
+            published_ref = publish_workspace(staged, workspace_input, workspace, execution)
         output_workspace = workspace_input.published_output(published_ref)
         return completed_result(
             {
@@ -309,6 +363,8 @@ def run_workspace_free_task_attempt(
     input_data : mapping of str to Any
         Conductor task input. Workspace-free attempts must contain exactly
         ``"params"``.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder for metrics-enabled tasks.
     failure_reason_max_length : int
         Maximum number of characters written to ``reasonForIncompletion`` for
         failed attempts.
@@ -376,6 +432,9 @@ def invoke_workspace_task_body(
     workspace_dir : pathlib.Path
         Attempt-local workspace directory already populated from the workspace
         input.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder passed to metrics-enabled task
+        functions.
 
     Returns
     -------
@@ -456,6 +515,9 @@ def invoke_workspace_free_task(
         Loaded workspace-free task definition.
     input_data : mapping of str to Any
         Conductor task input containing exactly ``"params"``.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder passed to metrics-enabled task
+        functions.
 
     Returns
     -------
@@ -668,6 +730,21 @@ def _snapshot_workspace(workspace_dir: Path) -> WorkspaceSnapshot:
             continue
         entries.append((workspace_path, "file", _file_digest(local_path)))
     return tuple(entries)
+
+
+def _workspace_io_metrics_enabled(task: TaskDefinition, metrics: MetricRecorder | None) -> bool:
+    return metrics is not None and task.metrics is not None and task.metrics.workspace_io
+
+
+def _workspace_file_bytes(workspace_dir: Path) -> int:
+    total = 0
+    for local_path in workspace_dir.rglob("*"):
+        if not local_path.is_file() or local_path.is_symlink():
+            continue
+        if local_path.relative_to(workspace_dir).name == ATTEMPT_WORKSPACE_MARKER:
+            continue
+        total += local_path.stat().st_size
+    return total
 
 
 def _file_digest(path: Path) -> str:

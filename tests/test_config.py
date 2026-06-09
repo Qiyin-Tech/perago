@@ -80,7 +80,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
                 "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria.local/opentelemetry/v1/metrics",
                 "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip",
-                "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10",
+                "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10000",
                 "OTEL_METRIC_EXPORT_INTERVAL=60000",
                 "PERAGO_INSTANCE_ID=features-build.prod-a_001",
             ]
@@ -117,7 +117,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
         endpoint="http://victoria.local/opentelemetry/v1/metrics",
         instance_id="features-build.prod-a_001",
         compression="gzip",
-        timeout=timedelta(seconds=10),
+        timeout_millis=10000,
         export_interval_millis=60000,
     )
     assert config.lakefs.secret_access_key.get_secret_value() == "lakefs-secret"
@@ -292,7 +292,7 @@ def test_parse_connection_configs_are_optional() -> None:
         {
             "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": " http://victoria.local/opentelemetry/v1/metrics ",
             "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION": "gzip",
-            "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "10",
+            "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "500",
             "OTEL_METRIC_EXPORT_INTERVAL": "60000",
             "PERAGO_INSTANCE_ID": "features-build.prod-a_001",
         }
@@ -300,7 +300,7 @@ def test_parse_connection_configs_are_optional() -> None:
         endpoint="http://victoria.local/opentelemetry/v1/metrics",
         instance_id="features-build.prod-a_001",
         compression="gzip",
-        timeout=timedelta(seconds=10),
+        timeout_millis=500,
         export_interval_millis=60000,
     )
     with pytest.raises(RuntimeConfigError, match="LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY"):
@@ -345,7 +345,7 @@ def test_parse_metrics_config_validates_supported_otel_env_values() -> None:
             }
         )
 
-    with pytest.raises(RuntimeConfigError, match="integer number of seconds"):
+    with pytest.raises(RuntimeConfigError, match="integer number of milliseconds"):
         parse_metrics_config(
             {
                 "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",

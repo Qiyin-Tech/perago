@@ -70,6 +70,7 @@ html_static_path = ["_static"]
 html_search_language = PeragoChineseSearch.lang
 exclude_patterns = [
     "_build",
+    "agents/**",
     "generated/**",
     "adr/**",
     "architecture/adr/template.md",

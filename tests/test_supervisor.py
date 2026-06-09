@@ -715,6 +715,8 @@ def test_broker_process_main_prepares_runtime_and_runs_dispatch_broker(monkeypat
         "conductor_config": config.conductor,
         "client": conductor,
         "failure_reason_max_length": config.failure_reason_max_length,
+        "capacity_metrics": None,
+        "perago_instance_id": None,
         **ipc,
     }
 
@@ -984,6 +986,8 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
         "failure_reason_max_length": config.failure_reason_max_length,
         "workspace_runtime": lakefs_runtime,
         "metrics": None,
+        "capacity_metrics": None,
+        "perago_instance_id": None,
     }
 
 
@@ -1073,7 +1077,10 @@ def test_thread_runner_main_creates_metrics_recorder_for_metrics_enabled_task(mo
         worker_id_prefix="worker",
         conductor=ConductorConfig(server_url="http://conductor.local/api"),
         lakefs=None,
-        metrics=MetricsConfig(endpoint="http://victoria.local/opentelemetry/v1/metrics"),
+        metrics=MetricsConfig(
+            endpoint="http://victoria.local/opentelemetry/v1/metrics",
+            instance_id="prod-a",
+        ),
     )
     task = SimpleNamespace(
         has_workspace=False,
@@ -1102,7 +1109,65 @@ def test_thread_runner_main_creates_metrics_recorder_for_metrics_enabled_task(mo
     _thread_runner_main(config=config, module_target="app.workers.metrics_validate", thread_count=2)
 
     assert ran["metrics"].metrics_config is config.metrics
+    assert ran["capacity_metrics"] is ran["metrics"]
+    assert ran["perago_instance_id"] == "prod-a"
     assert ran["metrics"].closed is True
+
+
+def test_broker_process_main_creates_capacity_recorder_for_worker_capacity_metrics(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=None,
+        metrics=MetricsConfig(
+            endpoint="http://victoria.local/opentelemetry/v1/metrics",
+            instance_id="prod-a",
+        ),
+    )
+    task = SimpleNamespace(
+        has_workspace=False,
+        workspace=None,
+        metrics=SimpleNamespace(worker_capacity=True),
+        controls=SimpleNamespace(publish_budget=None),
+    )
+    runtime = SimpleNamespace(worker_id="workerBroker", log_file=tmp_path / "worker.log")
+    conductor = object()
+    ran = {}
+
+    class FakeOtelMetricRecorder:
+        def __init__(self, metrics_config: MetricsConfig) -> None:
+            self.metrics_config = metrics_config
+            self.closed = False
+
+        def shutdown(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
+    monkeypatch.setattr("perago.supervisor.prepare_worker_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr("perago.supervisor.OrkesConductorRuntimeClient.from_config", lambda conductor_config: conductor)
+    monkeypatch.setattr("perago.supervisor.OtelMetricRecorder", FakeOtelMetricRecorder)
+    monkeypatch.setattr("perago.supervisor.run_conductor_process_broker", lambda **kwargs: ran.update(kwargs))
+
+    _broker_process_main(
+        config=config,
+        module_target="app.workers.metrics_validate",
+        process_count=2,
+        slots=[ProcessExecutorSlot(worker_id="worker0001", connection=object())],
+        executor_event_queue=object(),
+        attempt_fence_request_queue=object(),
+        attempt_fence_response_queues={"worker0001": object()},
+    )
+
+    assert ran["capacity_metrics"].metrics_config is config.metrics
+    assert ran["perago_instance_id"] == "prod-a"
+    assert ran["capacity_metrics"].closed is True
 
 
 def test_process_executor_main_requires_metrics_config_for_metrics_enabled_task(monkeypatch, tmp_path) -> None:

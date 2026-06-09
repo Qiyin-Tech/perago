@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 from perago.errors import RuntimeConfigError
@@ -8,7 +9,7 @@ from perago.execution import (
     run_workspace_free_task_attempt,
     run_workspace_task_attempt,
 )
-from perago.metrics import MetricRecorder
+from perago.metrics import MetricRecorder, RuntimeMetricContext
 from perago.result import RuntimeTaskResult
 from perago.task import TaskDefinition
 
@@ -27,30 +28,39 @@ def execute_polled_task(
     workspace_runtime: WorkspaceRuntime | None = None,
     metrics: MetricRecorder | None = None,
 ) -> RuntimeTaskResult:
-    if task.has_workspace:
-        workspace_runtime = _require_workspace_runtime(workspace_runtime)
-        return run_workspace_task_attempt(
+    started_at = perf_counter()
+    try:
+        if task.has_workspace:
+            workspace_runtime = _require_workspace_runtime(workspace_runtime)
+            return run_workspace_task_attempt(
+                task,
+                attempt.input_data,
+                attempt,
+                workspace_root,
+                download_workspace=workspace_runtime.download_workspace,
+                load_current_attempt=load_current_attempt,
+                stage_workspace=workspace_runtime.stage_workspace,
+                publish_workspace=workspace_runtime.publish_workspace,
+                cleanup_staging=workspace_runtime.cleanup_staging,
+                complete_noop_workspace=workspace_runtime.complete_noop_workspace,
+                owner_worker_id=owner_worker_id,
+                execution_id=execution_id,
+                metrics=metrics,
+                failure_reason_max_length=failure_reason_max_length,
+            )
+        return run_workspace_free_task_attempt(
             task,
             attempt.input_data,
-            attempt,
-            workspace_root,
-            download_workspace=workspace_runtime.download_workspace,
-            load_current_attempt=load_current_attempt,
-            stage_workspace=workspace_runtime.stage_workspace,
-            publish_workspace=workspace_runtime.publish_workspace,
-            cleanup_staging=workspace_runtime.cleanup_staging,
-            complete_noop_workspace=workspace_runtime.complete_noop_workspace,
-            owner_worker_id=owner_worker_id,
-            execution_id=execution_id,
             metrics=metrics,
             failure_reason_max_length=failure_reason_max_length,
         )
-    return run_workspace_free_task_attempt(
-        task,
-        attempt.input_data,
-        metrics=metrics,
-        failure_reason_max_length=failure_reason_max_length,
-    )
+    finally:
+        if metrics is not None and task.metrics is not None and task.metrics.attempts:
+            metrics.runtime_histogram(
+                "task_attempt_duration_seconds",
+                perf_counter() - started_at,
+                context=RuntimeMetricContext(task_name=task.name),
+            )
 
 
 def _require_workspace_runtime(workspace_runtime: WorkspaceRuntime | None) -> WorkspaceRuntime:

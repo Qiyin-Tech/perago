@@ -28,6 +28,8 @@ def run_conductor_thread_runner(
     failure_reason_max_length: int,
     workspace_runtime: WorkspaceRuntime | None = None,
     metrics: MetricRecorder | None = None,
+    capacity_metrics: MetricRecorder | None = None,
+    perago_instance_id: str | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoThreadWorker(
@@ -39,6 +41,8 @@ def run_conductor_thread_runner(
         failure_reason_max_length=failure_reason_max_length,
         workspace_runtime=workspace_runtime,
         metrics=metrics,
+        capacity_metrics=capacity_metrics,
+        perago_instance_id=perago_instance_id,
     )
     runner = runner_cls(
         worker,
@@ -72,6 +76,8 @@ def run_conductor_process_broker(
     client: ConductorRuntimeClient | None = None,
     completion_timeout_seconds: float | None = None,
     failure_reason_max_length: int,
+    capacity_metrics: MetricRecorder | None = None,
+    perago_instance_id: str | None = None,
     runner_cls: type[TaskRunner] = TaskRunner,
 ) -> None:
     worker = PeragoProcessDispatchWorker(
@@ -85,6 +91,8 @@ def run_conductor_process_broker(
         client=client,
         completion_timeout_seconds=completion_timeout_seconds,
         failure_reason_max_length=failure_reason_max_length,
+        capacity_metrics=capacity_metrics,
+        perago_instance_id=perago_instance_id,
     )
     runner = runner_cls(
         worker,

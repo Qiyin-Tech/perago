@@ -132,6 +132,10 @@ runtime.busy_slots{task_name, perago_instance_id}
 ```
 
 第一版不设计 counter 指标，也不记录 runtime failure count。失败细节留在 Conductor 状态和 worker logs 中。
+`runtime.workspace_io_duration_seconds` 的 `operation` 保持 `download`、`upload` 和 `publish`。
+`runtime.workspace_io_bytes` 只记录 `download` 和 `upload`；`publish` 不写 0 样本。
+`download` bytes 表示成功物化到本地 attempt workspace 的文件总大小。
+`upload` bytes 表示 staging 上传前本地 attempt workspace 中待发布文件的总大小。
 
 `operation` 只使用低基数值：
 
@@ -229,7 +233,7 @@ metrics export 使用 OpenTelemetry Python SDK 的 OTLP/HTTP protobuf exporter�
 ```text
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria-metrics:8428/opentelemetry/v1/metrics
 OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip
-OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10
+OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10000
 OTEL_METRIC_EXPORT_INTERVAL=60000
 PERAGO_INSTANCE_ID=features-build-prod-a-alloc-01
 ```
@@ -244,7 +248,7 @@ OTEL_METRIC_EXPORT_INTERVAL
 PERAGO_INSTANCE_ID
 ```
 
-`OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` 直接按 OpenTelemetry Python OTLP/HTTP metrics exporter 当前接受的秒数数字传递，例如 `10` 表示 10 秒；不接受 `10s` 这类带单位后缀。`OTEL_METRIC_EXPORT_INTERVAL` 仍使用 OTel SDK 的毫秒整数语义。
+`OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` 遵循 OpenTelemetry 环境变量语义，按正整数毫秒解析，例如 `10000` 表示 10 秒，`500` 表示 500 毫秒；不接受 `10s` 这类带单位后缀，也不接受 `0`。Perago 在构造 Python exporter 时把该毫秒值转换为 exporter API 需要的秒数。`OTEL_METRIC_EXPORT_INTERVAL` 仍使用 OTel SDK 的毫秒整数语义。
 
 第一版不支持：
 

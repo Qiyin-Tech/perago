@@ -17,6 +17,11 @@ def test_env_example_contains_runtime_connection_keys() -> None:
         "PERAGO_WORKSPACE_GC_TTL": "24h",
         "PERAGO_WORKSPACE_GC_INTERVAL": "1h",
         "PERAGO_WORKER_ID_PREFIX": "peragoLocalWorker",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria-metrics:8428/opentelemetry/v1/metrics",
+        "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION": "gzip",
+        "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "10000",
+        "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+        "PERAGO_INSTANCE_ID": "perago-local-001",
     }
 
     assert "PERAGO_WORKER_ID" not in values

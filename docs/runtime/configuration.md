@@ -62,10 +62,32 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for workspace-task `perago start` | 无 | LakeFS secret access key。 |
 | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | required for metrics-enabled `perago start` | 无 | OTLP/HTTP protobuf metrics endpoint。Perago 第一版只支持 metrics-specific endpoint，不读取 generic `OTEL_EXPORTER_OTLP_ENDPOINT`。 |
 | `OTEL_EXPORTER_OTLP_METRICS_COMPRESSION` | optional | unset | 第一版只接受 `gzip`。 |
-| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` | optional | OTel Python exporter 默认值 | 按 OpenTelemetry Python OTLP/HTTP metrics exporter 当前接受的秒数数字解析，例如 `10` 表示 10 秒；不接受 `10s`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` | optional | OTel Python exporter 默认值 | 按 OpenTelemetry 环境变量语义解析为正整数毫秒，例如 `10000` 表示 10 秒，`500` 表示 500ms；不接受 `10s` 或 `0`。 |
 | `OTEL_METRIC_EXPORT_INTERVAL` | optional | OTel SDK 默认值 | 正整数毫秒，例如 `60000`。 |
 
 Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。Conductor auth key/secret 可以由底层 SDK 或部署环境使用；Perago `RuntimeConfig` 暂不建模这两个字段。
+
+## 本地 VictoriaMetrics smoke test
+
+仓库提供一个只用于本地真实 OTLP 写入验证的 VictoriaMetrics compose 文件。它不包含 Collector、Grafana、Conductor 或 LakeFS，也不是生产部署模板。
+
+启动本地 VictoriaMetrics：
+
+```bash
+rtk docker compose -f docker-compose.victoria-metrics.yml up -d
+```
+
+运行 opt-in integration test：
+
+```bash
+PERAGO_RUN_VICTORIA_METRICS_TEST=1 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:8428/opentelemetry/v1/metrics rtk uv run pytest -q tests/integration/test_victoria_metrics.py
+```
+
+清理容器和本地 volume：
+
+```bash
+rtk docker compose -f docker-compose.victoria-metrics.yml down -v
+```
 
 ## 本地目录校验
 

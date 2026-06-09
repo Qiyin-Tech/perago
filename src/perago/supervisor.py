@@ -313,6 +313,7 @@ def _run_worker_supervisor_locked(
                 try:
                     executor_connections[slot].close()
                 except (AttributeError, OSError):
+                    # Restart cleanup is best effort; a dead pipe must not block executor replacement.
                     pass
                 delay = restart_backoff_seconds(restart_count)
                 logger.bind(
@@ -622,22 +623,34 @@ def _broker_process_main(
     if conductor_config is None:
         raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    capacity_metrics = None
+    if getattr(task, "metrics", None) is not None and getattr(task.metrics, "worker_capacity", True):
+        metrics_config = config.metrics
+        if metrics_config is None:
+            raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks")
+        capacity_metrics = OtelMetricRecorder(metrics_config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process broker started"
     )
-    run_conductor_process_broker(
-        task=task,
-        worker_id=runtime.worker_id,
-        process_count=process_count,
-        conductor_config=conductor_config,
-        slots=slots,
-        executor_event_queue=executor_event_queue,
-        attempt_fence_request_queue=attempt_fence_request_queue,
-        attempt_fence_response_queues=attempt_fence_response_queues,
-        client=conductor,
-        failure_reason_max_length=config.failure_reason_max_length,
-    )
+    try:
+        run_conductor_process_broker(
+            task=task,
+            worker_id=runtime.worker_id,
+            process_count=process_count,
+            conductor_config=conductor_config,
+            slots=slots,
+            executor_event_queue=executor_event_queue,
+            attempt_fence_request_queue=attempt_fence_request_queue,
+            attempt_fence_response_queues=attempt_fence_response_queues,
+            client=conductor,
+            failure_reason_max_length=config.failure_reason_max_length,
+            capacity_metrics=capacity_metrics,
+            perago_instance_id=config.metrics.instance_id if config.metrics is not None else None,
+        )
+    finally:
+        if capacity_metrics is not None:
+            capacity_metrics.shutdown()
 
 
 def _process_executor_main(
@@ -720,6 +733,8 @@ def _thread_runner_main(
             failure_reason_max_length=config.failure_reason_max_length,
             workspace_runtime=lakefs,
             metrics=metrics,
+            capacity_metrics=metrics if getattr(task, "metrics", None) is not None and getattr(task.metrics, "worker_capacity", True) else None,
+            perago_instance_id=config.metrics.instance_id if config.metrics is not None else None,
         )
     finally:
         if metrics is not None:

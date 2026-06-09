@@ -25,6 +25,14 @@ class TaskAttemptMetricContext:
     retry_count: int
 
 
+@dataclass(frozen=True)
+class RuntimeMetricContext:
+    """Read-only identity attached to Perago runtime metrics."""
+
+    task_name: str
+    perago_instance_id: str | None = None
+
+
 class MetricRecorder(ABC):
     """Perago-owned metrics API injected into metrics-enabled task workers."""
 
@@ -49,9 +57,45 @@ class MetricRecorder(ABC):
     def timer(self, name: str, *, labels: Mapping[str, str] | None = None) -> AbstractContextManager[Any]:
         """Record elapsed time when the returned context manager exits."""
 
+    @abstractmethod
+    def runtime_histogram(
+        self,
+        name: str,
+        value: int | float,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
+        """Record a Perago-owned runtime distribution sample."""
+
+    @abstractmethod
+    def runtime_gauge(
+        self,
+        name: str,
+        value: int | float,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
+        """Record a Perago-owned runtime current value sample."""
+
+    @abstractmethod
+    def runtime_timer(
+        self,
+        name: str,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> AbstractContextManager[Any]:
+        """Record runtime elapsed time when the returned context manager exits."""
+
 
 def application_metric_name(name: str) -> str:
     return f"app.{name}"
+
+
+def runtime_metric_name(name: str) -> str:
+    return f"runtime.{name}"
 
 
 def merge_metric_labels(
@@ -64,6 +108,27 @@ def merge_metric_labels(
     merged_labels = {"task_name": context.task_name}
     if perago_labels:
         merged_labels.update(perago_labels)
+
+    if labels:
+        for key, label_value in labels.items():
+            if key in merged_labels:
+                _warn_ignored_label(metric_name, key, merged_labels[key], label_value)
+                continue
+            if key in RESERVED_ATTEMPT_LABELS:
+                _warn_ignored_label(metric_name, key, "<reserved>", label_value)
+                continue
+            merged_labels[key] = label_value
+    return merged_labels
+
+
+def merge_runtime_metric_labels(
+    metric_name: str,
+    context: RuntimeMetricContext,
+    labels: Mapping[str, str] | None,
+) -> dict[str, str]:
+    merged_labels = {"task_name": context.task_name}
+    if context.perago_instance_id is not None:
+        merged_labels["perago_instance_id"] = context.perago_instance_id
 
     if labels:
         for key, label_value in labels.items():
@@ -99,6 +164,36 @@ class MetricTimer(AbstractContextManager[None]):
         if self._started_at is None:
             return
         self._recorder.histogram(self._name, perf_counter() - self._started_at, labels=self._labels)
+
+
+class RuntimeMetricTimer(AbstractContextManager[None]):
+    def __init__(
+        self,
+        recorder: MetricRecorder,
+        name: str,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None,
+    ) -> None:
+        self._recorder = recorder
+        self._name = name
+        self._context = context
+        self._labels = labels
+        self._started_at: float | None = None
+
+    def __enter__(self) -> None:
+        self._started_at = perf_counter()
+        return None
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        del exc_type, exc_value, traceback
+        if self._started_at is None:
+            return
+        self._recorder.runtime_histogram(
+            self._name,
+            perf_counter() - self._started_at,
+            context=self._context,
+            labels=self._labels,
+        )
 
 
 def warn_rebinding_context(
