@@ -77,6 +77,7 @@ exclude_patterns = [
     "conductor/**",
     "documentation_development_plan.md",
     "mvp_examples.md",
+    "todo.md",
     "transaction_model/**",
 ]
 

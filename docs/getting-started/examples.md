@@ -4,7 +4,7 @@
 
 ## Workspace task
 
-`tests/fixtures/app/workers/features_build.py` 是完整 workspace task。它展示了 single-task module、Pydantic params/output、workspace prefix、pre/post guardrails 和 TaskDef controls 如何组合。
+这个完整 workspace task 展示了 single-task module、Pydantic params/output、workspace prefix、pre/post guardrails、TaskDef controls 和 metrics 如何组合。
 
 ```python
 from pathlib import Path
@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 from perago import (
     ExecutionLimits,
+    MetricRecorder,
+    MetricSpec,
     RetryPolicy,
     TaskControls,
     TimeoutPolicy,
@@ -55,11 +57,19 @@ class BuildFeaturesOutput(BaseModel):
         timeout=TimeoutPolicy(response_seconds=900),
         limits=ExecutionLimits(concurrent_exec_limit=2),
     ),
+    metrics=MetricSpec(),
 )
-def build_features(workspace: Path, params: BuildFeaturesParams) -> BuildFeaturesOutput:
+def build_features(
+    workspace: Path,
+    params: BuildFeaturesParams,
+    metrics: MetricRecorder,
+) -> BuildFeaturesOutput:
     features = workspace / "features"
     features.mkdir(exist_ok=True)
-    (features / f"{params.feature_set}.parquet").write_text("ok", encoding="utf-8")
+    output = features / f"{params.feature_set}.parquet"
+    with metrics.timer("feature_write", labels={"format": "parquet"}):
+        output.write_text("ok", encoding="utf-8")
+    metrics.histogram("feature_count", 24)
     return BuildFeaturesOutput(row_count=100, feature_count=24)
 ```
 
@@ -67,8 +77,13 @@ def build_features(workspace: Path, params: BuildFeaturesParams) -> BuildFeature
 
 - Required: `name`、`owner_email`、`params` 类型注解、返回类型注解，以及 runtime input 中的 `workspace` 和 `params`。
 - Optional: `description`、`WorkspaceSpec.prefix`、pre/post guardrails、`TaskControls` 中的 retry/timeout/limits。
-- Generated: 业务函数的 `workspace: Path` 参数、TaskDef schema、成功输出中的 `workspace` ref。
+- Generated: 业务函数的 `workspace: Path` 参数、TaskDef schema、成功输出中的 `workspace` ref，以及自动 runtime metrics。
 - Forbidden: 业务函数直接接收 LakeFS ref、把业务字段展开成多个函数参数、在 decorator 中重复声明 params/output schema。
+
+声明 `metrics=MetricSpec()` 后，函数签名必须接收 `metrics: MetricRecorder`。上例中的
+application metrics 会导出为 `app.feature_write_seconds` 和 `app.feature_count`，
+并自动带 `task_name="features.build"` label。内置 runtime metrics 会记录 attempt
+duration、workspace I/O duration/bytes 和 busy slots；详情见 {doc}`metrics`。
 
 ## Read-only workspace task
 

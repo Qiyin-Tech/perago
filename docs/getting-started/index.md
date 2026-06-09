@@ -9,7 +9,8 @@ Perago 的上手路径分两步：先写一个 single-task Python module，再�
 1. 如果 task 需要读取或发布 LakeFS workspace，先读 {doc}`workspace-task`。
 2. 如果 task 不接收 workspace，只处理 typed params/result，先读 {doc}`workspace-free-task`。
 3. 用 {doc}`commands` 跑 `perago check` 和 `perago extract`；准备好外部服务配置后再跑 `perago start`。
-4. 需要收紧 contract、文件检查、TaskDef 控制字段或失败语义时，再进入对应专题页。
+4. 需要记录 runtime 和业务 metrics 时，读 {doc}`metrics`。
+5. 需要收紧 contract、文件检查、TaskDef 控制字段或失败语义时，再进入对应专题页。
 
 ## 页面导览
 
@@ -20,6 +21,7 @@ Perago 的上手路径分两步：先写一个 single-task Python module，再�
 | 理解 `params` / `result` 的 Pydantic 规则 | {doc}`pydantic-contracts` |
 | 声明输入输出文件检查 | {doc}`guardrails` |
 | 配置 retry、timeout、execution limit、publish budget | {doc}`controls-and-taskdef` |
+| 为 task 启用 metrics 并写业务指标 | {doc}`metrics` |
 | 本地校验、导出 TaskDef、启动 worker | {doc}`commands` |
 | 区分业务分支、retryable failure 和 terminal failure | {doc}`failure-signaling` |
 | 直接看完整正例和反例 | {doc}`examples` |
@@ -32,6 +34,7 @@ workspace-free-task
 pydantic-contracts
 guardrails
 controls-and-taskdef
+metrics
 commands
 failure-signaling
 examples
