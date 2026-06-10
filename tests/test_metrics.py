@@ -238,6 +238,31 @@ def test_otel_recorder_uses_distinct_histogram_and_gauge_paths(monkeypatch) -> N
     ]
 
 
+def test_otel_recorder_shutdown_uses_configured_timeout(monkeypatch) -> None:
+    meter = FakeMeter()
+    provider = FakeMeterProvider(meter)
+    monkeypatch.setattr("perago.metrics.otel._meter_provider_from_config", lambda config: provider)
+
+    recorder = OtelMetricRecorder(_config()).with_context(_context())
+    recorder.shutdown()
+
+    assert provider.shutdown_called is True
+    assert provider.shutdown_timeout_millis == 10000
+
+
+def test_otel_recorder_shutdown_keeps_sdk_default_without_configured_timeout(monkeypatch) -> None:
+    meter = FakeMeter()
+    provider = FakeMeterProvider(meter)
+    monkeypatch.setattr("perago.metrics.otel._meter_provider_from_config", lambda config: provider)
+    config = MetricsConfig(endpoint="http://victoria.local/opentelemetry/v1/metrics")
+
+    recorder = OtelMetricRecorder(config)
+    recorder.shutdown()
+
+    assert provider.shutdown_called is True
+    assert provider.shutdown_timeout_millis is None
+
+
 class FakeMeter:
     def __init__(self) -> None:
         self.histograms: dict[str, FakeHistogram] = {}
@@ -276,10 +301,12 @@ class FakeMeterProvider:
     def __init__(self, meter: FakeMeter) -> None:
         self._meter = meter
         self.shutdown_called = False
+        self.shutdown_timeout_millis = None
 
     def get_meter(self, name: str):
         assert name == "perago"
         return self._meter
 
-    def shutdown(self) -> None:
+    def shutdown(self, timeout_millis=None) -> None:
         self.shutdown_called = True
+        self.shutdown_timeout_millis = timeout_millis

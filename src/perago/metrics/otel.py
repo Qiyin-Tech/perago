@@ -34,6 +34,7 @@ class OtelMetricRecorder(MetricRecorder):
         meter_provider = _meter_provider_from_config(config)
         self._context: TaskAttemptMetricContext | None = None
         self._meter_provider = meter_provider
+        self._shutdown_timeout_millis = config.timeout_millis
         self._meter = meter_provider.get_meter("perago")
         self._histograms: dict[str, Any] = {}
         self._gauges: dict[str, Any] = {}
@@ -45,6 +46,7 @@ class OtelMetricRecorder(MetricRecorder):
         *,
         context: TaskAttemptMetricContext,
         meter_provider: MeterProvider,
+        shutdown_timeout_millis: int | None,
         meter: Meter,
         histograms: dict[str, Any],
         gauges: dict[str, Any],
@@ -53,6 +55,7 @@ class OtelMetricRecorder(MetricRecorder):
         recorder = cls.__new__(cls)
         recorder._context = context
         recorder._meter_provider = meter_provider
+        recorder._shutdown_timeout_millis = shutdown_timeout_millis
         recorder._meter = meter
         recorder._histograms = histograms
         recorder._gauges = gauges
@@ -65,6 +68,7 @@ class OtelMetricRecorder(MetricRecorder):
         return OtelMetricRecorder._bound(
             context=context,
             meter_provider=self._meter_provider,
+            shutdown_timeout_millis=self._shutdown_timeout_millis,
             meter=self._meter,
             histograms=self._histograms,
             gauges=self._gauges,
@@ -126,7 +130,10 @@ class OtelMetricRecorder(MetricRecorder):
         return RuntimeMetricTimer(self, name, context, labels)
 
     def shutdown(self) -> None:
-        self._meter_provider.shutdown()
+        if self._shutdown_timeout_millis is None:
+            self._meter_provider.shutdown()
+            return
+        self._meter_provider.shutdown(timeout_millis=self._shutdown_timeout_millis)
 
     def _histogram_instrument(self, metric_name: str) -> Any:
         with self._instruments_lock:
