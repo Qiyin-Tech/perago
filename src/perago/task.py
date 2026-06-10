@@ -280,7 +280,7 @@ def _build_task_definition(
         _validate_workspace_metrics_signature(parameters, hints, workspace, metrics)
     elif len(parameters) == 2:
         if parameters[0].name == "params" and parameters[1].name == "metrics":
-            _validate_workspace_free_metrics_signature(parameters, hints, metrics)
+            _validate_workspace_free_metrics_signature(parameters, hints, workspace, metrics)
         else:
             _validate_workspace_signature(parameters, hints, workspace, metrics)
     elif len(parameters) == 1:
@@ -330,10 +330,13 @@ def _validate_workspace_metrics_signature(
 def _validate_workspace_free_metrics_signature(
     parameters: list[inspect.Parameter],
     hints: dict[str, Any],
+    workspace: WorkspaceSpec | None,
     metrics: MetricSpec | None,
 ) -> None:
     if parameters[0].name != "params" or parameters[1].name != "metrics":
         raise TaskDefinitionError("metrics-enabled workspace-free task parameters must be named params and metrics")
+    if workspace is not None:
+        raise TaskDefinitionError("workspace-free task functions must not declare workspace=WorkspaceSpec(...)")
     if hints.get("metrics") is not MetricRecorder:
         raise TaskDefinitionError("metrics must be annotated as perago.MetricRecorder")
     if metrics is None:

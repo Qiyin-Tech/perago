@@ -67,6 +67,20 @@ def test_declares_metrics_enabled_workspace_free_task_definition() -> None:
     assert task_definition.output_model is Output
 
 
+def test_rejects_metrics_enabled_workspace_free_task_with_workspace_spec() -> None:
+    with pytest.raises(TaskDefinitionError, match="must not declare workspace"):
+
+        @task(
+            name="bad.metrics_workspace_free_with_spec",
+            owner_email="data@example.com",
+            workspace=WorkspaceSpec(),
+            metrics=MetricSpec(),
+        )
+        def bad_metrics_workspace_free_with_spec(params: Params, metrics: MetricRecorder) -> Output:
+            del metrics
+            return Output(value=params.value)
+
+
 def test_rejects_bad_signature() -> None:
     with pytest.raises(TaskDefinitionError, match="workspace task parameters"):
         load_module_task("app.workers.bad_signature")
