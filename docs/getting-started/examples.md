@@ -69,7 +69,7 @@ def build_features(
     output = features / f"{params.feature_set}.parquet"
     with metrics.timer("feature_write", labels={"format": "parquet"}):
         output.write_text("ok", encoding="utf-8")
-    metrics.histogram("feature_count", 24)
+    metrics.histogram("feature_count", 24, labels={"stage": "write"})
     return BuildFeaturesOutput(row_count=100, feature_count=24)
 ```
 
@@ -81,8 +81,9 @@ def build_features(
 - Forbidden: 业务函数直接接收 LakeFS ref、把业务字段展开成多个函数参数、在 decorator 中重复声明 params/output schema。
 
 声明 `metrics=MetricSpec()` 后，函数签名必须接收 `metrics: MetricRecorder`。上例中的
-application metrics 会导出为 `app.feature_write_seconds` 和 `app.feature_count`，
-并自动带 `task_name="features.build"` label。内置 runtime metrics 会记录 attempt
+application metrics 会导出为 `app.feature_write` 和 `app.feature_count`，
+并且自动带 `task_name="features.build"` label，同时保留通过 `labels=...` 传入的
+`format="parquet"`、`stage="write"` 用户 label。内置 runtime metrics 会记录 attempt
 duration、workspace I/O duration/bytes 和 busy slots；详情见 {doc}`metrics`。
 
 ## Read-only workspace task

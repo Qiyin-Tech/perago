@@ -77,22 +77,48 @@ def build_features(
 
 ## Application metrics
 
-task body 只能使用 `MetricRecorder` 的三个方法：
+`task_name` label 来自 `@task(name=...)`，不是通过 `labels` 传入。下面假设当前
+task 声明为 `@task(name="audio.transcribe", ...)`。
+
+task body 只能使用 `MetricRecorder` 的三个方法。用户 label 通过 `labels=...` 传入；
+`labels` 是可选参数，key 和 value 都必须是字符串：
 
 ```python
-metrics.histogram("batch_rows", 100, labels={"stage": "normalize"})
+# 没有用户 label。
 metrics.gauge("queue_depth", 3)
 
+# 通过 labels=... 传入用户 label。
+metrics.histogram("audio_chunks", 12, labels={"stage": "decode", "format": "wav"})
+
+# timer 也通过 labels=... 传入用户 label。
 with metrics.timer("model_call", labels={"provider": "openai"}):
-    ...
+    transcript = call_model()
 ```
 
 application metrics 导出时自动加 `app.` 前缀，并自动带 `task_name` label：
 
+| Recorder call | 导出的指标名 | 自动 labels | 用户 labels |
+| --- | --- | --- | --- |
+| `metrics.gauge("queue_depth", ...)` | `app.queue_depth` | `task_name="audio.transcribe"` | 无 |
+| `metrics.histogram("audio_chunks", ...)` | `app.audio_chunks` | `task_name="audio.transcribe"` | `stage="decode"`, `format="wav"` |
+| `metrics.timer("model_call", ...)` | `app.model_call` | `task_name="audio.transcribe"` | `provider="openai"` |
+
+`timer()` 会把耗时秒数记录到给定名称的 histogram 中，不会自动给指标名追加
+`_seconds`。
+
+在 VictoriaMetrics 里，histogram 会按 Prometheus 形态展开成多条 series：
+
+| Perago 指标名 | VictoriaMetrics series |
+| --- | --- |
+| `app.audio_chunks` | `app.audio_chunks_bucket`、`app.audio_chunks_count`、`app.audio_chunks_sum` |
+| `app.model_call` | `app.model_call_bucket`、`app.model_call_count`、`app.model_call_sum` |
+
+`_sum` 是样本值总和，`_count` 是样本数。需要平均值时用 `_sum / _count`：
+
 ```text
-app.batch_rows{task_name="features.build", stage="normalize"}
-app.queue_depth{task_name="features.build"}
-app.model_call_seconds{task_name="features.build", provider="openai"}
+sum by (task_name) ({__name__="app.model_call_sum"})
+/
+sum by (task_name) ({__name__="app.model_call_count"})
 ```
 
 metric name 使用稳定、低基数的业务动作名。不要把文件名、用户 id、attempt id、
@@ -113,6 +139,20 @@ label key，并记录 warning。
 `runtime.workspace_io_duration_seconds` 的 `operation` 是 `download`、`upload` 或
 `publish`。`runtime.workspace_io_bytes` 只记录 `download` 和 `upload`，不会为
 `publish` 写入 0 样本。
+
+这些 runtime histogram 在 VictoriaMetrics 中同样展开成 `_bucket`、`_count` 和
+`_sum` series。例如 `runtime.workspace_io_duration_seconds` 会写成
+`runtime.workspace_io_duration_seconds_bucket`、
+`runtime.workspace_io_duration_seconds_count` 和
+`runtime.workspace_io_duration_seconds_sum`。按 operation 计算平均耗时：
+
+```text
+sum by (task_name, operation) ({__name__="runtime.workspace_io_duration_seconds_sum"})
+/
+sum by (task_name, operation) ({__name__="runtime.workspace_io_duration_seconds_count"})
+```
+
+`runtime.busy_slots` 是 gauge，不会展开成 `_sum` 或 `_count`。
 
 按大类关闭内置 runtime metrics：
 
