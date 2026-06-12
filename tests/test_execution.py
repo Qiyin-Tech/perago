@@ -1,5 +1,8 @@
+from collections.abc import Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -7,6 +10,8 @@ from pydantic import BaseModel, Field, ValidationError
 from perago import (
     PostGuardrailViolation,
     PreGuardrailViolation,
+    MetricRecorder,
+    MetricSpec,
     StagedWorkspace,
     TaskFailed,
     TaskInputError,
@@ -20,6 +25,7 @@ from perago import (
     require_dir,
     task,
 )
+from perago.metrics import RuntimeMetricContext, TaskAttemptMetricContext
 from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH
 from perago.execution import (
     run_workspace_free_task_attempt as _run_workspace_free_task_attempt,
@@ -47,6 +53,84 @@ class NestedOutput(BaseModel):
 
 class StatusOutput(BaseModel):
     status: str
+
+
+class FakeMetricRecorder(MetricRecorder):
+    def __init__(self) -> None:
+        self.histograms: list[tuple[str, int | float, dict[str, str]]] = []
+        self.gauges: list[tuple[str, int | float, dict[str, str]]] = []
+
+    def with_context(self, context: TaskAttemptMetricContext) -> MetricRecorder:
+        del context
+        return self
+
+    @property
+    def context(self) -> TaskAttemptMetricContext | None:
+        return TaskAttemptMetricContext(
+            task_name="tests.metrics",
+            task_id="task-9b4c",
+            workflow_instance_id="wf-7f3d",
+            execution_id="exec-1",
+            worker_id="worker-1",
+            retry_count=2,
+        )
+
+    def histogram(self, name: str, value: int | float, *, labels: Mapping[str, str] | None = None) -> None:
+        self.histograms.append((f"app.{name}", value, dict(labels or {})))
+
+    def gauge(self, name: str, value: int | float, *, labels: Mapping[str, str] | None = None) -> None:
+        self.gauges.append((f"app.{name}", value, dict(labels or {})))
+
+    def timer(self, name: str, *, labels: Mapping[str, str] | None = None) -> AbstractContextManager[Any]:
+        del name, labels
+        return nullcontext()
+
+    def runtime_histogram(
+        self,
+        name: str,
+        value: int | float,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
+        merged = {"task_name": context.task_name}
+        if context.perago_instance_id is not None:
+            merged["perago_instance_id"] = context.perago_instance_id
+        merged.update(labels or {})
+        self.histograms.append((f"runtime.{name}", value, merged))
+
+    def runtime_gauge(
+        self,
+        name: str,
+        value: int | float,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> None:
+        merged = {"task_name": context.task_name}
+        if context.perago_instance_id is not None:
+            merged["perago_instance_id"] = context.perago_instance_id
+        merged.update(labels or {})
+        self.gauges.append((f"runtime.{name}", value, merged))
+
+    def runtime_timer(
+        self,
+        name: str,
+        *,
+        context: RuntimeMetricContext,
+        labels: Mapping[str, str] | None = None,
+    ) -> AbstractContextManager[Any]:
+        recorder = self
+
+        class Timer(AbstractContextManager[None]):
+            def __enter__(self) -> None:
+                return None
+
+            def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+                del exc_type, exc_value, traceback
+                recorder.runtime_histogram(name, 0.0, context=context, labels=labels)
+
+        return Timer()
 
 
 @dataclass(frozen=True)
@@ -94,6 +178,62 @@ def same_content_workspace_task(workspace: Path, params: Params) -> Output:
     return Output(value=params.value)
 
 
+@task(name="tests.metrics_workspace", owner_email="data@example.com", workspace=WorkspaceSpec(), metrics=MetricSpec())
+def metrics_workspace_task(workspace: Path, params: Params, metrics: MetricRecorder) -> Output:
+    assert workspace.exists()
+    assert isinstance(metrics, FakeMetricRecorder)
+    return Output(value=params.value)
+
+
+@task(
+    name="tests.metrics_read_only_workspace",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(read_only=True),
+    metrics=MetricSpec(),
+)
+def metrics_read_only_workspace_task(workspace: Path, params: Params, metrics: MetricRecorder) -> Output:
+    del metrics
+    (workspace / "scratch.txt").write_text("discarded", encoding="utf-8")
+    return Output(value=params.value)
+
+
+@task(
+    name="tests.metrics_same_content_workspace",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(),
+    metrics=MetricSpec(),
+)
+def metrics_same_content_workspace_task(workspace: Path, params: Params, metrics: MetricRecorder) -> Output:
+    del metrics
+    (workspace / "raw").mkdir(exist_ok=True)
+    (workspace / "raw" / "input.parquet").write_text("ok", encoding="utf-8")
+    return Output(value=params.value)
+
+
+@task(
+    name="tests.metrics_changed_workspace",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(),
+    metrics=MetricSpec(),
+)
+def metrics_changed_workspace_task(workspace: Path, params: Params, metrics: MetricRecorder) -> Output:
+    del metrics
+    (workspace / "changed.txt").write_text(str(params.value), encoding="utf-8")
+    return Output(value=params.value)
+
+
+@task(
+    name="tests.metrics_workspace_io_disabled",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(),
+    metrics=MetricSpec(workspace_io=False),
+)
+def metrics_workspace_io_disabled_task(workspace: Path, params: Params, metrics: MetricRecorder) -> Output:
+    del metrics
+    (workspace / "changed.txt").write_text(str(params.value), encoding="utf-8")
+    return Output(value=params.value)
+
+
 @task(name="tests.workspace_free_failed", owner_email="data@example.com")
 def workspace_free_failed_task(params: Params) -> Output:
     raise TaskFailed(f"retry value {params.value}")
@@ -108,6 +248,12 @@ def workspace_free_terminal_task(params: Params) -> Output:
 def business_rejected_task(params: Params) -> StatusOutput:
     del params
     return StatusOutput(status="REJECTED")
+
+
+@task(name="tests.metrics_workspace_free", owner_email="data@example.com", metrics=MetricSpec())
+def metrics_workspace_free_task(params: Params, metrics: MetricRecorder) -> Output:
+    assert isinstance(metrics, FakeMetricRecorder)
+    return Output(value=params.value)
 
 
 @task(name="tests.workspace_failed_after_write", owner_email="data@example.com", workspace=WorkspaceSpec())
@@ -142,6 +288,14 @@ def run_workspace_task_attempt(*args, **kwargs):
 def run_workspace_free_task_attempt(*args, **kwargs):
     kwargs.setdefault("failure_reason_max_length", DEFAULT_FAILURE_REASON_MAX_LENGTH)
     return _run_workspace_free_task_attempt(*args, **kwargs)
+
+
+def _runtime_histogram_labels(metrics: FakeMetricRecorder, name: str) -> list[dict[str, str]]:
+    return [labels for metric_name, _value, labels in metrics.histograms if metric_name == name]
+
+
+def _runtime_histogram_values(metrics: FakeMetricRecorder, name: str) -> list[int | float]:
+    return [value for metric_name, value, _labels in metrics.histograms if metric_name == name]
 
 
 def test_invokes_workspace_task_body_with_guardrails(tmp_path) -> None:
@@ -295,6 +449,34 @@ def test_run_workspace_task_attempt_read_only_skips_fences_and_publication(tmp_p
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
 
 
+def test_run_workspace_task_attempt_records_read_only_workspace_io_metrics(tmp_path) -> None:
+    metrics = FakeMetricRecorder()
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        (workspace_dir / "input.txt").write_text("hello", encoding="utf-8")
+
+    result = run_workspace_task_attempt(
+        metrics_read_only_workspace_task.__perago_task__,
+        {"workspace": WORKSPACE_INPUT, "params": {"value": 7}},
+        _attempt(),
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: pytest.fail("must not stage"),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: pytest.fail("must not publish"),
+        cleanup_staging=lambda staged: None,
+        metrics=metrics,
+        owner_worker_id="metadataInspect0001",
+    )
+
+    assert result.status == "COMPLETED"
+    assert _runtime_histogram_labels(metrics, "runtime.workspace_io_duration_seconds") == [
+        {"task_name": "tests.metrics_read_only_workspace", "operation": "download"}
+    ]
+    assert _runtime_histogram_values(metrics, "runtime.workspace_io_bytes") == [5]
+
+
 def test_run_workspace_task_attempt_rejects_workspace_free_task_before_preparing_workspace(tmp_path) -> None:
     task = load_module_task("app.workers.metadata_validate")
 
@@ -379,6 +561,100 @@ def test_run_workspace_task_attempt_completes_writable_noop_without_staging(tmp_
     }
     assert calls == ["fence", "noop"]
     assert not attempt_workspace_dir(tmp_path, attempt).exists()
+
+
+def test_run_workspace_task_attempt_records_writable_noop_workspace_io_metrics(tmp_path) -> None:
+    metrics = FakeMetricRecorder()
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        raw = workspace_dir / "raw"
+        raw.mkdir()
+        (raw / "input.parquet").write_text("ok", encoding="utf-8")
+
+    result = run_workspace_task_attempt(
+        metrics_same_content_workspace_task.__perago_task__,
+        {"workspace": WORKSPACE_INPUT, "params": {"value": 9}},
+        _attempt(),
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: pytest.fail("must not stage"),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: pytest.fail("must not publish"),
+        cleanup_staging=lambda staged: None,
+        complete_noop_workspace=lambda workspace_input, workspace_spec, attempt: workspace_input.ref,
+        metrics=metrics,
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.status == "COMPLETED"
+    assert _runtime_histogram_labels(metrics, "runtime.workspace_io_duration_seconds") == [
+        {"task_name": "tests.metrics_same_content_workspace", "operation": "download"},
+        {"task_name": "tests.metrics_same_content_workspace", "operation": "publish"},
+    ]
+    assert _runtime_histogram_values(metrics, "runtime.workspace_io_bytes") == [2]
+
+
+def test_run_workspace_task_attempt_records_changed_workspace_io_metrics_without_publish_bytes(tmp_path) -> None:
+    metrics = FakeMetricRecorder()
+
+    def download_workspace(workspace_input, workspace_spec, workspace_dir) -> None:
+        del workspace_input, workspace_spec
+        (workspace_dir / "input.txt").write_text("abc", encoding="utf-8")
+
+    result = run_workspace_task_attempt(
+        metrics_changed_workspace_task.__perago_task__,
+        {"workspace": WORKSPACE_INPUT, "params": {"value": 5}},
+        _attempt(),
+        tmp_path,
+        download_workspace=download_workspace,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            repository=workspace_input.repository,
+            branch="perago/staging/wf/build",
+            commit="staging-commit",
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "published-ref",
+        cleanup_staging=lambda staged: None,
+        complete_noop_workspace=lambda workspace_input, workspace_spec, attempt: workspace_input.ref,
+        metrics=metrics,
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.status == "COMPLETED"
+    assert _runtime_histogram_labels(metrics, "runtime.workspace_io_duration_seconds") == [
+        {"task_name": "tests.metrics_changed_workspace", "operation": "download"},
+        {"task_name": "tests.metrics_changed_workspace", "operation": "upload"},
+        {"task_name": "tests.metrics_changed_workspace", "operation": "publish"},
+    ]
+    assert _runtime_histogram_values(metrics, "runtime.workspace_io_bytes") == [3, 4]
+
+
+def test_run_workspace_task_attempt_skips_workspace_io_metrics_when_disabled(tmp_path) -> None:
+    metrics = FakeMetricRecorder()
+
+    result = run_workspace_task_attempt(
+        metrics_workspace_io_disabled_task.__perago_task__,
+        {"workspace": WORKSPACE_INPUT, "params": {"value": 5}},
+        _attempt(),
+        tmp_path,
+        download_workspace=lambda workspace_input, workspace_spec, workspace_dir: None,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        stage_workspace=lambda workspace_dir, workspace_input, workspace_spec, attempt: StagedWorkspace(
+            repository=workspace_input.repository,
+            branch="perago/staging/wf/build",
+            commit="staging-commit",
+        ),
+        publish_workspace=lambda staged, workspace_input, workspace_spec, attempt: "published-ref",
+        cleanup_staging=lambda staged: None,
+        metrics=metrics,
+        owner_worker_id="featuresBuild0001",
+    )
+
+    assert result.status == "COMPLETED"
+    assert [
+        sample for sample in metrics.histograms if sample[0].startswith("runtime.workspace_io")
+    ] == []
 
 
 def test_run_workspace_task_attempt_checks_attempt_fence_before_writable_noop(tmp_path) -> None:
@@ -818,6 +1094,38 @@ def test_invokes_workspace_free_task_from_wrapped_params() -> None:
     )
 
     assert output == {"result": {"valid": True, "reason": None}}
+
+
+def test_invokes_metrics_enabled_workspace_free_task_with_recorder() -> None:
+    output = invoke_workspace_free_task(
+        metrics_workspace_free_task.__perago_task__,
+        {"params": {"value": 7}},
+        metrics=FakeMetricRecorder(),
+    )
+
+    assert output == {"result": {"value": 7}}
+
+
+def test_invokes_metrics_enabled_workspace_task_with_recorder(tmp_path: Path) -> None:
+    output = invoke_workspace_task_body(
+        metrics_workspace_task.__perago_task__,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"value": 7},
+        },
+        tmp_path,
+        metrics=FakeMetricRecorder(),
+    )
+
+    assert output == {"result": {"value": 7}}
+
+
+def test_metrics_enabled_workspace_free_task_requires_recorder() -> None:
+    with pytest.raises(TaskInputError, match="MetricRecorder"):
+        invoke_workspace_free_task(
+            metrics_workspace_free_task.__perago_task__,
+            {"params": {"value": 7}},
+        )
 
 
 def test_builds_workspace_task_output_with_published_ref() -> None:

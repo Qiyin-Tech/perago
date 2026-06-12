@@ -20,8 +20,40 @@ _Avoid_: duplicated params declaration, duplicated output declaration
 The Perago configuration object that maps Conductor TaskDef retry, timeout, and execution-limit controls.
 _Avoid_: task contract, business params, workflow input
 
+**Metric Spec**:
+The task-declared Perago metadata that enables metrics recording for a Task Worker.
+_Avoid_: runtime exporter config, log config, business params
+
+**Metric Context**:
+The Perago-owned identity attached to metrics recorded through a Metric Recorder.
+_Avoid_: business labels, arbitrary tag bag, runtime exporter config
+
+**Task Attempt Metric Context**:
+A Metric Context scoped to one Task Attempt.
+_Avoid_: workflow input, business params, global worker state
+
+**Runtime Metric Context**:
+A Metric Context scoped to Perago runtime code outside one Task Attempt.
+_Avoid_: Task Attempt Metric Context, business params, runtime exporter config
+
+**Perago Instance ID**:
+A low-cardinality operator-provided identity for one Perago runtime instance, used to distinguish runtime metrics from multiple instances running the same Task Worker.
+_Avoid_: worker id, task id, workflow instance id, execution id
+
+**Metric Recorder**:
+The Perago-created object used by runtime code and metrics-enabled Task Workers to record metrics with Perago context.
+_Avoid_: logger, OpenTelemetry SDK object, business result
+
+**Runtime Metric**:
+A Perago-owned measurement about Task Attempt execution, Worker Process behavior, or external runtime operations.
+_Avoid_: log event, business KPI, Result Output
+
+**Application Metric**:
+A task-authored measurement emitted from a Task Worker while it runs.
+_Avoid_: Runtime Metric, log event, Result Output
+
 **Task Function Signature**:
-The required Python callable shape for a Task Worker, either `workspace` plus `params` or `params` only, with a typed Pydantic return value.
+The required Python callable shape for a Task Worker: `workspace` plus `params`, or `params` only, with a typed Pydantic return value; a Task Worker with a Metric Spec also receives a Perago-injected metrics argument.
 _Avoid_: arbitrary callable, variadic args, keyword-only contract
 
 **Workspace Input**:
@@ -161,7 +193,27 @@ _Avoid_: file path, object path, module:app target
 - A **Task Module** contains exactly one **Task Worker**.
 - A **Task Worker** exposes exactly one **Task Contract**.
 - A **Task Worker** may declare **Task Controls**.
+- A **Task Worker** may declare one **Metric Spec**.
+- A **Metric Spec** controls **Runtime Metrics** through the `attempts`, `workspace_io`, and `worker_capacity` categories.
+- A **Task Worker** may emit **Application Metrics** while it runs.
+- Perago may emit **Runtime Metrics** about **Task Attempts**, **Worker Processes**, and runtime integrations.
+- Perago runtime code records **Runtime Metrics** through a **Metric Recorder**.
+- A **Metric Recorder** carries one **Metric Context**.
+- A **Metric Recorder** records histograms, gauges, and timed durations.
+- **Metric Recorder** labels are optional.
+- Perago runtime code may use a **Metric Recorder** with a **Runtime Metric Context**.
+- **Runtime Metrics** may carry one **Perago Instance ID** when the metric describes one runtime instance rather than one Task Attempt.
+- A **Task Attempt Metric Context** exposes the current **Task Attempt** identity to the metrics-enabled **Task Worker**.
 - A **Task Contract** is derived from the **Task Function Signature**.
+- A **Task Worker** without a **Metric Spec** uses the non-metrics **Task Function Signature**.
+- A **Task Worker** with a **Metric Spec** receives one **Metric Recorder** with a **Task Attempt Metric Context** through its **Task Function Signature**.
+- A **Task Worker** with a **Metric Spec** requires configured metrics export.
+- Built-in **Runtime Metrics** must not use **Task Attempt** identifiers such as task id, workflow instance id, execution id, or worker id as metric labels.
+- Metrics-enabled **Task Workers** may read **Task Attempt Metric Context** identifiers, but should not put those identifiers into metric labels.
+- Runtime and application metrics automatically carry the Task Worker name as a metric label.
+- The `attempts` metric category records **Task Attempt** duration.
+- The `workspace_io` metric category records workspace I/O duration and bytes using a low-cardinality operation label.
+- The `worker_capacity` metric category records current busy worker slots per **Perago Instance ID**.
 - A **Workspace Task Worker** receives external Conductor input as one **Workspace Input** plus one **Params Input**.
 - A **Workspace Task Worker** emits external Conductor output as one **Workspace Output** plus one **Result Output**.
 - A **Workspace-Free Task Worker** receives external Conductor input as one **Params Input**.
@@ -212,6 +264,8 @@ _Avoid_: file path, object path, module:app target
 - `params` and `output` must not be duplicated in task metadata; the **Task Contract** comes from the function signature.
 - **Task Controls** configure Conductor execution behavior; they do not define the **Task Contract**.
 - A **Task Worker** must use the standard **Task Function Signature**; alternate argument names and extra injected parameters are out of scope for the MVP.
+- **Runtime Metrics** and **Application Metrics** are metrics, not logs; worker logs are collected outside the Perago metrics boundary.
+- "task run" should map to **Task Attempt** unless a different lifecycle boundary is explicitly defined.
 - Business input belongs under **Params Input**; versioned workspace identity belongs under **Workspace Input**.
 - Business output belongs under **Result Output**; committed workspace identity belongs under **Workspace Output**.
 - **Workspace Input** and **Workspace Output** carry repository, **Workspace Branch**, and **Workspace Ref**; the **Workspace Prefix** is task metadata declared in code.

@@ -32,6 +32,7 @@ Perago 目前不会把 Conductor auth key、Conductor auth secret 或 LakeFS 配
 | `PERAGO_LOG_RETENTION` | optional | `30d` | `RuntimeConfig.log_retention` | 接受正整数加 `d`，大小写不敏感，例如 `7d` 或 `30D`。`0d` 和其他单位会被拒绝。 |
 | `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | `RuntimeConfig.worker_id_prefix` | 只能包含 ASCII 字母和数字。supervisor 使用它派生 broker worker id 和 executor `PERAGO_WORKER_ID`。 |
 | `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 调试进程退回到 `<module-target-prefix>-pid-<pid>` | worker runtime identity | `perago start -j` 为 broker 和每个 executor child process 写入该值。常规部署不应在 `.env` 中配置。 |
+| `PERAGO_INSTANCE_ID` | required for metrics-enabled `perago start` when `worker_capacity=True`; optional for `check`/`extract` | 无 | `RuntimeConfig.metrics.instance_id` | 低基数 Perago runtime instance 身份，用于区分多个实例运行同一个 Task Worker 时的 `runtime.busy_slots`。接受 ASCII 字母、数字、点、下划线和连字符。Nomad 部署可由 job/group/allocation 生成并注入。 |
 | `PERAGO_EXECUTION_MODE` | optional | `process` | `RuntimeConfig.execution_mode` | 接受 `process` 或 `thread`，大小写不敏感。CLI `perago start --execution-mode ...` 会覆盖该环境变量。`thread` 使用 SDK `TaskRunner` 在单进程内执行；默认 `process` 使用单 broker + N executor IPC 模型。 |
 | `PERAGO_FAILURE_REASON_MAX_LENGTH` | optional | `500` | `RuntimeConfig.failure_reason_max_length` | 失败 task 写入 Conductor `reasonForIncompletion` 的最大字符数。只接受正整数；超长 reason 会截断并在 worker JSONL 日志中记录原始长度和上限，不记录完整原文。 |
 | `PERAGO_WORKSPACE_GC_TTL` | optional | `24h` | `RuntimeConfig.workspace_gc_ttl` | 接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30m`、`24h`。supervisor 周期 GC 只会删除超过该年龄且不属于活跃 owner 的 attempt workspace。 |
@@ -55,6 +56,7 @@ export PERAGO_LOG_FILE_MAX_SIZE=512KB
 PERAGO_WORKSPACE_ROOT='/tmp/perago/workspaces'
 PERAGO_LOG_ROOT="/tmp/perago/logs"
 PERAGO_WORKER_ID_PREFIX=localWorker
+PERAGO_INSTANCE_ID=localWorker-001
 PERAGO_EXECUTION_MODE=process
 PERAGO_FAILURE_REASON_MAX_LENGTH=500
 PERAGO_WORKSPACE_GC_TTL=24h
@@ -72,6 +74,19 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 
 如果只配置了部分 LakeFS 变量，三个命令都会在加载 runtime config 阶段失败；这是为了避免部署环境带着半套连接配置继续运行。
 
+metrics-enabled task 还会读取第一版支持的 OTLP metrics 环境变量：
+
+| 变量 | 状态 | 默认值 | 读取位置 | 校验和说明 |
+| --- | --- | --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | required for metrics-enabled `perago start`; optional for `check`/`extract` | 无 | `RuntimeConfig.metrics.endpoint` | 只支持 metrics-specific endpoint，Perago 不读取 `OTEL_EXPORTER_OTLP_ENDPOINT` 并自动拼接 `/v1/metrics`。VictoriaMetrics 示例：`http://victoria-metrics:8428/opentelemetry/v1/metrics`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_COMPRESSION` | optional | unset | `RuntimeConfig.metrics.compression` | 第一版只接受 `gzip`；其他压缩值会被拒绝。 |
+| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` | optional | OTel Python exporter 默认值 | `RuntimeConfig.metrics.timeout_millis` | 按 OpenTelemetry 环境变量语义解析为正整数毫秒，例如 `10000` 表示 10 秒，`500` 表示 500ms；不接受 `10s` 或 `0`。Perago 构造 Python exporter 时会转换为秒数。 |
+| `OTEL_METRIC_EXPORT_INTERVAL` | optional | OTel SDK 默认值 | `RuntimeConfig.metrics.export_interval_millis` | 正整数毫秒，例如 `60000`。 |
+
+第一版明确不支持 `OTEL_EXPORTER_OTLP_METRICS_HEADERS`、`OTEL_SERVICE_NAME`、`OTEL_RESOURCE_ATTRIBUTES` 和 `OTEL_EXPORTER_OTLP_ENDPOINT`；配置这些变量会在 runtime config 阶段失败。
+
+如果 task 声明了 `MetricSpec(worker_capacity=True)`，`perago start` 还要求 `PERAGO_INSTANCE_ID`。process mode 的 `runtime.busy_slots` 只由 broker 汇总 executor slot state 后导出一次；executor process 和 supervisor parent 不导出 busy slots。thread mode 由运行 `TaskRunner` 的 worker runtime owner 导出一次。
+
 `perago start` 还会在 `PERAGO_WORKSPACE_ROOT` 下创建 `.perago-supervisor.lock`，锁内容包含当前 supervisor pid。已有活 pid 锁时，启动会失败并提示为每个 supervisor 使用不同的 `PERAGO_WORKSPACE_ROOT`；崩溃遗留的死 pid 锁会在启动时被替换。
 
 ## 常见错误文本
@@ -85,6 +100,11 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_LOG_FILE_MAX_SIZE must be a positive size ...` | 日志文件大小格式无效。 | 使用正数和 `KB`、`MB` 或 `GB` 单位，例如 `512KB`、`100MB`、`1.5GB`。 |
 | `PERAGO_LOG_RETENTION must be a positive day count ...` | 日志保留期格式无效。 | 使用 `7d`、`30d` 这类格式。 |
 | `PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits` | worker id prefix 含有连字符、下划线、点号或非 ASCII 字符。 | 改成只含字母和数字的前缀，例如 `prodAFeaturesBuild`。 |
+| `PERAGO_INSTANCE_ID must contain only ASCII letters, digits, dots, underscores, or hyphens` | Perago instance id 含空格或其他非法字符。 | 使用低基数部署实例名，例如 `features-build-prod-a-001`。 |
+| `PERAGO_INSTANCE_ID is required when worker_capacity metrics are enabled` | metrics-enabled task 默认开启 `worker_capacity`，但启动时未配置 instance id。 | 在 Nomad 或 `.env` 中配置 `PERAGO_INSTANCE_ID`，或在 task 的 `MetricSpec` 中关闭 `worker_capacity`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks` | metrics-enabled task 启动时未配置 OTLP metrics endpoint。 | 配置 metrics-specific endpoint，例如 `http://victoria-metrics:8428/opentelemetry/v1/metrics`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT must be a positive integer number of milliseconds` | timeout 写成了 `10s`、`0` 或其他非整数毫秒格式。 | 使用正整数毫秒，例如 `10000` 或 `500`。 |
+| `OTEL_METRIC_EXPORT_INTERVAL must be a positive integer number of milliseconds` | export interval 不是正整数毫秒。 | 使用毫秒整数，例如 `60000`。 |
 | `PERAGO_EXECUTION_MODE must be either 'process' or 'thread'` | execution mode 超出支持范围。 | 使用默认 `process`，或显式设置为 `thread`。 |
 | `PERAGO_FAILURE_REASON_MAX_LENGTH must be a positive integer` | failure reason 长度上限不是整数。 | 使用正整数，例如 `500` 或 `1200`。 |
 | `PERAGO_FAILURE_REASON_MAX_LENGTH must be greater than zero` | failure reason 长度上限为 `0`。 | 使用大于零的整数。 |

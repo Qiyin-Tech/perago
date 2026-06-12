@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 
 from perago.execution import LoadCurrentAttempt
+from perago.metrics import MetricRecorder, TaskAttemptMetricContext
 from perago.task import TaskDefinition
 
 from .constants import PROCESS_QUEUE_POLL_INTERVAL_SECONDS
@@ -31,6 +32,7 @@ def run_process_executor_loop(
     load_current_attempt: LoadCurrentAttempt,
     failure_reason_max_length: int,
     workspace_runtime: WorkspaceRuntime | None = None,
+    metrics: MetricRecorder | None = None,
 ) -> None:
     logger.bind(worker_id=worker_id).info("process executor started")
     shutdown_requested = False
@@ -63,6 +65,18 @@ def run_process_executor_loop(
                 continue
 
             attempt = assignment.attempt
+            attempt_metrics = None
+            if metrics is not None and task.metrics is not None:
+                attempt_metrics = metrics.with_context(
+                    TaskAttemptMetricContext(
+                        task_name=task.name,
+                        task_id=attempt.task_id,
+                        workflow_instance_id=attempt.workflow_instance_id,
+                        execution_id=assignment.execution_id,
+                        worker_id=worker_id,
+                        retry_count=attempt.retry_count,
+                    )
+                )
             result = execute_polled_task(
                 task=task,
                 attempt=attempt,
@@ -72,6 +86,7 @@ def run_process_executor_loop(
                 owner_worker_id=worker_id,
                 execution_id=assignment.execution_id,
                 failure_reason_max_length=failure_reason_max_length,
+                metrics=attempt_metrics,
             )
             try:
                 connection.send(

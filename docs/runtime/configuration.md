@@ -31,6 +31,7 @@ PERAGO_LOG_ROOT=/var/tmp/perago/logs
 PERAGO_LOG_FILE_MAX_SIZE=100MB
 PERAGO_LOG_RETENTION=30d
 PERAGO_WORKER_ID_PREFIX=peragoLocalWorker
+PERAGO_INSTANCE_ID=perago-local-001
 PERAGO_FAILURE_REASON_MAX_LENGTH=500
 PERAGO_WORKSPACE_GC_TTL=24h
 PERAGO_WORKSPACE_GC_INTERVAL=1h
@@ -50,6 +51,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_LOG_RETENTION` | optional | `30d` | 日志保留天数。接受正整数加 `d`，例如 `7d` 或 `30d`。 |
 | `PERAGO_WORKER_ID_PREFIX` | optional | 从 module target 删除非字母数字字符后派生 | supervisor 为子进程生成 `PERAGO_WORKER_ID` 的前缀。显式配置时只能包含 ASCII 字母和数字。 |
 | `PERAGO_WORKER_ID` | generated / debug-only | supervisor 生成；非 supervisor 进程退回到 module target 加 pid | worker process 身份。`perago start -j` 会为每个 child slot 写入该值；用户一般不应在 `.env` 中配置。 |
+| `PERAGO_INSTANCE_ID` | required for metrics-enabled `perago start` when `worker_capacity=True` | 无 | Perago runtime instance 的低基数部署身份。用于区分多个 Perago instance 运行同一个 Task Worker 时的 `runtime.busy_slots`，接受 ASCII 字母、数字、点、下划线和连字符。 |
 | `PERAGO_FAILURE_REASON_MAX_LENGTH` | optional | `500` | 写入 Conductor `reasonForIncompletion` 的最大字符数。只接受正整数；超长 failure reason 会截断并记录截断元数据到 worker 日志。 |
 | `PERAGO_WORKSPACE_GC_TTL` | optional | `24h` | supervisor workspace GC 删除 abandoned attempt workspace 前等待的最小年龄。接受正整数加 `s`、`m`、`h` 或 `d`。仍属于活跃 executor owner 的 workspace 不会被周期 GC 删除。 |
 | `PERAGO_WORKSPACE_GC_INTERVAL` | optional | `1h` | supervisor 后台 workspace GC loop 的运行间隔。接受正整数加 `s`、`m`、`h` 或 `d`。 |
@@ -58,8 +60,34 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `LAKECTL_SERVER_ENDPOINT_URL` | required for workspace-task `perago start` | 无 | LakeFS endpoint。LakeFS 三个变量必须同时配置或同时省略；workspace-free `perago start` 不需要 LakeFS。 |
 | `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for workspace-task `perago start` | 无 | LakeFS access key id。 |
 | `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for workspace-task `perago start` | 无 | LakeFS secret access key。 |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | required for metrics-enabled `perago start` | 无 | OTLP/HTTP protobuf metrics endpoint。Perago 第一版只支持 metrics-specific endpoint，不读取 generic `OTEL_EXPORTER_OTLP_ENDPOINT`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_COMPRESSION` | optional | unset | 第一版只接受 `gzip`。 |
+| `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` | optional | OTel Python exporter 默认值 | 按 OpenTelemetry 环境变量语义解析为正整数毫秒，例如 `10000` 表示 10 秒，`500` 表示 500ms；不接受 `10s` 或 `0`。 |
+| `OTEL_METRIC_EXPORT_INTERVAL` | optional | OTel SDK 默认值 | 正整数毫秒，例如 `60000`。 |
 
 Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。Conductor auth key/secret 可以由底层 SDK 或部署环境使用；Perago `RuntimeConfig` 暂不建模这两个字段。
+
+## 本地 VictoriaMetrics smoke test
+
+仓库提供一个只用于本地真实 OTLP 写入验证的 VictoriaMetrics compose 文件。它不包含 Collector、Grafana、Conductor 或 LakeFS，也不是生产部署模板。
+
+启动本地 VictoriaMetrics：
+
+```bash
+rtk docker compose -f docker-compose.victoria-metrics.yml up -d
+```
+
+运行 opt-in integration test：
+
+```bash
+PERAGO_RUN_VICTORIA_METRICS_TEST=1 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://localhost:8428/opentelemetry/v1/metrics rtk uv run pytest -q tests/integration/test_victoria_metrics.py
+```
+
+清理容器和本地 volume：
+
+```bash
+rtk docker compose -f docker-compose.victoria-metrics.yml down -v
+```
 
 ## 本地目录校验
 
@@ -115,6 +143,16 @@ PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits
 
 `PERAGO_WORKER_ID` 是进程身份。task attempt id、logical task key 和 workspace publication key 使用各自的独立字段。supervisor 管理的 worker 会由 supervisor 写入该值；只有非 supervisor 本地调试进程才会使用用户提供的 `PERAGO_WORKER_ID` 或 pid fallback。
 
+## Metrics instance id
+
+`PERAGO_INSTANCE_ID` 是 metrics 用的 Perago runtime instance 身份，不是 worker process 身份。它应该由 operator 或部署系统提供，并保持低基数；Nomad 部署可以由 job/group/allocation 生成稳定短标识后注入。
+
+`runtime.busy_slots` 使用 `task_name` 和 `perago_instance_id` 作为 labels。process mode 中，busy slots 只由 broker 汇总 executor slot state 后导出一次；executor process 和 supervisor parent 不导出这个指标。thread mode 中，由运行 `TaskRunner` 的 worker runtime owner 导出一次。多个 Perago instance 跑同一个 Task Worker 时，dashboard 应按 `task_name` 聚合：
+
+```text
+sum by (task_name) (runtime_busy_slots)
+```
+
 ## 命令差异
 
 `perago check` 会验证配置、task module 和生成 TaskDef 的基本结构，且不连接 Conductor 或 LakeFS。
@@ -125,6 +163,7 @@ PERAGO_WORKER_ID_PREFIX must contain only ASCII letters and digits
 
 - `CONDUCTOR_SERVER_URL` 已配置。
 - workspace task 需要 LakeFS endpoint、access key id 和 secret access key 已完整配置；workspace-free task 不需要 LakeFS 连接变量。
+- metrics-enabled task 需要 `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`；如果 `MetricSpec.worker_capacity=True`，还需要 `PERAGO_INSTANCE_ID`。
 - Conductor 中已经注册了对应 TaskDef。
 
 推荐流程是先运行 `perago check`，再运行 `perago extract` 并注册 TaskDef，最后启动 worker。

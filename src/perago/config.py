@@ -121,6 +121,18 @@ class LakeFSConfig(BaseModel):
     secret_access_key: SecretStr
 
 
+class MetricsConfig(BaseModel):
+    """Worker-local OTLP metrics export settings."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    endpoint: str
+    instance_id: str | None = None
+    compression: Literal["gzip"] | None = None
+    timeout_millis: int | None = None
+    export_interval_millis: int | None = None
+
+
 class RuntimeConfig(BaseModel):
     """
     Complete worker-local runtime configuration.
@@ -169,6 +181,8 @@ class RuntimeConfig(BaseModel):
         Optional Conductor connection config. ``perago start`` requires it.
     lakefs : LakeFSConfig or None, default=None
         Optional LakeFS connection config. ``perago start`` requires it.
+    metrics : MetricsConfig or None, default=None
+        Optional OTLP metrics export config for metrics-enabled tasks.
 
     See Also
     --------
@@ -209,6 +223,7 @@ class RuntimeConfig(BaseModel):
     failure_reason_max_length: int = DEFAULT_FAILURE_REASON_MAX_LENGTH
     conductor: ConductorConfig | None = None
     lakefs: LakeFSConfig | None = None
+    metrics: MetricsConfig | None = None
 
 
 def load_runtime_config(
@@ -307,6 +322,7 @@ def load_runtime_config(
         ),
         conductor=parse_conductor_config(env),
         lakefs=parse_lakefs_config(env),
+        metrics=parse_metrics_config(env),
     )
     if probe_roots:
         check_writable_root(config.workspace_root)
@@ -449,6 +465,76 @@ def parse_lakefs_config(env: dict[str, str]) -> LakeFSConfig | None:
         access_key_id=access_key_id,
         secret_access_key=secret_access_key,
     )
+
+
+def parse_metrics_config(env: dict[str, str]) -> MetricsConfig | None:
+    for name in [
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+    ]:
+        if _env_optional(env, name) is not None:
+            raise RuntimeConfigError(f"{name} is not supported by Perago metrics v1")
+
+    endpoint = _env_optional(env, "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
+    if endpoint is None:
+        return None
+    return MetricsConfig(
+        endpoint=endpoint,
+        instance_id=parse_perago_instance_id(env.get("PERAGO_INSTANCE_ID")),
+        compression=parse_metrics_compression(env.get("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION")),
+        timeout_millis=parse_metrics_timeout_millis(
+            env.get("OTEL_EXPORTER_OTLP_METRICS_TIMEOUT"),
+            name="OTEL_EXPORTER_OTLP_METRICS_TIMEOUT",
+        ),
+        export_interval_millis=parse_positive_millis(
+            env.get("OTEL_METRIC_EXPORT_INTERVAL"),
+            name="OTEL_METRIC_EXPORT_INTERVAL",
+        ),
+    )
+
+
+def parse_metrics_compression(value: str | None) -> Literal["gzip"] | None:
+    if value is None or value.strip() == "":
+        return None
+    normalized = value.strip().lower()
+    if normalized != "gzip":
+        raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION must be 'gzip'")
+    return "gzip"
+
+
+def parse_perago_instance_id(value: str | None) -> str | None:
+    if value is None or value.strip() == "":
+        return None
+    stripped = value.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", stripped):
+        raise RuntimeConfigError("PERAGO_INSTANCE_ID must contain only ASCII letters, digits, dots, underscores, or hyphens")
+    return stripped
+
+
+def parse_metrics_timeout_millis(value: str | None, *, name: str) -> int | None:
+    if value is None or value.strip() == "":
+        return None
+    stripped = value.strip()
+    if not re.fullmatch(r"[0-9]+", stripped):
+        raise RuntimeConfigError(f"{name} must be a positive integer number of milliseconds")
+    parsed = int(stripped)
+    if parsed <= 0:
+        raise RuntimeConfigError(f"{name} must be greater than zero")
+    return parsed
+
+
+def parse_positive_millis(value: str | None, *, name: str) -> int | None:
+    if value is None or value.strip() == "":
+        return None
+    stripped = value.strip()
+    if not re.fullmatch(r"[0-9]+", stripped):
+        raise RuntimeConfigError(f"{name} must be a positive integer number of milliseconds")
+    parsed = int(stripped)
+    if parsed <= 0:
+        raise RuntimeConfigError(f"{name} must be greater than zero")
+    return parsed
 
 
 def validate_worker_id_prefix(value: str) -> str:

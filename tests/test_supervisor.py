@@ -5,7 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
-from perago import ConductorConfig, LakeFSConfig, RuntimeConfig, RuntimeConfigError, restart_backoff_seconds, worker_child_specs
+from perago import (
+    ConductorConfig,
+    LakeFSConfig,
+    MetricsConfig,
+    RuntimeConfig,
+    RuntimeConfigError,
+    restart_backoff_seconds,
+    worker_child_specs,
+)
 from perago.conductor_runtime import (
     ProcessExecutorExited,
     ProcessExecutorSlot,
@@ -21,7 +29,6 @@ from perago.supervisor import (
     _active_process_workspace_owners,
     _broker_environment,
     _broker_process_main,
-    _duration_seconds,
     _pid_is_alive,
     _process_executor_main,
     _read_supervisor_workspace_lock,
@@ -708,6 +715,8 @@ def test_broker_process_main_prepares_runtime_and_runs_dispatch_broker(monkeypat
         "conductor_config": config.conductor,
         "client": conductor,
         "failure_reason_max_length": config.failure_reason_max_length,
+        "capacity_metrics": None,
+        "perago_instance_id": None,
         **ipc,
     }
 
@@ -803,6 +812,7 @@ def test_process_executor_main_prepares_lakefs_and_runs_executor_loop(monkeypatc
     assert ran["workspace_root"] == config.workspace_root
     assert ran["connection"] is ipc["connection"]
     assert ran["workspace_runtime"] is lakefs_runtime
+    assert ran["metrics"] is None
     assert ran["failure_reason_max_length"] == config.failure_reason_max_length
 
 
@@ -922,6 +932,7 @@ def test_process_executor_main_allows_workspace_free_task_without_lakefs(monkeyp
 
     assert ran["task"] is task
     assert ran["workspace_runtime"] is None
+    assert ran["metrics"] is None
 
 
 def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch, tmp_path) -> None:
@@ -974,6 +985,9 @@ def test_thread_runner_main_prepares_clients_and_runs_thread_runner(monkeypatch,
         "workspace_root": config.workspace_root,
         "failure_reason_max_length": config.failure_reason_max_length,
         "workspace_runtime": lakefs_runtime,
+        "metrics": None,
+        "capacity_metrics": None,
+        "perago_instance_id": None,
     }
 
 
@@ -1051,6 +1065,142 @@ def test_thread_runner_main_allows_workspace_free_task_without_lakefs(monkeypatc
     assert ran["task"] is task
     assert ran["client"] is conductor
     assert ran["workspace_runtime"] is None
+    assert ran["metrics"] is None
+
+
+def test_thread_runner_main_creates_metrics_recorder_for_metrics_enabled_task(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=None,
+        metrics=MetricsConfig(
+            endpoint="http://victoria.local/opentelemetry/v1/metrics",
+            instance_id="prod-a",
+        ),
+    )
+    task = SimpleNamespace(
+        has_workspace=False,
+        workspace=None,
+        metrics=object(),
+        controls=SimpleNamespace(publish_budget=None),
+    )
+    runtime = SimpleNamespace(worker_id="workerBroker", log_file=tmp_path / "worker.log")
+    conductor = object()
+    ran = {}
+
+    class FakeOtelMetricRecorder:
+        def __init__(self, metrics_config: MetricsConfig) -> None:
+            self.metrics_config = metrics_config
+            self.closed = False
+
+        def shutdown(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
+    monkeypatch.setattr("perago.supervisor.prepare_worker_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr("perago.supervisor.OrkesConductorRuntimeClient.from_config", lambda conductor_config: conductor)
+    monkeypatch.setattr("perago.supervisor.OtelMetricRecorder", FakeOtelMetricRecorder)
+    monkeypatch.setattr("perago.supervisor.run_conductor_thread_runner", lambda **kwargs: ran.update(kwargs))
+
+    _thread_runner_main(config=config, module_target="app.workers.metrics_validate", thread_count=2)
+
+    assert ran["metrics"].metrics_config is config.metrics
+    assert ran["capacity_metrics"] is ran["metrics"]
+    assert ran["perago_instance_id"] == "prod-a"
+    assert ran["metrics"].closed is True
+
+
+def test_broker_process_main_creates_capacity_recorder_for_worker_capacity_metrics(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=None,
+        metrics=MetricsConfig(
+            endpoint="http://victoria.local/opentelemetry/v1/metrics",
+            instance_id="prod-a",
+        ),
+    )
+    task = SimpleNamespace(
+        has_workspace=False,
+        workspace=None,
+        metrics=SimpleNamespace(worker_capacity=True),
+        controls=SimpleNamespace(publish_budget=None),
+    )
+    runtime = SimpleNamespace(worker_id="workerBroker", log_file=tmp_path / "worker.log")
+    conductor = object()
+    ran = {}
+
+    class FakeOtelMetricRecorder:
+        def __init__(self, metrics_config: MetricsConfig) -> None:
+            self.metrics_config = metrics_config
+            self.closed = False
+
+        def shutdown(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
+    monkeypatch.setattr("perago.supervisor.prepare_worker_runtime", lambda **kwargs: runtime)
+    monkeypatch.setattr("perago.supervisor.OrkesConductorRuntimeClient.from_config", lambda conductor_config: conductor)
+    monkeypatch.setattr("perago.supervisor.OtelMetricRecorder", FakeOtelMetricRecorder)
+    monkeypatch.setattr("perago.supervisor.run_conductor_process_broker", lambda **kwargs: ran.update(kwargs))
+
+    _broker_process_main(
+        config=config,
+        module_target="app.workers.metrics_validate",
+        process_count=2,
+        slots=[ProcessExecutorSlot(worker_id="worker0001", connection=object())],
+        executor_event_queue=object(),
+        attempt_fence_request_queue=object(),
+        attempt_fence_response_queues={"worker0001": object()},
+    )
+
+    assert ran["capacity_metrics"].metrics_config is config.metrics
+    assert ran["perago_instance_id"] == "prod-a"
+    assert ran["capacity_metrics"].closed is True
+
+
+def test_process_executor_main_requires_metrics_config_for_metrics_enabled_task(monkeypatch, tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+        conductor=ConductorConfig(server_url="http://conductor.local/api"),
+        lakefs=None,
+        metrics=None,
+    )
+    task = SimpleNamespace(
+        has_workspace=False,
+        workspace=None,
+        metrics=object(),
+        controls=SimpleNamespace(publish_budget=None),
+    )
+    runtime = SimpleNamespace(worker_id="worker0001", log_file=tmp_path / "worker.log")
+
+    monkeypatch.setattr("perago.supervisor.load_module_task", lambda module_target: task)
+    monkeypatch.setattr("perago.supervisor.prepare_worker_runtime", lambda **kwargs: runtime)
+
+    with pytest.raises(RuntimeConfigError, match="OTEL_EXPORTER_OTLP_METRICS_ENDPOINT"):
+        _process_executor_main(
+            config=config,
+            module_target="app.workers.metrics_validate",
+            child_env={"PERAGO_WORKER_ID": "worker0001"},
+            connection=object(),
+            attempt_fence_request_queue=object(),
+            attempt_fence_response_queue=object(),
+        )
 
 
 def test_stop_worker_processes_waits_without_default_force_kill() -> None:
@@ -1076,6 +1226,17 @@ def test_stop_worker_processes_kills_only_after_configured_deadline(tmp_path) ->
         ("kill", None),
         ("join", PROCESS_JOIN_TIMEOUT_SECONDS),
     ]
+
+
+def test_stop_worker_processes_clamps_force_kill_join_timeout() -> None:
+    process = FakeProcess()
+
+    _stop_worker_processes(
+        [process],  # type: ignore[list-item]
+        force_kill_after=timedelta(seconds=-1),
+    )
+
+    assert process.events[0] == ("join", MIN_DURATION_SECONDS)
 
 
 def test_unlink_supervisor_workspace_lock_handles_races(monkeypatch, tmp_path) -> None:
@@ -1207,7 +1368,3 @@ def test_workspace_gc_loop_run_logs_removed_workspaces_and_errors(monkeypatch, t
     loop._run()
 
     assert calls == ["run", "run"]
-
-
-def test_duration_seconds_never_returns_zero() -> None:
-    assert _duration_seconds(timedelta(seconds=-1)) == MIN_DURATION_SECONDS

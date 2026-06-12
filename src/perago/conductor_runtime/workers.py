@@ -12,6 +12,7 @@ from conductor.client.http.models.task_result import TaskResult
 from conductor.client.worker.worker_interface import WorkerInterface
 from loguru import logger
 
+from perago.metrics import MetricRecorder, RuntimeMetricContext, TaskAttemptMetricContext
 from perago.result import RuntimeTaskResult, failed_result
 from perago.task import TaskDefinition
 
@@ -41,6 +42,9 @@ class PeragoThreadWorker(WorkerInterface):
         workspace_root: Any,
         failure_reason_max_length: int,
         workspace_runtime: WorkspaceRuntime | None = None,
+        metrics: MetricRecorder | None = None,
+        capacity_metrics: MetricRecorder | None = None,
+        perago_instance_id: str | None = None,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -53,6 +57,15 @@ class PeragoThreadWorker(WorkerInterface):
         self._workspace_root = workspace_root
         self._workspace_runtime = workspace_runtime
         self._failure_reason_max_length = failure_reason_max_length
+        self.metrics = metrics
+        self._capacity_metrics = capacity_metrics
+        self._capacity_context = RuntimeMetricContext(
+            task_name=task.name,
+            perago_instance_id=perago_instance_id,
+        )
+        self._active_count = 0
+        self._active_count_lock = threading.Lock()
+        self._record_busy_slots(0)
 
     def get_identity(self) -> str:
         return self.worker_id
@@ -60,17 +73,55 @@ class PeragoThreadWorker(WorkerInterface):
     def execute(self, task: Task) -> TaskResult:
         attempt = conductor_task_to_attempt(task)
         execution_id = uuid4().hex
-        result = execute_polled_task(
-            task=self.task,
-            attempt=attempt,
-            workspace_root=self._workspace_root,
-            load_current_attempt=lambda current_attempt: self._client.get_task(current_attempt.task_id),
-            workspace_runtime=self._workspace_runtime,
-            owner_worker_id=self.worker_id,
-            execution_id=execution_id,
-            failure_reason_max_length=self._failure_reason_max_length,
-        )
+        metrics = None
+        if self.metrics is not None and self.task.metrics is not None:
+            metrics = self.metrics.with_context(
+                TaskAttemptMetricContext(
+                    task_name=self.task.name,
+                    task_id=attempt.task_id,
+                    workflow_instance_id=attempt.workflow_instance_id,
+                    execution_id=execution_id,
+                    worker_id=self.worker_id,
+                    retry_count=attempt.retry_count,
+                )
+            )
+        self._increment_busy_slots()
+        try:
+            result = execute_polled_task(
+                task=self.task,
+                attempt=attempt,
+                workspace_root=self._workspace_root,
+                load_current_attempt=lambda current_attempt: self._client.get_task(current_attempt.task_id),
+                workspace_runtime=self._workspace_runtime,
+                owner_worker_id=self.worker_id,
+                execution_id=execution_id,
+                failure_reason_max_length=self._failure_reason_max_length,
+                metrics=metrics,
+            )
+        finally:
+            self._decrement_busy_slots()
         return runtime_result_to_sdk_task_result(attempt, result, worker_id=self.worker_id)
+
+    def _increment_busy_slots(self) -> None:
+        with self._active_count_lock:
+            self._active_count += 1
+            value = self._active_count
+        self._record_busy_slots(value)
+
+    def _decrement_busy_slots(self) -> None:
+        with self._active_count_lock:
+            self._active_count -= 1
+            value = self._active_count
+        self._record_busy_slots(value)
+
+    def _record_busy_slots(self, value: int) -> None:
+        if self._capacity_metrics is None:
+            return
+        self._capacity_metrics.runtime_gauge(
+            "busy_slots",
+            value,
+            context=self._capacity_context,
+        )
 
 
 class PeragoProcessDispatchWorker(WorkerInterface):
@@ -87,6 +138,8 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         client: ConductorRuntimeClient | None = None,
         completion_timeout_seconds: float | None = None,
         failure_reason_max_length: int,
+        capacity_metrics: MetricRecorder | None = None,
+        perago_instance_id: str | None = None,
     ) -> None:
         super().__init__(task.name)
         self.task = task
@@ -109,6 +162,12 @@ class PeragoProcessDispatchWorker(WorkerInterface):
         self._client = client
         self._completion_timeout_seconds = completion_timeout_seconds
         self._failure_reason_max_length = failure_reason_max_length
+        self._capacity_metrics = capacity_metrics
+        self._capacity_context = RuntimeMetricContext(
+            task_name=task.name,
+            perago_instance_id=perago_instance_id,
+        )
+        self._record_busy_slots()
 
     def get_identity(self) -> str:
         return self.worker_id
@@ -144,12 +203,14 @@ class PeragoProcessDispatchWorker(WorkerInterface):
                     continue
                 self._available_worker_ids.remove(slot.worker_id)
                 self._busy_worker_ids.add(slot.worker_id)
+                self._record_busy_slots()
                 return slot, slot.generation, slot.connection
 
     def _release_slot(self, slot: ProcessExecutorSlot) -> None:
         self._drain_executor_events()
         with self._slot_lock:
             self._busy_worker_ids.discard(slot.worker_id)
+            self._record_busy_slots()
             if slot.connection is not None:
                 self._mark_slot_available_locked(slot)
 
@@ -166,6 +227,8 @@ class PeragoProcessDispatchWorker(WorkerInterface):
             slot.connection = None
             slot.exited_generation = generation
             self._available_worker_ids.discard(slot.worker_id)
+            self._busy_worker_ids.discard(slot.worker_id)
+            self._record_busy_slots()
 
     def _wait_for_completion(
         self,
@@ -259,6 +322,8 @@ class PeragoProcessDispatchWorker(WorkerInterface):
             slot.connection = None
             slot.exited_generation = event.generation
             self._available_worker_ids.discard(event.worker_id)
+            self._busy_worker_ids.discard(event.worker_id)
+            self._record_busy_slots()
 
     def _handle_executor_started(self, event: ProcessExecutorStarted) -> None:
         with self._slot_lock:
@@ -270,6 +335,15 @@ class PeragoProcessDispatchWorker(WorkerInterface):
             slot.exited_generation = None
             if event.worker_id not in self._busy_worker_ids:
                 self._mark_slot_available_locked(slot)
+
+    def _record_busy_slots(self) -> None:
+        if self._capacity_metrics is None:
+            return
+        self._capacity_metrics.runtime_gauge(
+            "busy_slots",
+            len(self._busy_worker_ids),
+            context=self._capacity_context,
+        )
 
     def _drain_attempt_fence_requests(self) -> None:
         if self._attempt_fence_request_queue is None:

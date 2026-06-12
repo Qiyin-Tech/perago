@@ -26,6 +26,7 @@ from perago.conductor_runtime.runners import run_conductor_process_broker, run_c
 from perago.config import ExecutionMode, RuntimeConfig, child_environment
 from perago.errors import RuntimeConfigError
 from perago.lakefs_runtime import LakeFSWorkspaceRuntime
+from perago.metrics import OtelMetricRecorder
 from perago.task import load_module_task
 from perago.worker_runtime import prepare_worker_runtime
 from perago.workspace import garbage_collect_attempt_workspaces
@@ -228,10 +229,11 @@ def _run_worker_supervisor_locked(
     execution_mode: ExecutionMode,
 ) -> None:
     if execution_mode == "thread":
-        gc_loop = start_workspace_gc_loop(
+        gc_loop = WorkspaceGCLoop(
             config=config,
             active_process_owners=lambda: set(),
         )
+        gc_loop.start()
         try:
             _thread_runner_main(config=config, module_target=module_target, thread_count=process_count)
         finally:
@@ -270,10 +272,11 @@ def _run_worker_supervisor_locked(
         attempt_fence_response_queues=attempt_fence_response_queues,
     )
     executors: dict[int, tuple[WorkerChildSpec, multiprocessing.Process, int]] = {}
-    gc_loop = start_workspace_gc_loop(
+    gc_loop = WorkspaceGCLoop(
         config=config,
         active_process_owners=lambda: _active_process_workspace_owners(executors),
     )
+    gc_loop.start()
 
     def request_stop(signum: int, frame: FrameType | None) -> None:
         del signum, frame
@@ -307,7 +310,11 @@ def _run_worker_supervisor_locked(
                 executor_event_queue.put(
                     ProcessExecutorExited(worker_id=spec.worker_id, generation=generation, exit_code=exit_code)
                 )
-                _close_connection(executor_connections[slot])
+                try:
+                    executor_connections[slot].close()
+                except (AttributeError, OSError):
+                    # Restart cleanup is best effort; a dead pipe must not block executor replacement.
+                    pass
                 delay = restart_backoff_seconds(restart_count)
                 logger.bind(
                     worker_id=spec.worker_id,
@@ -460,7 +467,7 @@ def _stop_worker_processes(
     workspace_root: os.PathLike[str] | None = None,
     process_worker_ids: dict[int, str] | None = None,
 ) -> None:
-    timeout = None if force_kill_after is None else _duration_seconds(force_kill_after)
+    timeout = None if force_kill_after is None else max(force_kill_after.total_seconds(), MIN_DURATION_SECONDS)
     for process in processes:
         process.join(timeout=timeout)
     if force_kill_after is None:
@@ -469,12 +476,15 @@ def _stop_worker_processes(
     deadline = force_kill_after.total_seconds()
     for process in processes:
         if process.is_alive():
-            _log_force_kill(
-                process=process,
-                deadline_seconds=deadline,
-                workspace_root=workspace_root,
+            logger.bind(
                 worker_id=(process_worker_ids or {}).get(id(process)),
-            )
+                pid=getattr(process, "pid", None),
+                task_id=None,
+                execution_id=None,
+                phase="shutdown-force-kill",
+                deadline_seconds=deadline,
+                workspace_root=str(workspace_root) if workspace_root is not None else None,
+            ).error("force-killing worker process after shutdown drain deadline")
             process.kill()
     for process in processes:
         process.join(timeout=PROCESS_JOIN_TIMEOUT_SECONDS)
@@ -493,31 +503,6 @@ def _targeted_workspace_gc(*, config: RuntimeConfig, worker_id: str, process: mu
         logger.bind(worker_id=worker_id, pid=pid, removed_count=len(removed)).info(
             "garbage-collected workspaces for dead executor"
         )
-
-
-def _log_force_kill(
-    *,
-    process: multiprocessing.Process,
-    deadline_seconds: float,
-    workspace_root: os.PathLike[str] | None,
-    worker_id: str | None,
-) -> None:
-    logger.bind(
-        worker_id=worker_id,
-        pid=getattr(process, "pid", None),
-        task_id=None,
-        execution_id=None,
-        phase="shutdown-force-kill",
-        deadline_seconds=deadline_seconds,
-        workspace_root=str(workspace_root) if workspace_root is not None else None,
-    ).error("force-killing worker process after shutdown drain deadline")
-
-
-def _close_connection(connection: Any) -> None:
-    try:
-        connection.close()
-    except (AttributeError, OSError):
-        return
 
 
 class WorkspaceGCLoop:
@@ -547,7 +532,7 @@ class WorkspaceGCLoop:
         )
 
     def _run(self) -> None:
-        interval_seconds = _duration_seconds(self._config.workspace_gc_interval)
+        interval_seconds = max(self._config.workspace_gc_interval.total_seconds(), MIN_DURATION_SECONDS)
         while not self._stop.is_set():
             try:
                 removed = self.run_once()
@@ -556,16 +541,6 @@ class WorkspaceGCLoop:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).error("workspace garbage collection failed")
             self._stop.wait(interval_seconds)
-
-
-def start_workspace_gc_loop(
-    *,
-    config: RuntimeConfig,
-    active_process_owners: Callable[[], set[tuple[str, int]]],
-) -> WorkspaceGCLoop:
-    loop = WorkspaceGCLoop(config=config, active_process_owners=active_process_owners)
-    loop.start()
-    return loop
 
 
 def _active_process_workspace_owners(
@@ -577,10 +552,6 @@ def _active_process_workspace_owners(
         if isinstance(pid, int) and process.is_alive():
             active.add((spec.worker_id, pid))
     return active
-
-
-def _duration_seconds(value: timedelta) -> float:
-    return max(value.total_seconds(), MIN_DURATION_SECONDS)
 
 
 def _start_broker_process(
@@ -652,22 +623,34 @@ def _broker_process_main(
     if conductor_config is None:
         raise RuntimeConfigError("CONDUCTOR_SERVER_URL is required for perago start")
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    capacity_metrics = None
+    if getattr(task, "metrics", None) is not None and getattr(task.metrics, "worker_capacity", True):
+        metrics_config = config.metrics
+        if metrics_config is None:
+            raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks")
+        capacity_metrics = OtelMetricRecorder(metrics_config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process broker started"
     )
-    run_conductor_process_broker(
-        task=task,
-        worker_id=runtime.worker_id,
-        process_count=process_count,
-        conductor_config=conductor_config,
-        slots=slots,
-        executor_event_queue=executor_event_queue,
-        attempt_fence_request_queue=attempt_fence_request_queue,
-        attempt_fence_response_queues=attempt_fence_response_queues,
-        client=conductor,
-        failure_reason_max_length=config.failure_reason_max_length,
-    )
+    try:
+        run_conductor_process_broker(
+            task=task,
+            worker_id=runtime.worker_id,
+            process_count=process_count,
+            conductor_config=conductor_config,
+            slots=slots,
+            executor_event_queue=executor_event_queue,
+            attempt_fence_request_queue=attempt_fence_request_queue,
+            attempt_fence_response_queues=attempt_fence_response_queues,
+            client=conductor,
+            failure_reason_max_length=config.failure_reason_max_length,
+            capacity_metrics=capacity_metrics,
+            perago_instance_id=config.metrics.instance_id if config.metrics is not None else None,
+        )
+    finally:
+        if capacity_metrics is not None:
+            capacity_metrics.shutdown()
 
 
 def _process_executor_main(
@@ -683,24 +666,35 @@ def _process_executor_main(
     task = load_module_task(module_target)
     runtime = prepare_worker_runtime(config=config, module_target=module_target, env=os.environ.copy())
     lakefs = _lakefs_runtime_for_task(task, config)
+    metrics = None
+    if getattr(task, "metrics", None) is not None:
+        metrics_config = config.metrics
+        if metrics_config is None:
+            raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks")
+        metrics = OtelMetricRecorder(metrics_config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "process executor started"
     )
-    run_process_executor_loop(
-        task=task,
-        worker_id=runtime.worker_id,
-        workspace_root=config.workspace_root,
-        connection=connection,
-        load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
-            current_attempt,
+    try:
+        run_process_executor_loop(
+            task=task,
             worker_id=runtime.worker_id,
-            request_queue=attempt_fence_request_queue,
-            response_queue=attempt_fence_response_queue,
-        ),
-        failure_reason_max_length=config.failure_reason_max_length,
-        workspace_runtime=lakefs,
-    )
+            workspace_root=config.workspace_root,
+            connection=connection,
+            load_current_attempt=lambda current_attempt: load_current_attempt_via_broker(
+                current_attempt,
+                worker_id=runtime.worker_id,
+                request_queue=attempt_fence_request_queue,
+                response_queue=attempt_fence_response_queue,
+            ),
+            failure_reason_max_length=config.failure_reason_max_length,
+            workspace_runtime=lakefs,
+            metrics=metrics,
+        )
+    finally:
+        if metrics is not None:
+            metrics.shutdown()
 
 
 def _thread_runner_main(
@@ -718,20 +712,33 @@ def _thread_runner_main(
 
     lakefs = _lakefs_runtime_for_task(task, config)
     conductor = OrkesConductorRuntimeClient.from_config(conductor_config)
+    metrics = None
+    if getattr(task, "metrics", None) is not None:
+        metrics_config = config.metrics
+        if metrics_config is None:
+            raise RuntimeConfigError("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT is required for metrics-enabled tasks")
+        metrics = OtelMetricRecorder(metrics_config)
 
     logger.bind(worker_id=runtime.worker_id, module_target=module_target, log_file=str(runtime.log_file)).info(
         "thread runner started"
     )
-    run_conductor_thread_runner(
-        task=task,
-        worker_id=runtime.worker_id,
-        thread_count=thread_count,
-        conductor_config=conductor_config,
-        client=conductor,
-        workspace_root=config.workspace_root,
-        failure_reason_max_length=config.failure_reason_max_length,
-        workspace_runtime=lakefs,
-    )
+    try:
+        run_conductor_thread_runner(
+            task=task,
+            worker_id=runtime.worker_id,
+            thread_count=thread_count,
+            conductor_config=conductor_config,
+            client=conductor,
+            workspace_root=config.workspace_root,
+            failure_reason_max_length=config.failure_reason_max_length,
+            workspace_runtime=lakefs,
+            metrics=metrics,
+            capacity_metrics=metrics if getattr(task, "metrics", None) is not None and getattr(task.metrics, "worker_capacity", True) else None,
+            perago_instance_id=config.metrics.instance_id if config.metrics is not None else None,
+        )
+    finally:
+        if metrics is not None:
+            metrics.shutdown()
 
 
 def _broker_environment(worker_id_prefix: str) -> dict[str, str]:
@@ -749,11 +756,9 @@ def _lakefs_runtime_for_task(task: object, config: RuntimeConfig) -> LakeFSWorks
     if lakefs_config is None:
         raise RuntimeConfigError("LakeFS config is required for workspace tasks")
 
-    return LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=_effective_publish_budget(task))
-
-
-def _effective_publish_budget(task: object) -> object:
+    publish_budget = task.controls.publish_budget
     workspace = getattr(task, "workspace", None)
     if workspace is not None and getattr(workspace, "read_only", False):
-        return None
-    return task.controls.publish_budget
+        publish_budget = None
+
+    return LakeFSWorkspaceRuntime.from_config(lakefs_config, publish_budget=publish_budget)

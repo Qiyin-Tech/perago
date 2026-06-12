@@ -12,6 +12,7 @@ from perago.config import (
     DEFAULT_WORKSPACE_GC_TTL,
     DEFAULT_WORKSPACE_GC_INTERVAL,
     LakeFSConfig,
+    MetricsConfig,
     RuntimeConfig,
     child_environment,
     check_writable_root,
@@ -24,6 +25,7 @@ from perago.config import (
     parse_lakefs_config,
     parse_log_file_max_size,
     parse_log_retention,
+    parse_metrics_config,
     parse_optional_duration,
     read_dotenv,
     resolve_worker_id,
@@ -76,6 +78,11 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
                 "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION=gzip",
+                "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT=10000",
+                "OTEL_METRIC_EXPORT_INTERVAL=60000",
+                "PERAGO_INSTANCE_ID=features-build.prod-a_001",
             ]
         ),
         encoding="utf-8",
@@ -105,6 +112,13 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
         endpoint_url="http://lakefs.local",
         access_key_id="lakefs-key",
         secret_access_key="lakefs-secret",
+    )
+    assert config.metrics == MetricsConfig(
+        endpoint="http://victoria.local/opentelemetry/v1/metrics",
+        instance_id="features-build.prod-a_001",
+        compression="gzip",
+        timeout_millis=10000,
+        export_interval_millis=60000,
     )
     assert config.lakefs.secret_access_key.get_secret_value() == "lakefs-secret"
 
@@ -269,15 +283,89 @@ def test_parse_failure_reason_max_length_defaults_and_validates() -> None:
 def test_parse_connection_configs_are_optional() -> None:
     assert parse_conductor_config({}) is None
     assert parse_lakefs_config({}) is None
+    assert parse_metrics_config({}) is None
 
     assert parse_conductor_config({"CONDUCTOR_SERVER_URL": " http://localhost:8080/api "}) == ConductorConfig(
         server_url="http://localhost:8080/api"
+    )
+    assert parse_metrics_config(
+        {
+            "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": " http://victoria.local/opentelemetry/v1/metrics ",
+            "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION": "gzip",
+            "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "500",
+            "OTEL_METRIC_EXPORT_INTERVAL": "60000",
+            "PERAGO_INSTANCE_ID": "features-build.prod-a_001",
+        }
+    ) == MetricsConfig(
+        endpoint="http://victoria.local/opentelemetry/v1/metrics",
+        instance_id="features-build.prod-a_001",
+        compression="gzip",
+        timeout_millis=500,
+        export_interval_millis=60000,
     )
     with pytest.raises(RuntimeConfigError, match="LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY"):
         parse_lakefs_config(
             {
                 "LAKECTL_SERVER_ENDPOINT_URL": "http://localhost:8000",
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID": "key",
+            }
+        )
+
+
+def test_parse_metrics_config_rejects_unsupported_otel_env() -> None:
+    for name in [
+        "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+    ]:
+        with pytest.raises(RuntimeConfigError, match=f"{name} is not supported"):
+            parse_metrics_config(
+                {
+                    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                    name: "configured",
+                }
+            )
+
+
+def test_parse_metrics_config_validates_supported_otel_env_values() -> None:
+    with pytest.raises(RuntimeConfigError, match="OTEL_EXPORTER_OTLP_METRICS_COMPRESSION"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_COMPRESSION": "deflate",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="OTEL_EXPORTER_OTLP_METRICS_TIMEOUT"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "0",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="integer number of milliseconds"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT": "10s",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="OTEL_METRIC_EXPORT_INTERVAL"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "OTEL_METRIC_EXPORT_INTERVAL": "1.5",
+            }
+        )
+
+    with pytest.raises(RuntimeConfigError, match="PERAGO_INSTANCE_ID"):
+        parse_metrics_config(
+            {
+                "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "http://victoria.local/opentelemetry/v1/metrics",
+                "PERAGO_INSTANCE_ID": "bad instance",
             }
         )
     with pytest.raises(RuntimeConfigError, match="CONDUCTOR_SERVER_URL"):

@@ -1,6 +1,6 @@
 from perago._version import __version__
 from perago.attempt import assert_current_attempt_snapshot
-from perago.config import ConductorConfig, ExecutionMode, LakeFSConfig, RuntimeConfig, load_runtime_config
+from perago.config import ConductorConfig, ExecutionMode, LakeFSConfig, MetricsConfig, RuntimeConfig, load_runtime_config
 from perago.errors import (
     GuardrailViolation,
     PostGuardrailViolation,
@@ -31,8 +31,10 @@ from perago.guards import (
     require_file,
     require_glob,
 )
+from perago.metrics import MetricRecorder
 from perago.models import (
     ExecutionLimits,
+    MetricSpec,
     PublishBudget,
     RetryPolicy,
     TaskControls,
@@ -69,6 +71,9 @@ __all__ = [
     "PublishBudget",
     "RetryPolicy",
     "LakeFSConfig",
+    "MetricRecorder",
+    "MetricSpec",
+    "MetricsConfig",
     "RuntimeConfig",
     "RuntimeConfigError",
     "StagedWorkspace",

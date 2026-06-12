@@ -31,6 +31,7 @@ from perago.conductor_runtime import (
     runtime_result_to_sdk_task_result,
 )
 from perago.config import DEFAULT_FAILURE_REASON_MAX_LENGTH, ConductorConfig
+from perago.metrics import InMemoryMetricRecorder, TaskAttemptMetricContext
 from perago.result import completed_result, failed_result, terminal_failed_result
 from perago.task import load_module_task
 
@@ -349,6 +350,66 @@ def test_thread_worker_passes_failure_reason_limit_to_execution(monkeypatch) -> 
     assert captured["failure_reason_max_length"] == 37
 
 
+def test_thread_worker_binds_metrics_context_at_attempt_boundary(monkeypatch) -> None:
+    captured = {}
+    base_metrics = InMemoryMetricRecorder()
+
+    def fake_execute_polled_task(**kwargs):
+        captured.update(kwargs)
+        return completed_result({"result": {"valid": True}})
+
+    monkeypatch.setattr("perago.conductor_runtime.workers.execute_polled_task", fake_execute_polled_task)
+    worker = PeragoThreadWorker(
+        task=load_module_task("app.workers.metrics_validate"),
+        worker_id="metricsValidate0001",
+        thread_count=1,
+        client=object(),
+        workspace_root="unused",
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        metrics=base_metrics,
+    )
+
+    worker.execute(_sdk_task())
+
+    assert base_metrics.context is None
+    context = captured["metrics"].context
+    assert context is not None
+    assert context.task_name == "metrics.validate"
+    assert context.task_id == "task-9b4c"
+    assert context.workflow_instance_id == "wf-7f3d"
+    assert context.execution_id == captured["execution_id"]
+    assert context.worker_id == "metricsValidate0001"
+    assert context.retry_count == 2
+
+
+def test_thread_worker_records_busy_slots_with_capacity_context(monkeypatch) -> None:
+    capacity_metrics = InMemoryMetricRecorder()
+
+    def fake_execute_polled_task(**kwargs):
+        del kwargs
+        return completed_result({"result": {"valid": True}})
+
+    monkeypatch.setattr("perago.conductor_runtime.workers.execute_polled_task", fake_execute_polled_task)
+    worker = PeragoThreadWorker(
+        task=load_module_task("app.workers.metrics_validate"),
+        worker_id="metricsValidate0001",
+        thread_count=1,
+        client=object(),
+        workspace_root="unused",
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        capacity_metrics=capacity_metrics,
+        perago_instance_id="prod-a",
+    )
+
+    worker.execute(_sdk_task())
+
+    assert [(sample.name, sample.value, sample.labels) for sample in capacity_metrics.gauges] == [
+        ("runtime.busy_slots", 0, {"task_name": "metrics.validate", "perago_instance_id": "prod-a"}),
+        ("runtime.busy_slots", 1, {"task_name": "metrics.validate", "perago_instance_id": "prod-a"}),
+        ("runtime.busy_slots", 0, {"task_name": "metrics.validate", "perago_instance_id": "prod-a"}),
+    ]
+
+
 def test_process_dispatch_worker_configures_sdk_worker_contract() -> None:
     slot, _ = _process_slot()
     worker = PeragoProcessDispatchWorker(
@@ -401,6 +462,41 @@ def test_process_dispatch_worker_dispatches_attempt_and_maps_completion() -> Non
     assert result.worker_id == "metadataBroker"
     assert result.status == "COMPLETED"
     assert result.output_data == {"result": {"valid": True, "reason": None}}
+
+
+def test_process_dispatch_worker_records_busy_slots_from_broker_only() -> None:
+    slot, executor_connection = _process_slot()
+    capacity_metrics = InMemoryMetricRecorder()
+    worker = PeragoProcessDispatchWorker(
+        task=load_module_task("app.workers.metrics_validate"),
+        worker_id="metadataBroker",
+        thread_count=1,
+        slots=[slot],
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        capacity_metrics=capacity_metrics,
+        perago_instance_id="prod-a",
+    )
+    result_queue: Queue = Queue()
+    thread = threading.Thread(target=lambda: result_queue.put(worker.execute(_sdk_task())))
+    thread.start()
+
+    assert executor_connection.poll(1)
+    assignment = executor_connection.recv()
+    executor_connection.send(
+        ProcessTaskCompletion(
+            task_id="task-9b4c",
+            execution_id=assignment.execution_id,
+            result=completed_result({"result": {"valid": True, "reason": None}}),
+        )
+    )
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+
+    assert [(sample.name, sample.value, sample.labels) for sample in capacity_metrics.gauges] == [
+        ("runtime.busy_slots", 0, {"task_name": "metrics.validate", "perago_instance_id": "prod-a"}),
+        ("runtime.busy_slots", 1, {"task_name": "metrics.validate", "perago_instance_id": "prod-a"}),
+        ("runtime.busy_slots", 0, {"task_name": "metrics.validate", "perago_instance_id": "prod-a"}),
+    ]
 
 
 def test_process_dispatch_worker_uses_distinct_slots_for_concurrent_tasks_and_accepts_reverse_completion() -> None:
@@ -1149,6 +1245,72 @@ def test_process_executor_loop_passes_failure_reason_limit_to_execution(monkeypa
     assert captured["failure_reason_max_length"] == 41
 
 
+def test_process_executor_loop_binds_metrics_context_at_attempt_boundary(monkeypatch) -> None:
+    captured = {}
+    connection = _FakeProcessConnection(
+        [
+            ProcessTaskAssignment(attempt=_attempt({"params": {"song_id": "song-000123"}}), execution_id="exec-1"),
+            StopProcessExecutor(),
+        ]
+    )
+    base_metrics = InMemoryMetricRecorder()
+
+    def fake_execute_polled_task(**kwargs):
+        captured.update(kwargs)
+        return completed_result({"result": {"valid": True}})
+
+    monkeypatch.setattr("perago.conductor_runtime.process_executor.execute_polled_task", fake_execute_polled_task)
+
+    run_process_executor_loop(
+        task=load_module_task("app.workers.metrics_validate"),
+        worker_id="metricsValidate0001",
+        workspace_root="unused",
+        connection=connection,
+        load_current_attempt=lambda current_attempt: current_attempt,
+        failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
+        metrics=base_metrics,
+    )
+
+    assert base_metrics.context is None
+    context = captured["metrics"].context
+    assert context is not None
+    assert context.task_name == "metrics.validate"
+    assert context.task_id == "task-9b4c"
+    assert context.workflow_instance_id == "wf-7f3d"
+    assert context.execution_id == "exec-1"
+    assert context.worker_id == "metricsValidate0001"
+    assert context.retry_count == 2
+
+
+def test_execute_polled_task_skips_attempt_runtime_metric_when_disabled() -> None:
+    metrics = InMemoryMetricRecorder()
+
+    result = execute_polled_task(
+        task=load_module_task("app.workers.metrics_validate_disabled_attempts"),
+        attempt=_attempt({"params": {"song_id": "song-000123"}}),
+        workspace_root="unused",
+        load_current_attempt=lambda current_attempt: current_attempt,
+        owner_worker_id="metricsValidate0001",
+        execution_id="exec-1",
+        metrics=metrics.with_context(
+            TaskAttemptMetricContext(
+                task_name="metrics.validate.disabled_attempts",
+                task_id="task-9b4c",
+                workflow_instance_id="wf-7f3d",
+                execution_id="exec-1",
+                worker_id="metricsValidate0001",
+                retry_count=2,
+            )
+        ),
+        failure_reason_max_length=321,
+    )
+
+    assert result == completed_result({"result": {"valid": True}})
+    assert [
+        sample for sample in metrics.histograms if sample.name == "runtime.task_attempt_duration_seconds"
+    ] == []
+
+
 def test_process_executor_loop_signal_does_not_interrupt_current_assignment(monkeypatch) -> None:
     handlers = {}
 
@@ -1273,6 +1435,60 @@ def test_execute_polled_task_uses_workspace_attempt_runner(monkeypatch, tmp_path
     assert calls["args"][:4] == (task, attempt.input_data, attempt, tmp_path)
     assert calls["kwargs"]["owner_worker_id"] == "featuresBuild0001"
     assert calls["kwargs"]["failure_reason_max_length"] == 321
+
+
+def test_execute_polled_task_accepts_current_metrics_for_metrics_enabled_task() -> None:
+    metrics = InMemoryMetricRecorder().with_context(
+        TaskAttemptMetricContext(
+            task_name="metrics.validate",
+            task_id="task-9b4c",
+            workflow_instance_id="wf-7f3d",
+            execution_id="exec-1",
+            worker_id="metricsValidate0001",
+            retry_count=2,
+        )
+    )
+
+    result = execute_polled_task(
+        task=load_module_task("app.workers.metrics_validate"),
+        attempt=_attempt({"params": {"song_id": "song-000123"}}),
+        workspace_root="unused",
+        load_current_attempt=lambda current_attempt: current_attempt,
+        owner_worker_id="metricsValidate0001",
+        execution_id="exec-1",
+        metrics=metrics,
+        failure_reason_max_length=321,
+    )
+
+    assert result == completed_result({"result": {"valid": True}})
+    context = metrics.context
+    assert context is not None
+    assert context.task_name == "metrics.validate"
+    assert context.task_id == "task-9b4c"
+    assert context.workflow_instance_id == "wf-7f3d"
+    assert context.execution_id == "exec-1"
+    assert context.worker_id == "metricsValidate0001"
+    assert context.retry_count == 2
+    runtime_samples = [
+        sample for sample in metrics.histograms if sample.name == "runtime.task_attempt_duration_seconds"
+    ]
+    assert len(runtime_samples) == 1
+    assert runtime_samples[0].labels == {"task_name": "metrics.validate"}
+
+
+def test_execute_polled_task_requires_metrics_for_metrics_enabled_task() -> None:
+    result = execute_polled_task(
+        task=load_module_task("app.workers.metrics_validate"),
+        attempt=_attempt({"params": {"song_id": "song-000123"}}),
+        workspace_root="unused",
+        load_current_attempt=lambda current_attempt: current_attempt,
+        owner_worker_id="metricsValidate0001",
+        execution_id="exec-1",
+        failure_reason_max_length=321,
+    )
+
+    assert result.status == "FAILED"
+    assert result.reason_for_incompletion == "metrics-enabled task invocation requires a MetricRecorder"
 
 
 def test_run_conductor_thread_runner_builds_sdk_runner() -> None:

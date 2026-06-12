@@ -20,6 +20,7 @@ Development 文档汇总 Getting Started 之外的维护资料，包括概念词
 - {doc}`getting-started/pydantic-contracts`：Pydantic params/result contract 的精确规则。
 - {doc}`getting-started/guardrails`：pre/post guardrail 的写法和约束。
 - {doc}`getting-started/controls-and-taskdef`：controls 到 TaskDef 字段的映射。
+- {doc}`getting-started/metrics`：metrics-enabled task 签名、application metrics、runtime metrics 和运行时配置。
 - {doc}`getting-started/commands`：`check`、`extract`、`start` 的本地使用路径。
 - {doc}`getting-started/failure-signaling`：业务分支、retryable failure 和 terminal failure 的选择边界。
 - {doc}`getting-started/examples`：可运行示例和反例索引。

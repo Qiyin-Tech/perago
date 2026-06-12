@@ -19,6 +19,7 @@ from perago.errors import (
     TaskInputError,
 )
 from perago.guards import check_guardrails
+from perago.metrics import MetricRecorder, RuntimeMetricContext
 from perago.models import WorkspaceInput, WorkspaceSpec
 from perago.result import RuntimeTaskResult, completed_result, result_for_exception
 from perago.task import TaskDefinition
@@ -113,6 +114,7 @@ def run_workspace_task_attempt(
     complete_noop_workspace: CompleteNoOpWorkspace | None = None,
     owner_worker_id: str | None = None,
     execution_id: str | None = None,
+    metrics: MetricRecorder | None = None,
     failure_reason_max_length: int,
 ) -> RuntimeTaskResult:
     """
@@ -165,6 +167,9 @@ def run_workspace_task_attempt(
     execution_id : str or None, default=None
         Execution-scoped id used to isolate local attempt workspace and LakeFS
         staging branch names. A new id is generated when omitted.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder for metrics-enabled tasks and Perago
+        runtime workspace I/O metrics.
     failure_reason_max_length : int
         Maximum number of characters written to ``reasonForIncompletion`` for
         failed attempts.
@@ -231,9 +236,24 @@ def run_workspace_task_attempt(
             raise TaskInputError("workspace task input must contain only workspace and params")
         workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
         workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
-        download_workspace(workspace_input, workspace, workspace_dir)
+        runtime_metrics_context = RuntimeMetricContext(task_name=task.name)
+        if _workspace_io_metrics_enabled(task, metrics):
+            with metrics.runtime_timer(
+                "workspace_io_duration_seconds",
+                context=runtime_metrics_context,
+                labels={"operation": "download"},
+            ):
+                download_workspace(workspace_input, workspace, workspace_dir)
+            metrics.runtime_histogram(
+                "workspace_io_bytes",
+                _workspace_file_bytes(workspace_dir),
+                context=runtime_metrics_context,
+                labels={"operation": "download"},
+            )
+        else:
+            download_workspace(workspace_input, workspace, workspace_dir)
         initial_snapshot = None if workspace.read_only else _snapshot_workspace(workspace_dir)
-        body_output = invoke_workspace_task_body(task, input_data, workspace_dir)
+        body_output = invoke_workspace_task_body(task, input_data, workspace_dir, metrics=metrics)
 
         if workspace.read_only:
             # Read-only completion has no LakeFS side effect to fence. The final
@@ -251,12 +271,25 @@ def run_workspace_task_attempt(
         workspace_changed = _snapshot_workspace(workspace_dir) != initial_snapshot
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
         if not workspace_changed:
-            published_ref = _complete_noop_workspace(
-                complete_noop_workspace,
-                workspace_input,
-                workspace,
-                execution,
-            )
+            if _workspace_io_metrics_enabled(task, metrics):
+                with metrics.runtime_timer(
+                    "workspace_io_duration_seconds",
+                    context=runtime_metrics_context,
+                    labels={"operation": "publish"},
+                ):
+                    published_ref = _complete_noop_workspace(
+                        complete_noop_workspace,
+                        workspace_input,
+                        workspace,
+                        execution,
+                    )
+            else:
+                published_ref = _complete_noop_workspace(
+                    complete_noop_workspace,
+                    workspace_input,
+                    workspace,
+                    execution,
+                )
             output_workspace = workspace_input.published_output(published_ref)
             return completed_result(
                 {
@@ -265,9 +298,32 @@ def run_workspace_task_attempt(
                 }
             )
 
-        staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
+        if _workspace_io_metrics_enabled(task, metrics):
+            upload_bytes = _workspace_file_bytes(workspace_dir)
+            with metrics.runtime_timer(
+                "workspace_io_duration_seconds",
+                context=runtime_metrics_context,
+                labels={"operation": "upload"},
+            ):
+                staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
+            metrics.runtime_histogram(
+                "workspace_io_bytes",
+                upload_bytes,
+                context=runtime_metrics_context,
+                labels={"operation": "upload"},
+            )
+        else:
+            staged = stage_workspace(workspace_dir, workspace_input, workspace, execution)
         assert_current_attempt_snapshot(attempt, load_current_attempt(attempt))
-        published_ref = publish_workspace(staged, workspace_input, workspace, execution)
+        if _workspace_io_metrics_enabled(task, metrics):
+            with metrics.runtime_timer(
+                "workspace_io_duration_seconds",
+                context=runtime_metrics_context,
+                labels={"operation": "publish"},
+            ):
+                published_ref = publish_workspace(staged, workspace_input, workspace, execution)
+        else:
+            published_ref = publish_workspace(staged, workspace_input, workspace, execution)
         output_workspace = workspace_input.published_output(published_ref)
         return completed_result(
             {
@@ -289,6 +345,7 @@ def run_workspace_free_task_attempt(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
     *,
+    metrics: MetricRecorder | None = None,
     failure_reason_max_length: int,
 ) -> RuntimeTaskResult:
     """
@@ -306,6 +363,8 @@ def run_workspace_free_task_attempt(
     input_data : mapping of str to Any
         Conductor task input. Workspace-free attempts must contain exactly
         ``"params"``.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder for metrics-enabled tasks.
     failure_reason_max_length : int
         Maximum number of characters written to ``reasonForIncompletion`` for
         failed attempts.
@@ -343,7 +402,7 @@ def run_workspace_free_task_attempt(
         raise TaskInputError("run_workspace_free_task_attempt only supports workspace-free tasks")
 
     try:
-        return completed_result(invoke_workspace_free_task(task, input_data))
+        return completed_result(invoke_workspace_free_task(task, input_data, metrics=metrics))
     except Exception as exc:
         return result_for_exception(exc, max_length=failure_reason_max_length)
 
@@ -352,6 +411,8 @@ def invoke_workspace_task_body(
     task: TaskDefinition,
     input_data: Mapping[str, Any],
     workspace_dir: Path,
+    *,
+    metrics: MetricRecorder | None = None,
 ) -> dict[str, Any]:
     """
     Invoke a workspace task body against a prepared local workspace.
@@ -371,6 +432,9 @@ def invoke_workspace_task_body(
     workspace_dir : pathlib.Path
         Attempt-local workspace directory already populated from the workspace
         input.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder passed to metrics-enabled task
+        functions.
 
     Returns
     -------
@@ -420,13 +484,23 @@ def invoke_workspace_task_body(
         raise TaskInputError("workspace task definition is missing WorkspaceSpec")
 
     _check_phase_guardrails(workspace_dir, workspace.pre, "pre", PreGuardrailViolation)
-    raw_result = task.fn(workspace_dir, params)
+    if task.metrics is None:
+        raw_result = task.fn(workspace_dir, params)
+    else:
+        if metrics is None:
+            raise TaskInputError("metrics-enabled task invocation requires a MetricRecorder")
+        raw_result = task.fn(workspace_dir, params, metrics)
     result = _validate_result(task, raw_result)
     _check_phase_guardrails(workspace_dir, workspace.post, "post", PostGuardrailViolation)
     return {"result": result.model_dump(mode="json")}
 
 
-def invoke_workspace_free_task(task: TaskDefinition, input_data: Mapping[str, Any]) -> dict[str, Any]:
+def invoke_workspace_free_task(
+    task: TaskDefinition,
+    input_data: Mapping[str, Any],
+    *,
+    metrics: MetricRecorder | None = None,
+) -> dict[str, Any]:
     """
     Invoke a workspace-free task and validate its output wrapper.
 
@@ -441,6 +515,9 @@ def invoke_workspace_free_task(task: TaskDefinition, input_data: Mapping[str, An
         Loaded workspace-free task definition.
     input_data : mapping of str to Any
         Conductor task input containing exactly ``"params"``.
+    metrics : MetricRecorder or None, default=None
+        Attempt-bound metrics recorder passed to metrics-enabled task
+        functions.
 
     Returns
     -------
@@ -476,7 +553,12 @@ def invoke_workspace_free_task(task: TaskDefinition, input_data: Mapping[str, An
         raise TaskInputError("workspace-free task input must contain only params")
 
     params = task.params_model.model_validate(input_data["params"], extra="forbid")
-    raw_result = task.fn(params)
+    if task.metrics is None:
+        raw_result = task.fn(params)
+    else:
+        if metrics is None:
+            raise TaskInputError("metrics-enabled task invocation requires a MetricRecorder")
+        raw_result = task.fn(params, metrics)
     return build_workspace_free_task_output(task, raw_result)
 
 
@@ -648,6 +730,21 @@ def _snapshot_workspace(workspace_dir: Path) -> WorkspaceSnapshot:
             continue
         entries.append((workspace_path, "file", _file_digest(local_path)))
     return tuple(entries)
+
+
+def _workspace_io_metrics_enabled(task: TaskDefinition, metrics: MetricRecorder | None) -> bool:
+    return metrics is not None and task.metrics is not None and task.metrics.workspace_io
+
+
+def _workspace_file_bytes(workspace_dir: Path) -> int:
+    total = 0
+    for local_path in workspace_dir.rglob("*"):
+        if not local_path.is_file() or local_path.is_symlink():
+            continue
+        if local_path.relative_to(workspace_dir).name == ATTEMPT_WORKSPACE_MARKER:
+            continue
+        total += local_path.stat().st_size
+    return total
 
 
 def _file_digest(path: Path) -> str:
