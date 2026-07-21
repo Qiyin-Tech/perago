@@ -123,7 +123,7 @@ pre check 和任务显式抛出的 `TaskTerminalError` 会映射为 `FAILED_WITH
 | `Extra inputs are not permitted` | Pydantic input/result model 收到未声明字段，或 control object 有未知字段。 | 删除额外字段；扩展 contract 必须先改 Pydantic model。 |
 | `Input should be ...` | Pydantic 字段类型不匹配。 | 按 generated TaskDef schema 和 Pydantic model 修正字段类型。 |
 
-Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`ref_type`、`ref` 四元组；LakeFS endpoint、credentials、`WorkspaceSpec.prefix` 和 `WorkspaceSpec.read_only` 不属于 workflow input。
+Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`refType`、`ref` 四元组；LakeFS endpoint、credentials、`WorkspaceSpec.prefix` 和 `WorkspaceSpec.read_only` 不属于 workflow input。
 
 ## Workspace Sync And Publication
 

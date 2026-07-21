@@ -66,7 +66,7 @@ workspace task 的 input 顶层字段固定为：
   "workspace": {
     "repository": "repo",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "abc123"
   },
   "params": {}
@@ -116,7 +116,7 @@ workspace task 的 output 顶层字段固定为：
   "workspace": {
     "repository": "repo",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "def456"
   },
   "result": {}

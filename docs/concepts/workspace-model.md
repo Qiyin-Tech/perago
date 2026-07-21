@@ -11,7 +11,7 @@ workspace task 的 Conductor input 结构如下：
   "workspace": {
     "repository": "demo-repo",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "abc123"
   },
   "params": {
@@ -33,7 +33,7 @@ workspace task 成功后返回：
   "workspace": {
     "repository": "demo-repo",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "def456"
   },
   "result": {

@@ -16,7 +16,7 @@ Workspace task 的 Conductor `inputData` 顶层字段必须且只能包含 `work
   "workspace": {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3"
   },
   "params": {
@@ -32,7 +32,7 @@ Workspace task 的 Conductor `inputData` 顶层字段必须且只能包含 `work
 | --- | --- | --- |
 | `repository` | required | LakeFS repository 名称，不能为空字符串。 |
 | `branch` | required | 可写 workspace task 成功发布时要推进的目标 branch，不能为空字符串。 |
-| `ref_type` | required | 目前只接受 `"commit"`。 |
+| `refType` | required | 目前只接受 `"commit"`。 |
 | `ref` | required | 本次 attempt 下载的 immutable input commit，不能为空字符串。 |
 
 LakeFS endpoint、access key、secret key、workspace prefix 和 guardrail 都不属于 Conductor input。连接信息来自 worker 本地配置；prefix 与 guardrail 来自 task module 的 `WorkspaceSpec(...)`。
@@ -73,7 +73,7 @@ Perago 只在 task 成功完成时向 Conductor 回写 `outputData`。`RuntimeTa
     "workspace": {
       "repository": "song-000123",
       "branch": "main",
-      "ref_type": "commit",
+      "refType": "commit",
       "ref": "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca"
     },
     "result": {

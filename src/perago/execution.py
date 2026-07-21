@@ -663,7 +663,7 @@ def build_workspace_task_output(
     >>> task_def = load_module_task("app.workers.features_build")
     >>> output = build_workspace_task_output(  # doctest: +SKIP
     ...     task_def,
-    ...     {"repository": "song-000123", "branch": "main", "ref_type": "commit", "ref": "..."},
+    ...     {"repository": "song-000123", "branch": "main", "refType": "commit", "ref": "..."},
     ...     "published-ref",
     ...     {"row_count": 100, "feature_count": 24},
     ... )

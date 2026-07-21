@@ -197,10 +197,10 @@ def test_builds_workspace_taskdef() -> None:
     assert "inputTemplate" not in taskdef
     assert taskdef["inputSchema"]["data"]["additionalProperties"] is False
     workspace_input = taskdef["inputSchema"]["data"]["properties"]["workspace"]
-    assert workspace_input["required"] == ["repository", "branch", "ref_type", "ref"]
+    assert workspace_input["required"] == ["repository", "branch", "refType", "ref"]
     assert "description" not in workspace_input
     workspace_output = taskdef["outputSchema"]["data"]["properties"]["workspace"]
-    assert workspace_output["required"] == ["repository", "branch", "ref_type", "ref"]
+    assert workspace_output["required"] == ["repository", "branch", "refType", "ref"]
     assert "description" not in workspace_output
     serialized = json.dumps(taskdef)
     assert "guardrail" not in serialized

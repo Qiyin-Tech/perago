@@ -37,7 +37,7 @@
               "minLength": 1,
               "type": "string"
             },
-            "ref_type": {
+            "refType": {
               "const": "commit",
               "type": "string"
             },
@@ -49,7 +49,7 @@
           "required": [
             "repository",
             "branch",
-            "ref_type",
+            "refType",
             "ref"
           ],
           "type": "object"
@@ -96,7 +96,7 @@
               "minLength": 1,
               "type": "string"
             },
-            "ref_type": {
+            "refType": {
               "const": "commit",
               "type": "string"
             },
@@ -108,7 +108,7 @@
           "required": [
             "repository",
             "branch",
-            "ref_type",
+            "refType",
             "ref"
           ],
           "type": "object"

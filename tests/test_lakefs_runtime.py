@@ -222,7 +222,7 @@ class MultiRepoRuntime(LakeFSWorkspaceRuntime):
 
 
 def _workspace_input() -> WorkspaceInput:
-    return WorkspaceInput(repository="song-000123", branch="main", ref_type="commit", ref="input-commit")
+    return WorkspaceInput(repository="song-000123", branch="main", refType="commit", ref="input-commit")
 
 
 def test_lakefs_runtime_download_stage_publish_and_cleanup(tmp_path) -> None:

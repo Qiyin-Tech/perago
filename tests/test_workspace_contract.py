@@ -7,7 +7,7 @@ from perago import WorkspaceInput, WorkspaceOutput
 WORKSPACE_REF = {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3",
 }
 
@@ -33,9 +33,11 @@ def test_workspace_input_builds_published_output_ref() -> None:
     }
 
 
-def test_workspace_contract_models_reject_extra_fields() -> None:
+@pytest.mark.parametrize("extra_field", ["prefix", "ref_type"])
+def test_workspace_contract_models_reject_extra_fields(extra_field: str) -> None:
+    """Reject fields outside the new lower-camel-case workspace contract."""
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        WorkspaceOutput.model_validate({**WORKSPACE_REF, "prefix": "/audio/render"})
+        WorkspaceOutput.model_validate({**WORKSPACE_REF, extra_field: "unexpected"})
 
 
 @pytest.mark.parametrize("field", ["repository", "branch", "ref"])

@@ -411,7 +411,7 @@ class WorkspaceRef(BaseModel):
 
     repository: str = Field(min_length=1)
     branch: str = Field(min_length=1)
-    ref_type: Literal["commit"]
+    refType: Literal["commit"]
     ref: str = Field(min_length=1)
 
     @field_validator("repository", "branch", "ref")
@@ -453,7 +453,7 @@ class WorkspaceInput(WorkspaceRef):
     branch : str
         Target branch that successful publication should advance. Blank strings
         are rejected.
-    ref_type : {"commit"}
+    refType : {"commit"}
         Type of input reference. Perago currently accepts immutable commit
         references only.
     ref : str
@@ -468,7 +468,7 @@ class WorkspaceInput(WorkspaceRef):
     >>> input_ref = WorkspaceInput(
     ...     repository="song-000123",
     ...     branch="main",
-    ...     ref_type="commit",
+    ...     refType="commit",
     ...     ref="589f8770",
     ... )
     >>> input_ref.published_output("9c6f8770").ref
@@ -487,12 +487,12 @@ class WorkspaceInput(WorkspaceRef):
         -------
         WorkspaceOutput
             Output reference with the same repository and branch and with
-            ``ref_type`` set to ``"commit"``.
+            ``refType`` set to ``"commit"``.
         """
         return WorkspaceOutput.model_validate(
             {
                 **self.model_dump(mode="json"),
-                "ref_type": "commit",
+                "refType": "commit",
                 "ref": ref,
             }
         )
@@ -511,7 +511,7 @@ class WorkspaceOutput(WorkspaceRef):
         LakeFS repository name.
     branch : str
         Branch that was successfully advanced.
-    ref_type : {"commit"}
+    refType : {"commit"}
         Type of output reference. Perago currently emits commit references.
     ref : str
         Published commit ref.

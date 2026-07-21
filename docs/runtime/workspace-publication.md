@@ -19,14 +19,14 @@ Workspace completion 是 Perago 对一次 workspace task attempt 的运行时边
 9. 尝试清理已创建的 staging branch。
 10. 尝试清理 attempt-local workspace。
 
-成功 output 会保留 input workspace 的 repository、branch 和 `ref_type`。`ref` 可能保持 input ref，也可能改成发布后的 LakeFS commit：
+成功 output 会保留 input workspace 的 repository、branch 和 `refType`。`ref` 可能保持 input ref，也可能改成发布后的 LakeFS commit：
 
 ```json
 {
   "workspace": {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "published-commit"
   },
   "result": {
