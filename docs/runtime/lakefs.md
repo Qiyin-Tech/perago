@@ -1,6 +1,6 @@
 # LakeFS Runtime
 
-Perago workspace task 使用 LakeFS 存放输入，并在可写路径上发布输出。Conductor task input 只携带 `repository`、`branch`、`ref_type` 和 `ref`；LakeFS endpoint 与 credentials 来自 worker-local runtime config，不进入 Conductor payload，也不写入 TaskDef。
+Perago workspace task 使用 LakeFS 存放输入，并在可写路径上发布输出。Conductor task input 只携带 `repository`、`branch`、`refType` 和 `ref`；LakeFS endpoint 与 credentials 来自 worker-local runtime config，不进入 Conductor payload，也不写入 TaskDef。
 
 这个页面说明 worker child process 如何把一次 Conductor attempt 映射到 LakeFS download、read-only/no-op completion、stage、publish 和 cleanup。正式发布协议见 [LakeFS 发布协议](../lakefs-publication-protocol.md)。
 
@@ -13,7 +13,7 @@ workspace task 的 Conductor input 必须包含 `workspace`：
   "workspace": {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "input-commit"
   },
   "params": {
@@ -26,7 +26,7 @@ workspace task 的 Conductor input 必须包含 `workspace`：
 | --- | --- | --- |
 | `repository` | required | LakeFS repository id。 |
 | `branch` | required | 可写 workspace task 成功发布后要推进的目标 branch。 |
-| `ref_type` | required | 当前契约值是 `commit`。 |
+| `refType` | required | 当前契约值是 `commit`。 |
 | `ref` | required | 本次 attempt 读取的不可变输入 ref，也是可写 publication 的 staging branch 创建基准。 |
 
 `WorkspaceSpec(prefix=...)` 由 task module 定义，不来自 Conductor input。它决定 LakeFS object path 和本机业务路径之间的映射：
@@ -122,7 +122,7 @@ stage 成功并通过第二次 attempt fence 后，Perago 会发布 staging comm
   "workspace": {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "published-commit"
   },
   "result": {}

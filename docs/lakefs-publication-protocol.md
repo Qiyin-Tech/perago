@@ -18,7 +18,7 @@ LakeFS commit 只表达 workspace 内容变化。节点执行成功这个事实�
 | --- | --- | --- |
 | `repository` | 是 | 当前 workflow / song 对应的 LakeFS repo。 |
 | `branch` | 是 | 目标 workspace branch，通常是 `main`。 |
-| `ref_type` | 是 | 必须是 `commit`。 |
+| `refType` | 是 | 必须是 `commit`。 |
 | `ref` | 是 | 不可变输入 commit，下文称为 `input_ref`。 |
 
 `input_ref` 来自 Conductor input，不来自 LakeFS metadata。

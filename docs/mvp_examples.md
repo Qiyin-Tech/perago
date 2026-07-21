@@ -750,7 +750,7 @@ Workspace task input:
   "workspace": {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3"
   },
   "params": {
@@ -1126,7 +1126,7 @@ Workspace task output:
   "workspace": {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca"
   },
   "result": {
@@ -1324,7 +1324,7 @@ Workspace task definition:
             "branch": {
               "type": "string"
             },
-            "ref_type": {
+            "refType": {
               "type": "string",
               "enum": ["commit"]
             },
@@ -1332,7 +1332,7 @@ Workspace task definition:
               "type": "string"
             }
           },
-          "required": ["repository", "branch", "ref_type", "ref"],
+          "required": ["repository", "branch", "refType", "ref"],
           "additionalProperties": false
         },
         "params": {
@@ -1369,7 +1369,7 @@ Workspace task definition:
             "branch": {
               "type": "string"
             },
-            "ref_type": {
+            "refType": {
               "type": "string",
               "enum": ["commit"]
             },
@@ -1377,7 +1377,7 @@ Workspace task definition:
               "type": "string"
             }
           },
-          "required": ["repository", "branch", "ref_type", "ref"],
+          "required": ["repository", "branch", "refType", "ref"],
           "additionalProperties": false
         },
         "result": {

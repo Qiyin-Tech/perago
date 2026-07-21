@@ -93,7 +93,7 @@ def main() -> int:
             "workspace": {
                 "repository": args.repo,
                 "branch": args.branch,
-                "ref_type": "commit",
+                "refType": "commit",
                 "ref": input_commit,
             },
             "params": {"run_id": run_id, "greeting": "hello world"},

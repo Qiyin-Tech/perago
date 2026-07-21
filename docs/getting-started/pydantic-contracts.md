@@ -76,7 +76,7 @@ workspace task 还要求顶层 input 只包含 `workspace` 和 `params`：
   "workspace": {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3"
   },
   "params": {

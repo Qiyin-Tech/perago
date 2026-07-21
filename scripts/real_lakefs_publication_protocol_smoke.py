@@ -301,7 +301,7 @@ def stage_output(
 
 
 def workspace_input(repo: Repository, target: str, input_commit: str) -> WorkspaceInput:
-    return WorkspaceInput(repository=repo.id, branch=target, ref_type="commit", ref=input_commit)
+    return WorkspaceInput(repository=repo.id, branch=target, refType="commit", ref=input_commit)
 
 
 def attempt(run_id: str, scenario: str) -> ProtocolAttempt:

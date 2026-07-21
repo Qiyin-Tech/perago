@@ -155,7 +155,7 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
               "minLength": 1,
               "type": "string"
             },
-            "ref_type": {
+            "refType": {
               "const": "commit",
               "type": "string"
             },
@@ -167,7 +167,7 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
           "required": [
             "repository",
             "branch",
-            "ref_type",
+            "refType",
             "ref"
           ],
           "type": "object"
@@ -215,7 +215,7 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
               "minLength": 1,
               "type": "string"
             },
-            "ref_type": {
+            "refType": {
               "const": "commit",
               "type": "string"
             },
@@ -227,7 +227,7 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
           "required": [
             "repository",
             "branch",
-            "ref_type",
+            "refType",
             "ref"
           ],
           "type": "object"

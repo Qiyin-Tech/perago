@@ -271,7 +271,7 @@ def workspace_terminal_after_write_task(workspace: Path, params: Params) -> Outp
 WORKSPACE_INPUT = {
     "repository": "song-000123",
     "branch": "main",
-    "ref_type": "commit",
+    "refType": "commit",
     "ref": "589f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca3",
 }
 
@@ -395,7 +395,7 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
             "workspace": {
                 "repository": "song-000123",
                 "branch": "main",
-                "ref_type": "commit",
+                "refType": "commit",
                 "ref": "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca",
             },
             "result": {"row_count": 100, "feature_count": 24},
@@ -1142,7 +1142,7 @@ def test_builds_workspace_task_output_with_published_ref() -> None:
         "workspace": {
             "repository": "song-000123",
             "branch": "main",
-            "ref_type": "commit",
+            "refType": "commit",
             "ref": "9c6f87704418c6bac80c5a6fc1b52c245af347b9ad1ea8d06597e4437fae4ca",
         },
         "result": {"row_count": 100, "feature_count": 24},
@@ -1265,10 +1265,10 @@ def test_workspace_free_output_rejects_extra_business_result_fields() -> None:
         build_workspace_free_task_output(task, {"valid": True, "extra": "ignored-by-default"})
 
 
-def test_workspace_task_body_requires_ref_type(tmp_path) -> None:
+def test_workspace_task_body_requires_camel_case_ref_field(tmp_path) -> None:
     task = load_module_task("app.workers.features_build")
     workspace_input = dict(WORKSPACE_INPUT)
-    workspace_input.pop("ref_type")
+    workspace_input.pop("refType")
 
     with pytest.raises(ValidationError):
         invoke_workspace_task_body(
