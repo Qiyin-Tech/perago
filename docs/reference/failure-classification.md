@@ -37,7 +37,7 @@ Workspace task 的 attempt 生命周期中，失败分类如下。
 
 | 阶段 | 典型原因 | Result status | 是否发布 workspace output |
 | --- | --- | --- | --- |
-| input validation | input 顶层字段缺少 `workspace` 或 `params`；`WorkspaceInput` 无效；`params` 额外字段或类型错误 | `FAILED` | 否 |
+| input validation | input 顶层字段缺少 `workspace` 或 `params`；`WorkspaceInput` 无效；`params` 类型错误，或 strict params 含额外字段 | `FAILED` | 否 |
 | download | LakeFS repository/ref 不存在、连接失败、本机 workspace 写入失败 | `FAILED` | 否 |
 | pre guardrails | 输入 workspace 缺少必需文件/目录/glob，或命中 forbidden glob | `FAILED_WITH_TERMINAL_ERROR` | 否 |
 | task body retryable failure | 用户函数抛出普通异常、`TaskFailed`，或返回值不能通过 output Pydantic model 校验 | `FAILED` | 否 |
@@ -61,7 +61,7 @@ Workspace-free task 不下载、不发布 workspace，也没有 guardrail 或 pu
 
 | 阶段 | 典型原因 | Result status |
 | --- | --- | --- |
-| input validation | input 顶层字段缺少 `params`；`params` 额外字段或类型错误 | `FAILED` |
+| input validation | input 顶层字段缺少 `params`；`params` 类型错误，或 strict params 含额外字段 | `FAILED` |
 | task body retryable failure | 用户函数抛出普通异常或 `TaskFailed` | `FAILED` |
 | task body terminal failure | 用户函数抛出 `TaskTerminalError` | `FAILED_WITH_TERMINAL_ERROR` |
 | task body business branch | 用户函数成功判定业务无法继续自动执行，但 workflow 可处理该分支 | `COMPLETED` |
@@ -92,7 +92,7 @@ Perago 内部先构造 `RuntimeTaskResult`，再转换成 Conductor SDK 的 `Tas
 ```json
 {
   "status": "FAILED",
-  "reasonForIncompletion": "workspace task input must contain only workspace and params"
+  "reasonForIncompletion": "workspace task input must contain workspace and params"
 }
 ```
 

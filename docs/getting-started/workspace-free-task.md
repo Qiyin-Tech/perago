@@ -34,11 +34,11 @@ def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
 Required/generated 字段边界：
 
 - input required: Conductor input 必须提供 `params`。
-- input forbidden: Conductor input 不能提供顶层 `workspace`，也不能把业务字段展开到顶层。
+- input ignored: Conductor input 的 `workspace`、`toExecute` 等额外顶层字段会被忽略；业务字段仍必须放在 `params` 中。
 - output generated: 函数返回值序列化为 Conductor output 的 `result`。
 - output forbidden: workspace-free task 不生成 output `workspace` ref。
 - task metadata required: `@task(...)` 必须声明 `name` 和 `owner_email`。
-- task metadata optional: `description` 和非 publication control 可按任务需要声明。
+- task metadata optional: `description`、`strict_params` 和非 publication control 可按任务需要声明。
 - task metadata forbidden: 不能声明 `workspace=WorkspaceSpec(...)`；不能通过 `TaskControls(publish_budget=...)` 配置发布预算。
 
 ## 函数签名规则
@@ -62,7 +62,7 @@ def task_fn(params: ParamsModel) -> OutputModel:
 
 ## Conductor 输入输出
 
-workspace-free task 的 Conductor input 只包含一个顶层 key：
+workspace-free task 的 Conductor input 只要求一个顶层 key：
 
 ```json
 {
@@ -93,7 +93,7 @@ workspace-free task 的 Conductor input 只包含一个顶层 key：
 }
 ```
 
-`params` 和 `result` 都按对应 Pydantic model 校验。额外字段会被拒绝，包括嵌套 model 内部的额外字段。
+`params` 和 `result` 都按对应 Pydantic model 校验。`params` 默认允许 schema 超集并递归丢弃额外字段；需要拒绝额外字段时，在 `@task(...)` 中设置 `strict_params=True`。`result` 始终拒绝额外字段。Conductor input 顶层只要求存在 `params`，其他顶层字段会被忽略。
 
 ## TaskDef 结构
 

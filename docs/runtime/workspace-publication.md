@@ -8,7 +8,7 @@ Workspace completion 是 Perago 对一次 workspace task attempt 的运行时边
 
 一次 workspace task attempt 的公共顺序是：
 
-1. 校验 Conductor input 顶层只有 `workspace` 和 `params`。
+1. 校验 Conductor input 顶层包含 `workspace` 和 `params`，忽略 `toExecute` 等其他顶层字段。
 2. 从 `PERAGO_WORKSPACE_ROOT` 创建 execution-local attempt workspace，并写入 `.perago-attempt.json` marker。
 3. 从 input `workspace.ref` 下载 `WorkspaceSpec.prefix` 下的 LakeFS object。
 4. 执行 pre guardrails。

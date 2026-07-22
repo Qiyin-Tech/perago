@@ -95,7 +95,7 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
         input_required.append("workspace")
         output_required.append("workspace")
 
-    input_properties["params"] = schema_for_model(task.params_model)
+    input_properties["params"] = schema_for_model(task.params_model, allow_extra=not task.strict_params)
     output_properties["result"] = schema_for_model(task.output_model)
     input_required.append("params")
     output_required.append("result")
@@ -115,7 +115,7 @@ def build_taskdef(task: TaskDefinition) -> dict[str, Any]:
                 "name": f"{task.name}.input",
                 "version": TASKDEF_SCHEMA_VERSION,
                 "type": TASKDEF_SCHEMA_TYPE,
-                "data": _object_schema(input_properties, input_required),
+                "data": _object_schema(input_properties, input_required, allow_extra=True),
             },
             "outputSchema": {
                 "name": f"{task.name}.output",
@@ -173,7 +173,7 @@ def write_taskdef(task: TaskDefinition, output: Path) -> Path:
     return output
 
 
-def schema_for_model(model: type[BaseModel]) -> dict[str, Any]:
+def schema_for_model(model: type[BaseModel], *, allow_extra: bool = False) -> dict[str, Any]:
     schema = model.model_json_schema()
     _strip_model_schema_metadata(schema)
     inlined = _inline_refs(schema)
@@ -182,7 +182,7 @@ def schema_for_model(model: type[BaseModel]) -> dict[str, Any]:
         _GENERATED_SCHEMA_METADATA_KEYS,
         preserve_mapping_keys=_SCHEMA_NAME_MAPPING_KEYS,
     )
-    _close_object_schemas(inlined)
+    _set_object_schema_extra(inlined, allow_extra=allow_extra)
     return inlined
 
 
@@ -247,12 +247,17 @@ def _response_timeout_seconds(task: TaskDefinition) -> int:
     return response_seconds
 
 
-def _object_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+def _object_schema(
+    properties: dict[str, Any],
+    required: list[str],
+    *,
+    allow_extra: bool = False,
+) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": properties,
         "required": required,
-        "additionalProperties": False,
+        "additionalProperties": allow_extra,
     }
 
 
@@ -277,15 +282,15 @@ def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return visit(copied)
 
 
-def _close_object_schemas(schema: Any) -> None:
+def _set_object_schema_extra(schema: Any, *, allow_extra: bool) -> None:
     if isinstance(schema, dict):
-        if schema.get("type") == "object":
-            schema.setdefault("additionalProperties", False)
+        if schema.get("type") == "object" and isinstance(schema.get("properties"), dict):
+            schema["additionalProperties"] = allow_extra
         for value in schema.values():
-            _close_object_schemas(value)
+            _set_object_schema_extra(value, allow_extra=allow_extra)
     elif isinstance(schema, list):
         for value in schema:
-            _close_object_schemas(value)
+            _set_object_schema_extra(value, allow_extra=allow_extra)
 
 
 def _strip_schema_metadata_keys(schema: Any, keys: Collection[str], *, preserve_mapping_keys: Collection[str]) -> None:

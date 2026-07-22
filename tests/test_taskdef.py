@@ -178,6 +178,18 @@ def defaults_task(params: ParamsWithDefaults) -> OutputWithDefaults:
     return OutputWithDefaults()
 
 
+@task(name="tests.strict_params_schema", owner_email="data@example.com", strict_params=True)
+def strict_params_schema_task(params: NestedParams) -> OutputWithDefaults:
+    del params
+    return OutputWithDefaults()
+
+
+@task(name="tests.loose_params_schema", owner_email="data@example.com")
+def loose_params_schema_task(params: NestedParams) -> OutputWithDefaults:
+    del params
+    return OutputWithDefaults()
+
+
 def test_builds_workspace_taskdef() -> None:
     taskdef = build_taskdef(load_module_task("app.workers.features_build"))
 
@@ -195,7 +207,7 @@ def test_builds_workspace_taskdef() -> None:
     assert taskdef["outputSchema"]["version"] == TASKDEF_SCHEMA_VERSION
     assert taskdef["outputSchema"]["type"] == TASKDEF_SCHEMA_TYPE
     assert "inputTemplate" not in taskdef
-    assert taskdef["inputSchema"]["data"]["additionalProperties"] is False
+    assert taskdef["inputSchema"]["data"]["additionalProperties"] is True
     workspace_input = taskdef["inputSchema"]["data"]["properties"]["workspace"]
     assert workspace_input["required"] == ["repository", "branch", "refType", "ref"]
     assert "description" not in workspace_input
@@ -326,7 +338,7 @@ def test_schema_preserves_fields_named_title() -> None:
 
     assert "title" in params_schema["properties"]
     assert "title" in params_schema["required"]
-    assert params_schema["additionalProperties"] is False
+    assert params_schema["additionalProperties"] is True
     assert "title" in result_schema["properties"]
     assert result_schema["additionalProperties"] is False
 
@@ -340,6 +352,20 @@ def test_schema_for_model_inlines_refs_and_closes_nested_objects() -> None:
     assert "description" not in schema
     assert schema["additionalProperties"] is False
     assert schema["properties"]["settings"]["additionalProperties"] is False
+
+
+def test_taskdef_params_schema_matches_strict_params_mode() -> None:
+    loose_input_schema = build_taskdef(loose_params_schema_task.__perago_task__)["inputSchema"]["data"]
+    loose_params_schema = loose_input_schema["properties"]["params"]
+    strict_input_schema = build_taskdef(strict_params_schema_task.__perago_task__)["inputSchema"]["data"]
+    strict_params_schema = strict_input_schema["properties"]["params"]
+
+    assert loose_input_schema["additionalProperties"] is True
+    assert loose_params_schema["additionalProperties"] is True
+    assert loose_params_schema["properties"]["settings"]["additionalProperties"] is True
+    assert strict_input_schema["additionalProperties"] is True
+    assert strict_params_schema["additionalProperties"] is False
+    assert strict_params_schema["properties"]["settings"]["additionalProperties"] is False
 
 
 def test_schema_for_model_preserves_field_descriptions_while_stripping_model_docstrings() -> None:

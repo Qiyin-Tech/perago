@@ -134,8 +134,8 @@ def run_workspace_task_attempt(
         Loaded workspace task definition. Workspace-free task definitions are
         rejected.
     input_data : mapping of str to Any
-        Conductor task input. Workspace attempts must contain exactly
-        ``"workspace"`` and ``"params"``.
+        Conductor task input. Workspace attempts require ``"workspace"`` and
+        ``"params"``; other top-level fields are ignored.
     attempt : object
         Conductor task attempt object. It must expose the attributes consumed
         by :func:`perago.assert_current_attempt_snapshot` and workspace
@@ -232,8 +232,8 @@ def run_workspace_task_attempt(
     owner = new_workspace_owner(owner_worker_id or os.environ.get("PERAGO_WORKER_ID", f"pid-{os.getpid()}"))
     register_active_workspace_owner(owner)
     try:
-        if set(input_data) != {"workspace", "params"}:
-            raise TaskInputError("workspace task input must contain only workspace and params")
+        if not {"workspace", "params"}.issubset(input_data):
+            raise TaskInputError("workspace task input must contain workspace and params")
         workspace_input = WorkspaceInput.model_validate(input_data["workspace"])
         workspace_dir = prepare_attempt_workspace(workspace_root, execution, owner)
         runtime_metrics_context = RuntimeMetricContext(task_name=task.name)
@@ -361,8 +361,8 @@ def run_workspace_free_task_attempt(
         Loaded workspace-free task definition. Workspace task definitions are
         rejected.
     input_data : mapping of str to Any
-        Conductor task input. Workspace-free attempts must contain exactly
-        ``"params"``.
+        Conductor task input. Workspace-free attempts require ``"params"``;
+        other top-level fields are ignored.
     metrics : MetricRecorder or None, default=None
         Attempt-bound metrics recorder for metrics-enabled tasks.
     failure_reason_max_length : int
@@ -427,8 +427,8 @@ def invoke_workspace_task_body(
     task : TaskDefinition
         Loaded workspace task definition.
     input_data : mapping of str to Any
-        Conductor task input containing exactly ``"workspace"`` and
-        ``"params"``.
+        Conductor task input containing ``"workspace"`` and ``"params"``.
+        Other top-level fields are ignored.
     workspace_dir : pathlib.Path
         Attempt-local workspace directory already populated from the workspace
         input.
@@ -474,14 +474,14 @@ def invoke_workspace_task_body(
     """
     if not task.has_workspace:
         raise TaskInputError("invoke_workspace_task_body only supports workspace tasks")
-    if set(input_data) != {"workspace", "params"}:
-        raise TaskInputError("workspace task input must contain only workspace and params")
+    if not {"workspace", "params"}.issubset(input_data):
+        raise TaskInputError("workspace task input must contain workspace and params")
 
     WorkspaceInput.model_validate(input_data["workspace"])
-    params = task.params_model.model_validate(input_data["params"], extra="forbid")
     workspace = task.workspace
     if workspace is None:
         raise TaskInputError("workspace task definition is missing WorkspaceSpec")
+    params = _validate_params(task, input_data["params"])
 
     _check_phase_guardrails(workspace_dir, workspace.pre, "pre", PreGuardrailViolation)
     if task.metrics is None:
@@ -505,16 +505,17 @@ def invoke_workspace_free_task(
     Invoke a workspace-free task and validate its output wrapper.
 
     The helper is the body-level execution path for tasks that do not declare a
-    ``WorkspaceSpec``. It accepts only the Conductor ``params`` wrapper, calls
-    the task function with the validated params model, and returns the validated
-    output payload.
+    ``WorkspaceSpec``. It requires the Conductor ``params`` wrapper, ignores
+    other top-level fields, calls the task function with the validated params
+    model, and returns the validated output payload.
 
     Parameters
     ----------
     task : TaskDefinition
         Loaded workspace-free task definition.
     input_data : mapping of str to Any
-        Conductor task input containing exactly ``"params"``.
+        Conductor task input containing ``"params"``. Other top-level fields
+        are ignored.
     metrics : MetricRecorder or None, default=None
         Attempt-bound metrics recorder passed to metrics-enabled task
         functions.
@@ -549,10 +550,10 @@ def invoke_workspace_free_task(
     """
     if task.has_workspace:
         raise TaskInputError("invoke_workspace_free_task only supports workspace-free tasks")
-    if set(input_data) != {"params"}:
-        raise TaskInputError("workspace-free task input must contain only params")
+    if "params" not in input_data:
+        raise TaskInputError("workspace-free task input must contain params")
 
-    params = task.params_model.model_validate(input_data["params"], extra="forbid")
+    params = _validate_params(task, input_data["params"])
     if task.metrics is None:
         raw_result = task.fn(params)
     else:
@@ -560,6 +561,11 @@ def invoke_workspace_free_task(
             raise TaskInputError("metrics-enabled task invocation requires a MetricRecorder")
         raw_result = task.fn(params, metrics)
     return build_workspace_free_task_output(task, raw_result)
+
+
+def _validate_params(task: TaskDefinition, raw_params: object) -> BaseModel:
+    extra = "forbid" if task.strict_params else "ignore"
+    return task.params_model.model_validate(raw_params, extra=extra)
 
 
 def build_workspace_free_task_output(task: TaskDefinition, raw_result: object) -> dict[str, Any]:

@@ -40,6 +40,9 @@ class TaskDefinition:
         Pydantic model used to validate the ``params`` input object.
     output_model : type[pydantic.BaseModel]
         Pydantic model used to validate the task result object.
+    strict_params : bool, default=False
+        Whether ``params`` rejects fields not declared by ``params_model``.
+        The default ignores extra fields at every nested Pydantic model level.
     description : str or None, default=None
         Optional human-readable description copied into the TaskDef.
     workspace : WorkspaceSpec or None, default=None
@@ -77,6 +80,7 @@ class TaskDefinition:
     fn: Callable[..., BaseModel]
     params_model: type[BaseModel]
     output_model: type[BaseModel]
+    strict_params: bool = False
     description: str | None = None
     workspace: WorkspaceSpec | None = None
     metrics: MetricSpec | None = None
@@ -96,6 +100,7 @@ def task(
     workspace: WorkspaceSpec | None = None,
     metrics: MetricSpec | None = None,
     controls: TaskControls | None = None,
+    strict_params: bool = False,
     **unsupported: object,
 ) -> Callable[[Callable[..., BaseModel]], Callable[..., BaseModel]]:
     """
@@ -125,6 +130,10 @@ def task(
     controls : TaskControls or None, default=None
         Optional retry, timeout, execution limit, and publish budget controls.
         ``None`` uses default controls.
+    strict_params : bool, default=False
+        Whether ``params`` must reject fields not declared by its Pydantic
+        schema. The default accepts a schema superset and discards extra fields
+        before calling the task function.
     **unsupported : object
         Any extra decorator fields. Perago rejects them so that the task
         function signature remains the only business contract source.
@@ -173,6 +182,7 @@ def task(
                 workspace=workspace,
                 metrics=metrics,
                 controls=controls if controls is not None else TaskControls(),
+                strict_params=strict_params,
             )
         except ValidationError as exc:
             raise TaskDefinitionError(str(exc)) from exc
@@ -251,6 +261,7 @@ def _build_task_definition(
     workspace: WorkspaceSpec | None,
     metrics: MetricSpec | None,
     controls: TaskControls,
+    strict_params: bool,
 ) -> TaskDefinition:
     _validate_required_metadata(name=name, owner_email=owner_email)
     if workspace is not None and not isinstance(workspace, WorkspaceSpec):
@@ -259,6 +270,8 @@ def _build_task_definition(
         raise TaskDefinitionError("metrics must be a MetricSpec")
     if not isinstance(controls, TaskControls):
         raise TaskDefinitionError("controls must be a TaskControls")
+    if not isinstance(strict_params, bool):
+        raise TaskDefinitionError("strict_params must be a bool")
     if workspace is None and controls.publish_budget is not None:
         raise TaskDefinitionError("publish_budget requires workspace=WorkspaceSpec(...)")
     if inspect.iscoroutinefunction(fn):
@@ -309,6 +322,7 @@ def _build_task_definition(
         fn=fn,
         params_model=params_model,
         output_model=output_model,
+        strict_params=strict_params,
     )
 
 

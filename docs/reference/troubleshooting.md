@@ -117,10 +117,10 @@ pre check 和任务显式抛出的 `TaskTerminalError` 会映射为 `FAILED_WITH
 
 | 错误文本 | 常见原因 | 修复 |
 | --- | --- | --- |
-| `workspace task input must contain only workspace and params` | workspace task input 顶层字段缺失或多了其他字段。 | input 顶层只保留 `workspace` 和 `params`。 |
-| `workspace-free task input must contain only params` | workspace-free task input 顶层包含 `workspace` 或其他字段。 | input 顶层只保留 `params`。 |
+| `workspace task input must contain workspace and params` | workspace task input 顶层缺少 `workspace` 或 `params`。 | 补齐两个 required 字段；其他顶层字段会被忽略。 |
+| `workspace-free task input must contain params` | workspace-free task input 顶层缺少 `params` wrapper。 | 把业务输入放入顶层 `params`；其他顶层字段会被忽略。 |
 | `workspace repository, branch, and ref must not be blank` | `WorkspaceInput` 的 repository、branch 或 ref 是空白字符串。 | 填写非空 LakeFS repository、target branch 和 input commit ref。 |
-| `Extra inputs are not permitted` | Pydantic input/result model 收到未声明字段，或 control object 有未知字段。 | 删除额外字段；扩展 contract 必须先改 Pydantic model。 |
+| `Extra inputs are not permitted` | `strict_params=True` 的 params、result model、workspace model 或 control object 收到未声明字段。 | 删除额外字段；若 params 应兼容 schema 超集，使用默认 `strict_params=False`。 |
 | `Input should be ...` | Pydantic 字段类型不匹配。 | 按 generated TaskDef schema 和 Pydantic model 修正字段类型。 |
 
 Workspace task 的 `workspace` 是平铺的 `repository`、`branch`、`refType`、`ref` 四元组；LakeFS endpoint、credentials、`WorkspaceSpec.prefix` 和 `WorkspaceSpec.read_only` 不属于 workflow input。

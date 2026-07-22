@@ -149,9 +149,10 @@ def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
 字段边界：
 
 - Required: `name`、`owner_email`、`params` 类型注解、返回类型注解，以及 runtime input 中的顶层 `params`。
-- Optional: `description` 和不涉及 publication 的 `TaskControls`。
+- Optional: `description`、`strict_params` 和不涉及 publication 的 `TaskControls`。
 - Generated: TaskDef schema 和成功输出中的 `result`。
-- Forbidden: 顶层 `workspace` input、`WorkspaceSpec`、`publish_budget`、多个业务参数或 keyword-only contract 参数。
+- Ignored: 顶层 `workspace`、`toExecute` 等 `params` 之外的 Conductor input 字段。
+- Forbidden: `WorkspaceSpec`、`publish_budget`、多个业务参数或 keyword-only contract 参数。
 
 ## Workspace task with publish budget
 

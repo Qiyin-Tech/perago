@@ -4,7 +4,7 @@
 
 ## Workspace Task Input
 
-Workspace task 的 Conductor `inputData` 顶层字段必须且只能包含 `workspace` 和 `params`。
+Workspace task 的 Conductor `inputData` 顶层必须包含 `workspace` 和 `params`。其他顶层字段会被忽略；例如 Conductor dynamic node 追加的 `toExecute` 不会传给 task body。
 
 | 字段 | 状态 | 来源 | 说明 |
 | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ LakeFS endpoint、access key、secret key、workspace prefix 和 guardrail 都�
 
 ## Workspace-Free Task Input
 
-Workspace-free task 的 Conductor `inputData` 顶层字段必须且只能包含 `params`。
+Workspace-free task 的 Conductor `inputData` 顶层必须包含 `params`。其他顶层字段会被忽略。
 
 | 字段 | 状态 | 来源 | 说明 |
 | --- | --- | --- | --- |
@@ -54,13 +54,13 @@ Workspace-free task 的 Conductor `inputData` 顶层字段必须且只能包含 
 }
 ```
 
-不要把 `params` 展开到顶层，也不要在 workspace-free task input 中传 `workspace`。Perago 会把顶层额外字段视为 contract 错误。
+不要把 `params` 展开到顶层。Perago 只读取 schema 要求的顶层字段，不会把其他顶层数据传给业务函数。
 
 ## Business Model Validation
 
-Perago 在调用业务函数前使用 task 的 Pydantic `params` model 校验 `params`，并强制 `extra="forbid"`。这意味着即使业务 model 没有显式声明 `ConfigDict(extra="forbid")`，运行时仍会拒绝额外字段。
+Perago 在调用业务函数前使用 task 的 Pydantic `params` model 校验 `params`。默认 `@task(strict_params=False)`，允许输入是 schema 的超集：所有层级的额外字段都会被忽略，业务函数只收到 schema 声明的数据。
 
-嵌套 object 也按相同规则关闭额外字段。默认值属于 Pydantic schema 与运行时模型校验的一部分，但 Perago 不生成 Conductor `inputTemplate`，也不会把默认值复制进 Conductor task input。
+如果 task 必须拒绝任何额外业务字段，使用 `@task(..., strict_params=True)`。该模式会对顶层和嵌套 Pydantic object 强制 `extra="forbid"`。这个开关不影响 Conductor `inputData` 顶层的宽松读取，也不改变始终严格的 `workspace` 和 `result` 校验。默认值属于 Pydantic schema 与运行时模型校验的一部分，但 Perago 不生成 Conductor `inputTemplate`，也不会把默认值复制进 Conductor task input。
 
 ## Completed Output
 
@@ -119,7 +119,7 @@ WorkflowDef 分支处理。
 ```json
 {
   "status": "FAILED",
-  "reasonForIncompletion": "workspace task input must contain only workspace and params"
+  "reasonForIncompletion": "workspace task input must contain workspace and params"
 }
 ```
 
@@ -136,13 +136,13 @@ WorkflowDef 分支处理。
 | `FAILED` | `reasonForIncompletion` required, `output` forbidden | 输入结构错误、Pydantic 校验失败、`TaskFailed`、未知业务异常、post guardrail、attempt fence 或 publish fence 失败。 |
 | `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required, `output` forbidden | pre guardrail 失败或 `TaskTerminalError`，表示同一 input 自动重试没有意义。 |
 
-## Strict Top-Level Shapes
+## Input Wrapper And Output Shapes
 
-Perago 的运行时入口会先检查顶层字段集合，再校验 Pydantic payload。
+Perago 的运行时入口先检查 required 顶层字段，再校验 Pydantic payload。Input 顶层允许额外字段，completed output 仍由 Perago 严格生成。
 
-| Task 类型 | 合法 input 顶层字段 | 合法 completed output 顶层字段 |
+| Task 类型 | Required input 顶层字段 | 合法 completed output 顶层字段 |
 | --- | --- | --- |
-| Workspace task | `workspace`, `params` | `workspace`, `result` |
-| Workspace-free task | `params` | `result` |
+| Workspace task | `workspace`, `params`；其他字段忽略 | `workspace`, `result` |
+| Workspace-free task | `params`；其他字段忽略 | `result` |
 
-这些结构同时用于运行时执行和生成 TaskDef schema。TaskDef 中会生成对应的 `inputKeys`、`outputKeys`、`inputSchema` 和 `outputSchema`；guardrail、workspace access mode、publish budget、LakeFS credentials 和 staging branch 不出现在 input/output contract 中。
+这些结构同时用于运行时执行和生成 TaskDef schema。TaskDef 中会生成对应的 `inputKeys`、`outputKeys`、`inputSchema` 和 `outputSchema`；input 顶层 schema 使用 `additionalProperties: true`，`params` schema 的 `additionalProperties` 由 `strict_params` 决定，output schema 保持 strict。guardrail、workspace access mode、publish budget、LakeFS credentials 和 staging branch 不出现在 input/output contract 中。

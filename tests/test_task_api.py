@@ -40,6 +40,7 @@ def test_loads_workspace_task_definition() -> None:
     assert task.workspace.prefix == "audio/render"
     assert task.params_model.__name__ == "BuildFeaturesParams"
     assert task.output_model.__name__ == "BuildFeaturesOutput"
+    assert task.strict_params is False
 
 
 def test_workspace_guardrail_model_is_not_public_api() -> None:
@@ -52,6 +53,14 @@ def test_loads_workspace_free_task_definition() -> None:
 
     assert task.name == "metadata.validate"
     assert task.workspace is None
+
+
+def test_declares_strict_params_task_definition() -> None:
+    @task(name="strict.params", owner_email="data@example.com", strict_params=True)
+    def strict_params_task(params: Params) -> Output:
+        return Output(value=params.value)
+
+    assert strict_params_task.__perago_task__.strict_params is True
 
 
 def test_declares_metrics_enabled_workspace_free_task_definition() -> None:
@@ -166,6 +175,12 @@ def test_rejects_invalid_task_decorator_option_types() -> None:
 
         @task(name="bad.workspace.type", owner_email="data@example.com", workspace={})
         def bad_workspace_type(params: Params) -> Output:
+            return Output(value=params.value)
+
+    with pytest.raises(TaskDefinitionError, match="strict_params must be a bool"):
+
+        @task(name="bad.strict_params.type", owner_email="data@example.com", strict_params="yes")
+        def bad_strict_params_type(params: Params) -> Output:
             return Output(value=params.value)
 
 

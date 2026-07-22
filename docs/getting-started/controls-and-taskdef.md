@@ -103,7 +103,7 @@ inputKeys = ["params"]
 outputKeys = ["result"]
 ```
 
-`workspace` schema 来自 Perago 的 `WorkspaceInput` / `WorkspaceOutput`，`params` 和 `result` schema 来自任务函数的 Pydantic 类型注解。`perago extract` 还会把嵌套 schema inline，删除 Pydantic `title` 和从 `BaseModel` class docstring 自动生成的 object-level `description`，并把 object schema 关闭为 `additionalProperties: false`。
+`workspace` schema 来自 Perago 的 `WorkspaceInput` / `WorkspaceOutput`，`params` 和 `result` schema 来自任务函数的 Pydantic 类型注解。`perago extract` 还会把嵌套 schema inline，并删除 Pydantic `title` 和从 `BaseModel` class docstring 自动生成的 object-level `description`。Input 顶层允许额外字段；`params` 默认允许额外字段，`strict_params=True` 时关闭为 `additionalProperties: false`；workspace 和 output schema 始终关闭额外字段。
 
 不要在 task 的 `params` / `result` model 中使用 `RootModel`，也不要依赖 `ConfigDict`。Perago 期望 task contract 是普通 `BaseModel` object model：`RootModel` 会被 `perago check`、`perago extract` 和 `perago start` 直接拒绝；配置了 `ConfigDict` 的 task model 会报 warning。Perago 当前不保证 `ConfigDict` model 的 TaskDef schema 或运行时行为。
 
@@ -187,14 +187,14 @@ Guardrail 也不会写入 TaskDef。`require_file`、`require_dir`、`require_gl
             "min_rows"
           ],
           "type": "object",
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": [
         "workspace",
         "params"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   "outputSchema": {

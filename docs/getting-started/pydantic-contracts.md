@@ -47,17 +47,19 @@ def validate_metadata(params: ValidateMetadataParams) -> ValidateMetadataOutput:
 Perago 在调用 task body 前执行：
 
 ```python
-params = task.params_model.model_validate(input_data["params"], extra="forbid")
+extra = "forbid" if task.strict_params else "ignore"
+params = task.params_model.model_validate(input_data["params"], extra=extra)
 ```
 
 并在构造 Conductor output 时用返回类型再次校验结果。对任务作者来说，效果是：
 
 - `Field(...)` 约束会在运行时生效，例如 `Field(ge=1)` 会拒绝 `0`。
-- `params` 内的额外业务字段会被拒绝，即使对应 model 没有显式声明 `model_config = ConfigDict(extra="forbid")`。
-- 嵌套 Pydantic model 内部的额外字段也会被拒绝。
+- 默认 `strict_params=False`：`params` 可以是 schema 的超集，所有层级的额外字段都会被丢弃，task body 只收到 schema 声明的数据。
+- `strict_params=True`：所有层级的 `params` 额外字段都会被拒绝。
+- Conductor `inputData` 顶层始终允许额外字段；Perago 只读取 workspace task 的 `workspace` / `params`，或 workspace-free task 的 `params`。
 - task body 返回 dict 或 Pydantic object 都必须能被返回类型 model 校验。
 
-下面的 input 会失败，因为业务字段多了一个未声明的 `workspace`：
+下面的 input 在默认模式下合法；`workspace` 不在 `BuildFeaturesParams` schema 中，因此 task body 收到的 model 不包含它：
 
 ```json
 {
@@ -69,7 +71,19 @@ params = task.params_model.model_validate(input_data["params"], extra="forbid")
 }
 ```
 
-workspace task 还要求顶层 input 只包含 `workspace` 和 `params`：
+需要拒绝额外业务字段时，在装饰器上显式启用严格模式：
+
+```python
+@task(
+    name="features.build",
+    owner_email="data@example.com",
+    strict_params=True,
+)
+def build_features(params: BuildFeaturesParams) -> BuildFeaturesOutput:
+    ...
+```
+
+workspace task 要求顶层 input 至少包含 `workspace` 和 `params`：
 
 ```json
 {
@@ -86,7 +100,9 @@ workspace task 还要求顶层 input 只包含 `workspace` 和 `params`：
 }
 ```
 
-workspace-free task 的顶层 input 只包含 `params`：
+Conductor dynamic node 追加的 `toExecute` 等顶层字段会被忽略。
+
+workspace-free task 要求顶层 input 包含 `params`：
 
 ```json
 {
@@ -103,9 +119,11 @@ workspace-free task 的顶层 input 只包含 `params`：
 
 - inline `$defs` / `$ref`，避免 TaskDef 依赖外部 schema definition。
 - 删除 Pydantic 自动生成的 `title` 字段，以及从 `BaseModel` class docstring 自动生成的 object-level `description`。
-- 给所有 object schema 设置 `additionalProperties: false`，包括嵌套 object。
+- 顶层 input schema 使用 `additionalProperties: true`。
+- `params` object schema 默认使用 `additionalProperties: true`；`strict_params=True` 时改为 `false`，包括嵌套 Pydantic object。
+- `result` 和 workspace object schema 保持 `additionalProperties: false`。
 
-不要在 task 的 `params` / `result` model 中使用 `RootModel`，也不要依赖 `ConfigDict`。Perago 期望 task contract 是普通 `BaseModel` object model：`RootModel` 会被 `perago check`、`perago extract` 和 `perago start` 直接拒绝；配置了 `ConfigDict` 的 task model 会报 warning。Perago 当前不对使用 `ConfigDict` 后的 TaskDef schema 或运行时行为做兼容保证。额外字段拒绝由 Perago 运行时强制执行，不需要在业务 model 中声明 `ConfigDict(extra="forbid")`。
+不要在 task 的 `params` / `result` model 中使用 `RootModel`，也不要依赖 `ConfigDict`。Perago 期望 task contract 是普通 `BaseModel` object model：`RootModel` 会被 `perago check`、`perago extract` 和 `perago start` 直接拒绝；配置了 `ConfigDict` 的 task model 会报 warning。Perago 当前不对使用 `ConfigDict` 后的 TaskDef schema 或运行时行为做兼容保证。`params` 的额外字段策略只由 `@task(strict_params=...)` 决定；`result` 始终严格校验。
 
 workspace task 的 TaskDef schema 结构如下：
 
@@ -176,4 +194,4 @@ return {"row_count": 100, "feature_count": 24, "debug": "temporary"}
 
 ## 可运行参考
 
-`tests/fixtures/app/workers/features_build.py` 和 `tests/fixtures/app/workers/metadata_validate.py` 展示了最小 Pydantic contract。`tests/test_execution.py` 覆盖了额外字段、嵌套额外字段和 output 校验；`tests/test_taskdef.py` 覆盖了 defaults、嵌套 schema inline 和 `additionalProperties: false`。
+`tests/fixtures/app/workers/features_build.py` 和 `tests/fixtures/app/workers/metadata_validate.py` 展示了最小 Pydantic contract。`tests/test_execution.py` 覆盖了宽松/严格 params、嵌套额外字段和 output 校验；`tests/test_taskdef.py` 覆盖了 defaults、嵌套 schema inline 和与 `strict_params` 一致的 `additionalProperties`。

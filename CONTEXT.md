@@ -68,6 +68,10 @@ _Avoid_: business result, params field, workspace prefix
 The Conductor input field that carries the business payload for a Task Worker.
 _Avoid_: top-level business fields, workspace metadata
 
+**Params Validation Mode**:
+The task-declared `strict_params` choice that either ignores fields outside the Params Input schema or rejects them. The default is non-strict and passes only schema-declared data to the Task Worker.
+_Avoid_: top-level Conductor input filtering, result validation mode, Pydantic model config
+
 **Result Output**:
 The Conductor output field that carries the business return value from a Task Worker.
 _Avoid_: workspace metadata, top-level business fields
@@ -205,6 +209,8 @@ _Avoid_: file path, object path, module:app target
 - **Runtime Metrics** may carry one **Perago Instance ID** when the metric describes one runtime instance rather than one Task Attempt.
 - A **Task Attempt Metric Context** exposes the current **Task Attempt** identity to the metrics-enabled **Task Worker**.
 - A **Task Contract** is derived from the **Task Function Signature**.
+- A **Task Worker** has one **Params Validation Mode** declared by `strict_params`.
+- A **Params Validation Mode** applies recursively to **Params Input** object models and does not control extra top-level Conductor input fields.
 - A **Task Worker** without a **Metric Spec** uses the non-metrics **Task Function Signature**.
 - A **Task Worker** with a **Metric Spec** receives one **Metric Recorder** with a **Task Attempt Metric Context** through its **Task Function Signature**.
 - A **Task Worker** with a **Metric Spec** requires configured metrics export.
@@ -275,7 +281,7 @@ _Avoid_: file path, object path, module:app target
 - A **Workspace Guardrail** is a local file-shape check; it is not a data transformation, TaskDef schema rule, or cross-repository scan.
 - A **Read-Only Workspace Task Worker** is still a **Workspace Task Worker**, not a **Workspace-Free Task Worker**.
 - A **Protected Workspace Branch** prevents direct workspace writes; it is not a business-level lock service.
-- A **Workspace-Free Task Worker** must not receive fake workspace data.
+- A **Workspace-Free Task Worker** does not consume workspace data; unrelated top-level input fields may exist but are ignored.
 - A **Worker Supervisor** may restart failed Worker Processes, but it must not become a task scheduler.
 - In supervisor-managed runs, the **Worker Supervisor** concatenates a **Worker ID Prefix** and child slot index to assign **Worker IDs** to **Worker Processes**.
 - A **Worker ID Prefix** must be alphanumeric and must not contain punctuation, separators, or whitespace.

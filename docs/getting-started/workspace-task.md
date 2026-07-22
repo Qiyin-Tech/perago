@@ -44,7 +44,7 @@ Required/generated 字段边界：
 - input generated: `workspace: Path` 由 Perago 注入，不由业务调用方传入函数。
 - output generated: 函数返回值序列化为 Conductor output 的 `result`；Perago 生成 output `workspace` ref，ref 可能是 input ref，也可能是成功发布后的新 ref。
 - task metadata required: `@task(...)` 必须声明 `name` 和 `owner_email`。
-- task metadata optional: `description`、guardrail 和 controls 可按任务需要声明；`WorkspaceSpec` 的 `prefix` 参数可省略为默认值 `"/"`。
+- task metadata optional: `description`、`strict_params`、guardrail 和 controls 可按任务需要声明；`WorkspaceSpec` 的 `prefix` 参数可省略为默认值 `"/"`。
 
 ## 函数签名规则
 

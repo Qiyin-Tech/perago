@@ -109,8 +109,8 @@ Conductor 传入的 `input_data` 必须匹配 Perago task 类型：
 
 | Task 类型 | Required input shape | Completed output shape |
 | --- | --- | --- |
-| workspace task | 顶层只能有 `workspace` 和 `params` | 顶层包含 `workspace` 和 `result` |
-| workspace-free task | 顶层只能有 `params` | 顶层只包含 `result` |
+| workspace task | 顶层必须有 `workspace` 和 `params`；其他字段忽略 | 顶层包含 `workspace` 和 `result` |
+| workspace-free task | 顶层必须有 `params`；其他字段忽略 | 顶层只包含 `result` |
 
 Conductor 不保存 attempt-local workspace 路径，也不参与 workspace 文件同步。workspace 路径、LakeFS download、read-only/no-op completion、stage/merge 和 staging cleanup 都由 Perago worker runtime 在本机执行。
 

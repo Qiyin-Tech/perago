@@ -70,6 +70,8 @@ Perago 文档中使用这三个标签描述 contract 字段来源：
 
 业务字段是否 required 由 Pydantic params model 决定。Perago 不把业务字段展开到 Conductor input 顶层。
 
+`@task(strict_params=False)` 是默认 params validation mode：Conductor input 可以是 params schema 的超集，Perago 会递归丢弃额外字段，再把只含 schema 数据的 Pydantic model 交给业务函数。设置 `strict_params=True` 后，任意层级的额外 params 字段都会被拒绝。这个开关不影响始终允许额外字段的 Conductor input 顶层，也不影响始终严格的 output validation。
+
 ## 拒绝场景
 
 以下函数签名会被 Perago MVP contract 拒绝：

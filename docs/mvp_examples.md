@@ -255,6 +255,7 @@ Perago maps these fields to Conductor TaskDef fields:
 | `workspace` | none | conditional | none |
 | `controls` | none | no | `TaskControls()` |
 | `description` | `description` | no | `None` |
+| `strict_params` | params input validation and schema | no | `False` |
 | `controls.retry.count` | `retryCount` | no | `3` |
 | `controls.retry.logic` | `retryLogic` | no | `"FIXED"` |
 | `controls.retry.delay_seconds` | `retryDelaySeconds` | no | `60` |
@@ -276,8 +277,10 @@ If `controls.publish_budget` is set, Perago still writes `responseTimeoutSeconds
 
 The generated TaskDef `responseTimeoutSeconds` value comes from `controls.timeout.response_seconds`; `PublishBudget.response_timeout_seconds` is only compared for warnings and does not override the emitted task timeout.
 
-`workspace` is required for workspace task workers and forbidden for workspace-free task workers.
+The `workspace` decorator field is required for workspace task workers and forbidden for workspace-free task workers. Runtime input may contain unrelated extra top-level fields; Perago ignores them.
 `controls.publish_budget` is valid only for workspace task workers.
+
+`strict_params=False` is the default. It recursively ignores fields outside the params schema before invoking the task body. `strict_params=True` recursively rejects those fields. Top-level input always stays open, while output validation stays strict.
 
 The two rate limit fields must be configured together. `perago check` fails if only one of `controls.limits.rate_limit_frequency_in_seconds` or `controls.limits.rate_limit_per_frequency` is set.
 
@@ -1346,11 +1349,12 @@ Workspace task definition:
               "minimum": 1
             }
           },
-          "required": ["feature_set", "min_rows"]
+          "required": ["feature_set", "min_rows"],
+          "additionalProperties": true
         }
       },
       "required": ["workspace", "params"],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   "outputSchema": {
@@ -1441,11 +1445,11 @@ Workspace-free task definition:
             }
           },
           "required": ["song_id", "min_duration_seconds"],
-          "additionalProperties": false
+          "additionalProperties": true
         }
       },
       "required": ["params"],
-      "additionalProperties": false
+      "additionalProperties": true
     }
   },
   "outputSchema": {

@@ -157,6 +157,22 @@ def nested_params_task(params: NestedParams) -> NestedOutput:
     return NestedOutput(value=params.settings.value)
 
 
+@task(name="tests.strict_nested_params", owner_email="data@example.com", strict_params=True)
+def strict_nested_params_task(params: NestedParams) -> NestedOutput:
+    return NestedOutput(value=params.settings.value)
+
+
+@task(
+    name="tests.strict_workspace_params",
+    owner_email="data@example.com",
+    workspace=WorkspaceSpec(),
+    strict_params=True,
+)
+def strict_workspace_params_task(workspace: Path, params: Params) -> Output:
+    del workspace
+    return Output(value=params.value)
+
+
 @task(
     name="tests.read_only_workspace",
     owner_email="data@example.com",
@@ -376,6 +392,7 @@ def test_run_workspace_task_attempt_publishes_completed_output_and_cleans(tmp_pa
     result = run_workspace_task_attempt(
         task,
         {
+            "toExecute": "features.build",
             "workspace": WORKSPACE_INPUT,
             "params": {"feature_set": "default", "min_rows": 100},
         },
@@ -1009,6 +1026,7 @@ def test_run_workspace_free_task_attempt_returns_completed_result() -> None:
     result = run_workspace_free_task_attempt(
         task,
         {
+            "toExecute": "metadata.validate",
             "params": {
                 "song_id": "song-000123",
                 "min_duration_seconds": 30,
@@ -1179,7 +1197,7 @@ def test_build_workspace_free_task_output_rejects_workspace_task() -> None:
 def test_workspace_free_invocation_rejects_expanded_top_level_params() -> None:
     task = load_module_task("app.workers.metadata_validate")
 
-    with pytest.raises(TaskInputError, match="contain only params"):
+    with pytest.raises(TaskInputError, match="contain params"):
         invoke_workspace_free_task(
             task,
             {
@@ -1204,56 +1222,80 @@ def test_workspace_free_invocation_validates_params_model() -> None:
         )
 
 
-def test_workspace_free_invocation_rejects_extra_business_params() -> None:
+def test_workspace_free_invocation_ignores_extra_business_params() -> None:
     task = load_module_task("app.workers.metadata_validate")
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        invoke_workspace_free_task(
-            task,
-            {
-                "params": {
-                    "song_id": "song-000123",
-                    "min_duration_seconds": 30,
-                    "workspace": "not-a-workspace",
-                },
+    output = invoke_workspace_free_task(
+        task,
+        {
+            "params": {
+                "song_id": "song-000123",
+                "min_duration_seconds": 30,
+                "workspace": "not-a-workspace",
             },
-        )
+        },
+    )
+
+    assert output == {"result": {"valid": True, "reason": None}}
 
 
-def test_workspace_free_invocation_rejects_nested_extra_business_params() -> None:
+def test_workspace_free_invocation_ignores_nested_extra_business_params() -> None:
     task = nested_params_task.__perago_task__
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        invoke_workspace_free_task(
-            task,
-            {
-                "params": {
-                    "settings": {
-                        "value": 1,
-                        "extra": "not-in-schema",
-                    },
+    output = invoke_workspace_free_task(
+        task,
+        {
+            "params": {
+                "settings": {
+                    "value": 1,
+                    "extra": "not-in-schema",
                 },
             },
-        )
+        },
+    )
+
+    assert output == {"result": {"value": 1}}
 
 
-def test_workspace_task_body_rejects_extra_business_params(tmp_path) -> None:
+def test_workspace_task_body_ignores_extra_business_params(tmp_path) -> None:
     task = load_module_task("app.workers.features_build")
     raw = tmp_path / "raw"
     raw.mkdir()
     (raw / "input.parquet").write_text("ok", encoding="utf-8")
 
+    output = invoke_workspace_task_body(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {
+                "feature_set": "default",
+                "min_rows": 100,
+                "workspace": "not-a-workspace",
+            },
+        },
+        tmp_path,
+    )
+
+    assert output == {"result": {"row_count": 100, "feature_count": 24}}
+
+
+def test_strict_params_rejects_nested_extra_business_params() -> None:
+    task = strict_nested_params_task.__perago_task__
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        invoke_workspace_free_task(
+            task,
+            {"params": {"settings": {"value": 1, "extra": "not-in-schema"}}},
+        )
+
+
+def test_strict_params_rejects_workspace_task_extra_business_params(tmp_path) -> None:
+    task = strict_workspace_params_task.__perago_task__
+
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         invoke_workspace_task_body(
             task,
-            {
-                "workspace": WORKSPACE_INPUT,
-                "params": {
-                    "feature_set": "default",
-                    "min_rows": 100,
-                    "workspace": "not-a-workspace",
-                },
-            },
+            {"workspace": WORKSPACE_INPUT, "params": {"value": 1, "extra": "not-in-schema"}},
             tmp_path,
         )
 
@@ -1299,19 +1341,23 @@ def test_workspace_task_body_rejects_workspace_free_task(tmp_path) -> None:
         )
 
 
-def test_workspace_task_body_rejects_invalid_wrapper_shape(tmp_path) -> None:
+def test_workspace_task_body_ignores_extra_top_level_fields(tmp_path) -> None:
     task = load_module_task("app.workers.features_build")
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "input.parquet").write_text("ok", encoding="utf-8")
 
-    with pytest.raises(TaskInputError, match="workspace task input"):
-        invoke_workspace_task_body(
-            task,
-            {
-                "workspace": WORKSPACE_INPUT,
-                "params": {"feature_set": "default", "min_rows": 100},
-                "extra": "bad",
-            },
-            tmp_path,
-        )
+    output = invoke_workspace_task_body(
+        task,
+        {
+            "workspace": WORKSPACE_INPUT,
+            "params": {"feature_set": "default", "min_rows": 100},
+            "toExecute": "features.build",
+        },
+        tmp_path,
+    )
+
+    assert output == {"result": {"row_count": 100, "feature_count": 24}}
 
 
 def test_workspace_task_body_rejects_missing_workspace_spec(tmp_path) -> None:
