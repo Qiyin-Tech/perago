@@ -196,12 +196,11 @@ def task_models_with_config(task: TaskDefinition) -> list[type[BaseModel]]:
 
 
 def task_models_with_root_model(task: TaskDefinition) -> list[type[BaseModel]]:
-    root_models: dict[type[BaseModel], None] = {}
-    for model in (task.params_model, task.output_model):
-        for schema_model in _iter_model_graph(model):
-            if issubclass(schema_model, RootModel):
-                root_models[schema_model] = None
-    return list(root_models)
+    return [
+        model
+        for model in (task.params_model, task.output_model)
+        if issubclass(model, RootModel)
+    ]
 
 
 def validate_no_root_task_models(task: TaskDefinition) -> None:

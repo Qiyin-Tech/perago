@@ -24,6 +24,7 @@ class LakeFSWorkspaceRuntime:
     def __init__(self, *, client: Client, publish_budget: PublishBudget | None = None) -> None:
         self._client = client
         self._publish_budget = publish_budget
+        self._repository: Repository | None = None
 
     @classmethod
     def from_config(
@@ -180,7 +181,9 @@ class LakeFSWorkspaceRuntime:
         return ref
 
     def _repo(self, repository: str) -> Repository:
-        return Repository(repository, client=self._client)
+        if self._repository is None:
+            self._repository = Repository(repository, client=self._client)
+        return self._repository
 
 
 def _first_parent_id(commit: object) -> str | None:
