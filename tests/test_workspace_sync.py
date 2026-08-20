@@ -45,16 +45,19 @@ def test_workspace_upload_files_reject_symlinks(tmp_path) -> None:
         workspace_upload_files(workspace_dir, WorkspaceSpec(prefix="/audio/render"))
 
 
-def test_workspace_download_files_filter_to_prefix_and_skip_marker(tmp_path) -> None:
+def test_workspace_download_files_filter_deduplicate_and_skip_marker(tmp_path) -> None:
     files = workspace_download_files(
         tmp_path / "workspace",
         WorkspaceSpec(prefix="/audio/render"),
-        [
-            "audio/render/raw/input.wav",
-            "audio/render/.perago-attempt.json",
-            "audio/other/input.wav",
-            "audio/render/features/out.parquet",
-        ],
+        iter(
+            [
+                "audio/render/raw/input.wav",
+                "audio/render/.perago-attempt.json",
+                "audio/other/input.wav",
+                "audio/render/features/out.parquet",
+                "audio/render/raw/input.wav",
+            ]
+        ),
     )
 
     assert [(file.object_path, file.local_path.relative_to(tmp_path / "workspace")) for file in files] == [
@@ -72,12 +75,14 @@ def test_workspace_delete_object_paths_only_removes_stale_objects_under_prefix(t
 
     delete_paths = workspace_delete_object_paths(
         WorkspaceSpec(prefix="/audio/render"),
-        [
-            "audio/render/raw/input.wav",
-            "audio/render/old.tmp",
-            "audio/render/.perago-attempt.json",
-            "other/old.tmp",
-        ],
+        iter(
+            [
+                "audio/render/raw/input.wav",
+                "audio/render/old.tmp",
+                "audio/render/.perago-attempt.json",
+                "other/old.tmp",
+            ]
+        ),
         uploaded,
     )
 

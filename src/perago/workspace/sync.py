@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
 
 from perago.errors import TaskInputError
@@ -76,7 +77,7 @@ def workspace_upload_files(workspace_dir: Path, workspace_spec: WorkspaceSpec) -
 def workspace_download_files(
     workspace_dir: Path,
     workspace_spec: WorkspaceSpec,
-    object_paths: list[str],
+    object_paths: Iterable[str],
 ) -> list[WorkspaceDownloadFile]:
     """
     Build download records for objects visible to a workspace task.
@@ -91,8 +92,9 @@ def workspace_download_files(
         Attempt-local workspace root where files should be written.
     workspace_spec : WorkspaceSpec
         Workspace declaration whose ``prefix`` filters the remote object list.
-    object_paths : list of str
-        LakeFS object paths listed from the input workspace ref.
+    object_paths : iterable of str
+        LakeFS object paths listed from the input workspace ref. Repeated
+        entries from adjacent listing pages are downloaded once.
 
     Returns
     -------
@@ -120,10 +122,12 @@ def workspace_download_files(
     ['raw/input.wav']
     """
     files: list[WorkspaceDownloadFile] = []
+    seen_names: set[str] = set()
     for object_path in sorted(object_paths):
         local_path = workspace_local_path(workspace_spec, object_path)
-        if local_path is None:
+        if local_path is None or local_path.name in seen_names:
             continue
+        seen_names.add(local_path.name)
         files.append(
             WorkspaceDownloadFile(
                 object_path=object_path,
@@ -135,7 +139,7 @@ def workspace_download_files(
 
 def workspace_delete_object_paths(
     workspace_spec: WorkspaceSpec,
-    existing_object_paths: list[str],
+    existing_object_paths: Iterable[str],
     uploaded_files: list[WorkspaceUploadFile],
 ) -> list[str]:
     """
@@ -149,7 +153,7 @@ def workspace_delete_object_paths(
     ----------
     workspace_spec : WorkspaceSpec
         Workspace declaration whose ``prefix`` limits the delete scope.
-    existing_object_paths : list of str
+    existing_object_paths : iterable of str
         Object paths currently present under the staging branch.
     uploaded_files : list of WorkspaceUploadFile
         Upload records generated from the local attempt workspace.
@@ -182,7 +186,7 @@ def workspace_delete_object_paths(
     ... )
     ['audio/render/old.tmp']
     """
-    uploaded_object_paths = {file.object_path for file in uploaded_files}
+    uploaded_object_paths = [file.object_path for file in uploaded_files]
     delete_paths: list[str] = []
     for object_path in sorted(existing_object_paths):
         if object_path in uploaded_object_paths:
@@ -196,7 +200,7 @@ def workspace_delete_object_paths(
 def build_workspace_sync_plan(
     workspace_dir: Path,
     workspace_spec: WorkspaceSpec,
-    existing_object_paths: list[str],
+    existing_object_paths: Iterable[str],
 ) -> WorkspaceSyncPlan:
     """
     Build a complete sync plan for a workspace prefix.
@@ -212,7 +216,7 @@ def build_workspace_sync_plan(
     workspace_spec : WorkspaceSpec
         Workspace declaration whose ``prefix`` defines the LakeFS projection to
         synchronize.
-    existing_object_paths : list of str
+    existing_object_paths : iterable of str
         Object paths currently present on the staging branch before uploading
         the new local workspace contents.
 
