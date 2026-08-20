@@ -64,10 +64,8 @@ def garbage_collect_attempt_workspaces(
             continue
         if (owner_worker_id, owner_pid) in process_owners:
             continue
-        if owner_token in owner_tokens:
-            continue
         started_at = marker_data["started_at"]
-        if current_time - started_at < ttl:
+        if current_time - started_at >= ttl:
             continue
         shutil.rmtree(workspace_dir)
         removed.append(workspace_dir)
