@@ -57,6 +57,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `PERAGO_WORKSPACE_GC_INTERVAL` | optional | `1h` | supervisor 后台 workspace GC loop 的运行间隔。接受正整数加 `s`、`m`、`h` 或 `d`。 |
 | `PERAGO_SHUTDOWN_FORCE_KILL_AFTER` | optional | unset | shutdown drain 的可选强制 kill deadline。未配置时 Perago 不调用 `process.kill()`；配置后接受正整数加 `s`、`m`、`h` 或 `d`，例如 `30s`。 |
 | `CONDUCTOR_SERVER_URL` | required for `perago start` | 无 | Conductor API endpoint。`perago check` 和 `perago extract` 可在未配置时运行并报告 `not configured`。 |
+| `PERAGO_CONDUCTOR_STARTUP_JITTER` | optional | disabled | worker 开始 poll 前的一次随机延迟上限，例如 `5s`。 |
 | `LAKECTL_SERVER_ENDPOINT_URL` | required for workspace-task `perago start` | 无 | LakeFS endpoint。LakeFS 三个变量必须同时配置或同时省略；workspace-free `perago start` 不需要 LakeFS。 |
 | `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for workspace-task `perago start` | 无 | LakeFS access key id。 |
 | `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for workspace-task `perago start` | 无 | LakeFS secret access key。 |
@@ -65,7 +66,7 @@ PERAGO_SHUTDOWN_FORCE_KILL_AFTER=30s
 | `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` | optional | OTel Python exporter 默认值 | 按 OpenTelemetry 环境变量语义解析为正整数毫秒，例如 `10000` 表示 10 秒，`500` 表示 500ms；不接受 `10s` 或 `0`。 |
 | `OTEL_METRIC_EXPORT_INTERVAL` | optional | OTel SDK 默认值 | 正整数毫秒，例如 `60000`。 |
 
-Perago 目前只解析 `CONDUCTOR_SERVER_URL` 作为 Conductor runtime config。Conductor auth key/secret 可以由底层 SDK 或部署环境使用；Perago `RuntimeConfig` 暂不建模这两个字段。
+Perago 解析 `CONDUCTOR_SERVER_URL` 和可选的 `PERAGO_CONDUCTOR_STARTUP_JITTER` 作为 Conductor runtime config。后者默认禁用，仅在 worker 启动 poll 前应用一次。Conductor auth key/secret 可以由底层 SDK 或部署环境使用；Perago `RuntimeConfig` 暂不建模这两个字段。
 
 ## 本地 VictoriaMetrics smoke test
 

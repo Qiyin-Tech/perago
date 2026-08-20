@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import random
 import signal
+import time
 from collections.abc import Mapping
 from types import FrameType
 from typing import Any
@@ -56,6 +58,8 @@ def run_conductor_thread_runner(
     previous_int = signal.signal(signal.SIGINT, request_stop)
     previous_term = signal.signal(signal.SIGTERM, request_stop)
     try:
+        if conductor_config.startup_jitter_seconds:
+            time.sleep(random.uniform(0, conductor_config.startup_jitter_seconds))
         runner.run()
     finally:
         runner.stop()

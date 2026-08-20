@@ -1491,8 +1491,10 @@ def test_execute_polled_task_requires_metrics_for_metrics_enabled_task() -> None
     assert result.reason_for_incompletion == "metrics-enabled task invocation requires a MetricRecorder"
 
 
-def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
+def test_run_conductor_thread_runner_builds_sdk_runner(monkeypatch) -> None:
     created = {}
+    monkeypatch.setattr("perago.conductor_runtime.runners.random.uniform", lambda lower, upper: upper / 2)
+    monkeypatch.setattr("perago.conductor_runtime.runners.time.sleep", lambda delay: created.update(delay=delay))
 
     class FakeRunner:
         def __init__(self, worker, *, configuration) -> None:
@@ -1509,7 +1511,10 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
         task=load_module_task("app.workers.metadata_validate"),
         worker_id="metadataBroker",
         thread_count=3,
-        conductor_config=ConductorConfig(server_url="http://conductor.local/api"),
+        conductor_config=ConductorConfig(
+            server_url="http://conductor.local/api",
+            startup_jitter_seconds=4,
+        ),
         client=object(),
         workspace_root="unused",
         failure_reason_max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH,
@@ -1518,6 +1523,7 @@ def test_run_conductor_thread_runner_builds_sdk_runner() -> None:
 
     assert created["ran"] is True
     assert created["stopped"] is True
+    assert created["delay"] == 2
     assert created["worker"].thread_count == 3
     assert created["worker"].lease_extend_enabled is True
     assert created["worker"].get_identity() == "metadataBroker"

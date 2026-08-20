@@ -75,6 +75,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
                 "PERAGO_WORKER_ID_PREFIX=dotenvPrefix",
                 "PERAGO_EXECUTION_MODE=thread",
                 "CONDUCTOR_SERVER_URL=http://conductor.local/api",
+                "PERAGO_CONDUCTOR_STARTUP_JITTER=5s",
                 "LAKECTL_SERVER_ENDPOINT_URL=http://lakefs.local",
                 "LAKECTL_CREDENTIALS_ACCESS_KEY_ID=lakefs-key",
                 "LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY=lakefs-secret",
@@ -107,6 +108,7 @@ def test_load_runtime_config_reads_dotenv_without_probing(tmp_path) -> None:
     assert config.execution_mode == "thread"
     assert config.conductor == ConductorConfig(
         server_url="http://conductor.local/api",
+        startup_jitter_seconds=5,
     )
     assert config.lakefs == LakeFSConfig(
         endpoint_url="http://lakefs.local",
@@ -285,8 +287,14 @@ def test_parse_connection_configs_are_optional() -> None:
     assert parse_lakefs_config({}) is None
     assert parse_metrics_config({}) is None
 
-    assert parse_conductor_config({"CONDUCTOR_SERVER_URL": " http://localhost:8080/api "}) == ConductorConfig(
-        server_url="http://localhost:8080/api"
+    assert parse_conductor_config(
+        {
+            "CONDUCTOR_SERVER_URL": " http://localhost:8080/api ",
+            "PERAGO_CONDUCTOR_STARTUP_JITTER": "3s",
+        }
+    ) == ConductorConfig(
+        server_url="http://localhost:8080/api",
+        startup_jitter_seconds=3,
     )
     assert parse_metrics_config(
         {

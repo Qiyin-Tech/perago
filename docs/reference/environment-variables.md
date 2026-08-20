@@ -16,6 +16,7 @@ Perago 只读取当前工作目录下的 `.env` 和进程环境变量。合并�
 | 变量 | 状态 | 默认值 | 读取位置 | 校验和说明 |
 | --- | --- | --- | --- | --- |
 | `CONDUCTOR_SERVER_URL` | required for `perago start`; optional for `check`/`extract` | 无 | `RuntimeConfig.conductor.server_url` | 空值表示未配置；值会去除前后空白。`replace-me` 会被拒绝。 |
+| `PERAGO_CONDUCTOR_STARTUP_JITTER` | optional | disabled | `RuntimeConfig.conductor.startup_jitter_seconds` | 启动 poll 前增加一次 `0..N` 的随机延迟，格式与其他 duration 相同，例如 `5s`。 |
 | `LAKECTL_SERVER_ENDPOINT_URL` | required for workspace-task `perago start`; optional for workspace-free `start` and `check`/`extract` | 无 | `RuntimeConfig.lakefs.endpoint_url` | LakeFS 三个变量必须全部配置或全部省略；缺任意一个都会报 `LakeFS config is incomplete`。 |
 | `LAKECTL_CREDENTIALS_ACCESS_KEY_ID` | required for workspace-task `perago start`; optional for workspace-free `start` and `check`/`extract` | 无 | `RuntimeConfig.lakefs.access_key_id` | 空值表示未配置；`replace-me` 会被拒绝。 |
 | `LAKECTL_CREDENTIALS_SECRET_ACCESS_KEY` | required for workspace-task `perago start`; optional for workspace-free `start` and `check`/`extract` | 无 | `RuntimeConfig.lakefs.secret_access_key` | 不会在 `perago check` 的配置状态输出中打印。`replace-me` 会被拒绝。 |

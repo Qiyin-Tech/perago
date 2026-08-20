@@ -43,6 +43,9 @@ class ConductorConfig(BaseModel):
         whitespace is stripped during environment parsing, empty values are
         treated as not configured, and the placeholder value ``"replace-me"``
         is rejected before model construction.
+    startup_jitter_seconds : float, default=0
+        Maximum one-time delay before polling starts, parsed from
+        ``PERAGO_CONDUCTOR_STARTUP_JITTER``. Zero keeps startup unchanged.
 
     See Also
     --------
@@ -64,6 +67,7 @@ class ConductorConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     server_url: str
+    startup_jitter_seconds: float = 0.0
 
 
 class LakeFSConfig(BaseModel):
@@ -440,7 +444,14 @@ def parse_conductor_config(env: dict[str, str]) -> ConductorConfig | None:
     server_url = _env_optional(env, "CONDUCTOR_SERVER_URL")
     if server_url is None:
         return None
-    return ConductorConfig(server_url=server_url)
+    jitter = parse_optional_duration(
+        env.get("PERAGO_CONDUCTOR_STARTUP_JITTER"),
+        name="PERAGO_CONDUCTOR_STARTUP_JITTER",
+    )
+    return ConductorConfig(
+        server_url=server_url,
+        startup_jitter_seconds=0.0 if jitter is None else jitter.total_seconds(),
+    )
 
 
 def parse_lakefs_config(env: dict[str, str]) -> LakeFSConfig | None:
