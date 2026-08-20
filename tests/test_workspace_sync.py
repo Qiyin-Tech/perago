@@ -9,6 +9,7 @@ from perago.workspace import (
     build_workspace_sync_plan,
     workspace_delete_object_paths,
     workspace_download_files,
+    workspace_local_path,
     workspace_upload_files,
 )
 
@@ -63,6 +64,23 @@ def test_workspace_download_files_filter_to_prefix_and_skip_marker(tmp_path) -> 
     ]
 
 
+def test_workspace_download_preserves_nested_same_basename_files(tmp_path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    spec = WorkspaceSpec(prefix="/audio/render")
+    object_paths = [
+        "audio/render/a/manifest.json",
+        "audio/render/b/manifest.json",
+    ]
+
+    files = workspace_download_files(workspace_dir, spec, object_paths)
+    expected = {
+        workspace_local_path(spec, object_path).name: object_path
+        for object_path in object_paths
+    }
+
+    assert {file.local_path.name: file.object_path for file in files} == expected
+
+
 def test_workspace_delete_object_paths_only_removes_stale_objects_under_prefix(tmp_path) -> None:
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
@@ -107,6 +125,19 @@ def test_workspace_sync_plan_combines_uploads_and_stale_deletes(tmp_path) -> Non
     assert plan.delete_object_paths == ["audio/render/old.tmp"]
 
 
+def test_workspace_sync_plan_keeps_exact_internal_field_order(tmp_path) -> None:
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir()
+    (workspace_dir / "input.txt").write_text("ok", encoding="utf-8")
+
+    plan = build_workspace_sync_plan(workspace_dir, WorkspaceSpec(prefix="/audio/render"), [])
+
+    assert list(plan.__dict__) == [
+        "upload_files",
+        "delete_object_paths",
+    ]
+
+
 def test_workspace_sync_plan_reports_changed_objects_and_upload_bytes(tmp_path) -> None:
     workspace_dir = tmp_path / "workspace"
     workspace_dir.mkdir()
@@ -121,6 +152,16 @@ def test_workspace_sync_plan_reports_changed_objects_and_upload_bytes(tmp_path) 
 
     assert plan.changed_object_count == 2
     assert plan.upload_bytes == 4
+
+
+def test_workspace_download_files_accepts_marker_only_listing(tmp_path) -> None:
+    files = workspace_download_files(
+        tmp_path / "workspace",
+        WorkspaceSpec(prefix="/audio/render"),
+        ["audio/render/.perago-attempt.json"],
+    )
+
+    assert files == []
 
 
 def test_workspace_delete_object_paths_accepts_explicit_upload_records() -> None:

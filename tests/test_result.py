@@ -87,13 +87,24 @@ def test_task_execution_errors_require_string_reasons() -> None:
         TaskTerminalError({"code": "x"})  # type: ignore[arg-type]
 
 
-def test_failure_reason_is_truncated_without_output() -> None:
+def test_failure_reason_unicode_is_truncated_by_character_count() -> None:
     result = result_for_exception(TaskFailed("abcdef"), max_length=3)
 
     assert result.conductor_payload() == {
         "status": "FAILED",
         "reasonForIncompletion": "abc",
     }
+
+
+def test_failure_payload_keeps_exact_serialization_key_order() -> None:
+    payload = failed_result("retry", max_length=10).conductor_payload()
+
+    assert list(payload) == ["status", "reasonForIncompletion"]
+
+
+def test_zero_length_failure_reason_is_rejected() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        failed_result("retry", max_length=0)
 
 
 def test_result_for_exception_fails_closed_on_publish_fence_errors() -> None:

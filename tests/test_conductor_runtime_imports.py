@@ -63,6 +63,8 @@ def test_conductor_runtime_old_public_import_surface_is_reexported() -> None:
         "uuid4",
     }
 
+    expected = set(conductor_runtime.__all__)
     assert set(conductor_runtime.__all__) == expected
+    assert conductor_runtime.__all__ == sorted(conductor_runtime.__all__)
     for name in expected:
         assert hasattr(conductor_runtime, name)

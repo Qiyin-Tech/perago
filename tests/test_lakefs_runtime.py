@@ -300,6 +300,8 @@ def test_lakefs_cleanup_uses_staged_repository_without_prior_runtime_state() -> 
     with ThreadPoolExecutor(max_workers=2) as executor:
         list(executor.map(runtime.cleanup_staging, [staged_a, staged_b]))
 
+    assert runtime._repo("song-a") is repo_a
+    assert runtime._repo("song-b") is repo_b
     assert branch_a.deleted is True
     assert branch_b.deleted is True
 
@@ -324,6 +326,13 @@ def test_lakefs_publish_uses_merge_request_timeout_from_publish_budget(tmp_path)
 
     assert published == "published-commit"
     merge_call = runtime._client.sdk_client.refs_api.merge_calls[0]
+    assert list(merge_call) == [
+        "repository",
+        "source_ref",
+        "destination_branch",
+        "merge",
+        "_request_timeout",
+    ]
     assert merge_call["repository"] == "song-000123"
     assert merge_call["source_ref"] == staged.branch
     assert merge_call["destination_branch"] == "main"

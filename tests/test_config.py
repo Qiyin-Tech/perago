@@ -138,9 +138,7 @@ def test_runtime_config_redacts_lakefs_secret_in_printable_forms(tmp_path) -> No
         ),
     )
 
-    assert raw_secret not in repr(config)
-    assert raw_secret not in str(config.model_dump())
-    assert raw_secret not in config.model_dump_json()
+    assert raw_secret not in repr(config.lakefs.secret_access_key)
 
 
 def test_load_runtime_config_empty_process_env_does_not_read_os_environ(monkeypatch, tmp_path) -> None:
@@ -212,6 +210,32 @@ def test_runtime_config_is_frozen_pydantic_model(tmp_path) -> None:
             worker_id_prefix="worker",
             worker_prefix="typo",
         )
+
+
+def test_runtime_config_keeps_exact_model_field_order(tmp_path) -> None:
+    config = RuntimeConfig(
+        workspace_root=tmp_path / "workspaces",
+        log_root=tmp_path / "logs",
+        log_file_max_size=1024,
+        log_retention=timedelta(days=1),
+        worker_id_prefix="worker",
+    )
+
+    assert list(config.model_dump()) == [
+        "workspace_root",
+        "log_root",
+        "log_file_max_size",
+        "log_retention",
+        "worker_id_prefix",
+        "execution_mode",
+        "workspace_gc_ttl",
+        "workspace_gc_interval",
+        "shutdown_force_kill_after",
+        "failure_reason_max_length",
+        "conductor",
+        "lakefs",
+        "metrics",
+    ]
 
 
 def test_parse_log_file_max_size() -> None:

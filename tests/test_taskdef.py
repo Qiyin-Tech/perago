@@ -5,6 +5,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
 from perago import (
+    ExecutionLimits,
     PublishBudget,
     RetryPolicy,
     TaskControls,
@@ -22,7 +23,7 @@ from perago.models import (
     DEFAULT_TIMEOUT_RESPONSE_SECONDS,
     MAX_RETRY_COUNT,
 )
-from perago.taskdef import TASKDEF_SCHEMA_TYPE, TASKDEF_SCHEMA_VERSION, schema_for_model
+from perago.taskdef import CONTROL_FIELD_MAP, TASKDEF_SCHEMA_TYPE, TASKDEF_SCHEMA_VERSION, schema_for_model
 
 
 def _add_examples(schema: dict[str, object]) -> None:
@@ -220,6 +221,66 @@ def test_builds_workspace_taskdef() -> None:
     assert "forbid_glob" not in serialized
 
 
+def test_taskdef_emits_all_public_control_fields() -> None:
+    @task(
+        name="tests.all_controls",
+        owner_email="data@example.com",
+        controls=TaskControls(
+            retry=RetryPolicy(
+                count=4,
+                logic="EXPONENTIAL_BACKOFF",
+                delay_seconds=10,
+                max_delay_seconds=60,
+                jitter_ms=250,
+            ),
+            timeout=TimeoutPolicy(
+                policy="RETRY",
+                seconds=300,
+                response_seconds=120,
+                poll_seconds=30,
+                total_seconds=600,
+            ),
+            limits=ExecutionLimits(
+                concurrent_exec_limit=8,
+                rate_limit_frequency_in_seconds=60,
+                rate_limit_per_frequency=100,
+            ),
+        ),
+    )
+    def all_controls_task(params: ParamsWithDefaults) -> OutputWithDefaults:
+        del params
+        return OutputWithDefaults()
+
+    taskdef = build_taskdef(all_controls_task.__perago_task__)
+
+    assert set(CONTROL_FIELD_MAP) <= taskdef.keys()
+
+
+def test_workspace_taskdef_keeps_exact_top_level_serialization_order() -> None:
+    taskdef = build_taskdef(load_module_task("app.workers.features_build"))
+
+    assert list(taskdef) == [
+        "name",
+        "ownerEmail",
+        "description",
+        "retryCount",
+        "retryLogic",
+        "retryDelaySeconds",
+        "maxRetryDelaySeconds",
+        "backoffJitterMs",
+        "totalTimeoutSeconds",
+        "timeoutPolicy",
+        "timeoutSeconds",
+        "responseTimeoutSeconds",
+        "pollTimeoutSeconds",
+        "concurrentExecLimit",
+        "inputKeys",
+        "outputKeys",
+        "inputSchema",
+        "outputSchema",
+    ]
+
+
 def test_task_control_defaults_and_limits_are_named_contract_values() -> None:
     retry = RetryPolicy()
     timeout = TimeoutPolicy()
@@ -305,9 +366,13 @@ def test_builds_workspace_free_taskdef() -> None:
     assert "workspace" not in taskdef["outputSchema"]["data"]["properties"]
 
 
-def test_taskdef_rejects_root_model_task_contracts() -> None:
+def test_taskdef_rejects_nested_root_model_task_contracts() -> None:
     with pytest.raises(TaskDefinitionError, match="RootModel"):
         build_taskdef(load_module_task("app.workers.root_model_task"))
+
+
+def test_taskdef_without_description_omits_optional_metadata() -> None:
+    assert "description" not in build_taskdef(defaults_task.__perago_task__)
 
 
 def test_writes_taskdef_json(tmp_path) -> None:

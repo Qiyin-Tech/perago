@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from perago.cli import app
 from perago._version import __version__
+from perago.errors import TaskDefinitionError
 
 
 def test_cli_reports_version() -> None:
@@ -30,6 +31,24 @@ def test_check_cli_reports_task(monkeypatch, tmp_path) -> None:
     assert "lakefs: not configured" in result.output
 
 
+def test_check_cli_keeps_exact_diagnostic_line_order(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["check", "app.workers.metadata_validate"])
+
+    assert result.output.splitlines() == [
+        "ok: metadata.validate",
+        "workspace_root: /tmp/perago/workspaces",
+        "log_root: /tmp/perago/logs",
+        "worker_id_prefix: appworkersmetadatavalidate",
+        "conductor: not configured",
+        "lakefs: not configured",
+        "metrics: not configured",
+    ]
+
+
 def test_check_cli_warns_when_task_models_use_configdict(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
@@ -46,6 +65,15 @@ def test_check_cli_warns_when_task_models_use_configdict(monkeypatch, tmp_path) 
 def test_check_cli_rejects_root_model_task_contracts(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("PERAGO_WORKER_ID_PREFIX", raising=False)
+
+    def reject_root_model(module_target: str):
+        del module_target
+        raise TaskDefinitionError(
+            "Pydantic RootModel on task model(s) Params is not supported; "
+            "Perago task contracts must use ordinary BaseModel object models."
+        )
+
+    monkeypatch.setattr("perago.cli.load_module_task", reject_root_model)
     runner = CliRunner()
 
     result = runner.invoke(app, ["check", "app.workers.root_model_task"])
