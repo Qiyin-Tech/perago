@@ -263,6 +263,65 @@ def test_otel_recorder_shutdown_keeps_sdk_default_without_configured_timeout(mon
     assert provider.shutdown_timeout_millis is None
 
 
+def test_metric_recorder_drops_reserved_execution_identity(monkeypatch) -> None:
+    warnings: list[str] = []
+    recorder = InMemoryMetricRecorder().with_context(_context())
+    monkeypatch.setattr(
+        "perago.metrics.core.logger.warning",
+        lambda message, **kwargs: warnings.append(message.format(**kwargs)),
+    )
+
+    recorder.gauge("queue_depth", 8, labels={"execution_id": "fake", "queue": "high"})
+
+    assert recorder.gauges[0].labels == {"task_name": "features.build", "queue": "high"}
+    assert warnings == [
+        "metric_name=app.queue_depth label_key=execution_id "
+        "perago_label_value=<reserved> ignored_user_label_value=fake"
+    ]
+
+
+def test_metric_recorder_base_context_remains_unbound() -> None:
+    recorder = InMemoryMetricRecorder()
+
+    bound_recorder = recorder.with_context(_context())
+
+    assert recorder.context is None
+    assert bound_recorder.context == _context()
+
+
+def test_metric_recorder_preserves_openai_provider_label() -> None:
+    recorder = InMemoryMetricRecorder().with_context(_context())
+
+    recorder.histogram("request_seconds", 1.0, labels={"provider": "openai"})
+
+    assert recorder.histograms[0].labels == {
+        "task_name": "features.build",
+        "provider": "openai",
+    }
+
+
+def test_metric_recorder_preserves_anthropic_provider_label() -> None:
+    metrics = InMemoryMetricRecorder().with_context(_context())
+
+    metrics.histogram("request_seconds", 1.0, labels={"provider": "anthropic"})
+
+    assert metrics.histograms[0].labels == {
+        "task_name": "features.build",
+        "provider": "anthropic",
+    }
+
+
+def test_metric_recorder_preserves_google_provider_label() -> None:
+    sink = InMemoryMetricRecorder().with_context(_context())
+
+    sink.histogram("request_seconds", 1.0, labels={"provider": "google"})
+
+    assert sink.histograms[0].labels == {
+        "task_name": "features.build",
+        "provider": "google",
+    }
+
+
 class FakeMeter:
     def __init__(self) -> None:
         self.histograms: dict[str, FakeHistogram] = {}

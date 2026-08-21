@@ -62,3 +62,30 @@ def test_workspace_local_path_rejects_drive_qualified_strings(
 def test_workspace_object_path_rejects_paths_that_escape_workspace_root() -> None:
     with pytest.raises(TaskDefinitionError, match="relative"):
         workspace_object_path(WorkspaceSpec(prefix="/"), "../manifest.json")
+
+
+def test_workspace_local_path_rejects_paths_that_escape_workspace_root() -> None:
+    with pytest.raises(TaskDefinitionError, match="relative"):
+        workspace_local_path(WorkspaceSpec(prefix="/"), "../manifest.json")
+
+
+def test_workspace_local_path_maps_mix_input() -> None:
+    spec = WorkspaceSpec(prefix="audio/render")
+
+    assert workspace_local_path(spec, "audio/render/mix/input.wav") == Path("mix/input.wav")
+
+
+def test_workspace_local_path_maps_edit_input() -> None:
+    workspace = WorkspaceSpec(prefix="audio/render")
+
+    assert workspace_local_path(workspace, "audio/render/edit/input.wav") == Path("edit/input.wav")
+
+
+def test_workspace_local_path_maps_cache_input() -> None:
+    declaration = WorkspaceSpec(prefix="audio/render")
+
+    assert workspace_local_path(declaration, "audio/render/cache/input.wav") == Path("cache/input.wav")
+
+
+def test_root_workspace_attempt_marker_is_hidden() -> None:
+    assert workspace_local_path(WorkspaceSpec(prefix="/"), ATTEMPT_WORKSPACE_MARKER) is None

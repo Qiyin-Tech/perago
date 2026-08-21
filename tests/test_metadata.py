@@ -65,3 +65,13 @@ def test_staging_branch_name_uses_unknown_for_blank_safe_segments() -> None:
 
     assert "-task-id-unknown-" in branch
     assert branch.endswith("-exec-unknown")
+
+
+class TestStagingBranchIdentity:
+    def test_execution_id_isolates_attempts(self) -> None:
+        first = staging_branch_name(Attempt(execution_id="exec-a"))
+        second = staging_branch_name(Attempt(execution_id="exec-b"))
+
+        assert first != second
+        assert first.endswith("-exec-exec-a")
+        assert second.endswith("-exec-exec-b")
