@@ -122,3 +122,58 @@ def test_runtime_task_result_rejects_inconsistent_payload_shapes() -> None:
 def test_runtime_task_result_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         RuntimeTaskResult(status="COMPLETED", output={}, worker_id="worker-1")
+
+
+def test_failure_reason_at_limit_is_kept() -> None:
+    result = failed_result("abc", max_length=3)
+
+    assert result.reason_for_incompletion == "abc"
+
+
+def test_zero_length_failure_reason_is_rejected() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        failed_result("retry", max_length=0)
+
+
+def test_failed_result_payload_is_retryable() -> None:
+    result = failed_result("post failed", max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH)
+
+    assert result.conductor_payload() == {
+        "status": "FAILED",
+        "reasonForIncompletion": "post failed",
+    }
+
+
+def test_terminal_failure_payload_uses_terminal_status() -> None:
+    failure = terminal_failed_result("pre failed", max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH)
+    payload = failure.conductor_payload()
+
+    assert payload == {
+        "status": "FAILED_WITH_TERMINAL_ERROR",
+        "reasonForIncompletion": "pre failed",
+    }
+
+
+def test_failed_result_status_remains_retryable() -> None:
+    result = failed_result("retry", max_length=DEFAULT_FAILURE_REASON_MAX_LENGTH)
+
+    assert result.status == "FAILED"
+    assert result.status == "FAILED"
+
+
+def test_failure_reason_truncates_four_characters_to_two() -> None:
+    result = result_for_exception(TaskFailed("wxyz"), max_length=2)
+
+    assert result.reason_for_incompletion == "wx"
+
+
+def test_failure_reason_truncates_six_characters_to_four() -> None:
+    failure = result_for_exception(TaskFailed("python"), max_length=4)
+
+    assert failure.reason_for_incompletion == "pyth"
+
+
+def test_failure_reason_truncates_seven_characters_to_five() -> None:
+    outcome = result_for_exception(TaskFailed("runtime"), max_length=5)
+
+    assert outcome.reason_for_incompletion == "runti"
