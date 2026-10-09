@@ -21,7 +21,7 @@ Perago 的运行时结果只有三个状态：
 | `PreGuardrailViolation` | `FAILED_WITH_TERMINAL_ERROR` | task body 尚未运行，输入 workspace 未满足 task 的 pre guardrail。 |
 | `TaskTerminalError` | `FAILED_WITH_TERMINAL_ERROR` | 任务函数显式声明同一 input 自动重试没有意义。 |
 | `TaskFailed` | `FAILED` | 任务函数显式声明该 attempt 失败，但同一 input 稍后重跑可能成功。 |
-| 其他异常 | `FAILED` | 包括 bad input、Pydantic 校验失败、未知业务异常、post guardrail、attempt fence、publish fence 和 LakeFS 操作失败。 |
+| 其他异常 | `FAILED` | 包括 result/WorkspaceInput 的 Pydantic 校验失败、未知业务异常、post guardrail、attempt fence、publish fence 和 LakeFS 操作失败。 |
 
 任务作者应使用显式 failure API 表达业务执行失败：
 
@@ -29,7 +29,9 @@ Perago 的运行时结果只有三个状态：
 - `raise TaskTerminalError("...")` 表示同一 input 自动重试没有意义的执行失败。
 - 未知、未处理的普通异常仍映射为 `FAILED`，让 Conductor 按 retry policy 处理。
 
-业务可恢复但不应自动重试的情况不使用 Conductor failed 机制。业务函数应返回成功的 `Result Output`，例如 `status="REJECTED"` 或 `status="NEEDS_ACTION"`，再由 WorkflowDef 的分支逻辑处理。
+`params` 自定义 validator 中的 `ValueError` / `AssertionError` 会被 Pydantic 包装为校验失败，按无效输入终止；明确可恢复的依赖故障应抛出带安全 reason 的 `TaskFailed`（保持 `FAILED`），不得用普通 `ValueError` 表达重试意图。详见 [输入输出契约](input-output-contract.md)。
+
+任务作者决定业务结果是否属于正常完成的判定。如果业务拒绝必须停止节点，应抛出 `TaskTerminalError`；只有需要由工作流正常分支处理的判定才返回 `Result Output`。Perago 不会根据业务字段 `status` 的内容推断 Conductor 状态，返回任何通过 output model 校验的结果都会完成节点。
 
 ## Workspace Task Attempt
 
@@ -37,7 +39,8 @@ Workspace task 的 attempt 生命周期中，失败分类如下。
 
 | 阶段 | 典型原因 | Result status | 是否发布 workspace output |
 | --- | --- | --- | --- |
-| input validation | input 顶层字段缺少 `workspace` 或 `params`；`WorkspaceInput` 无效；`params` 类型错误，或 strict params 含额外字段 | `FAILED` | 否 |
+| params validation | `params` 类型错误，或 strict params 含额外字段 | `FAILED_WITH_TERMINAL_ERROR` | 否 |
+| input envelope / workspace locator validation | input 顶层缺少 `workspace` 或 `params`；`WorkspaceInput` 的 Pydantic model 校验失败 | `FAILED` | 否 |
 | download | LakeFS repository/ref 不存在、连接失败、本机 workspace 写入失败 | `FAILED` | 否 |
 | pre guardrails | 输入 workspace 缺少必需文件/目录/glob，或命中 forbidden glob | `FAILED_WITH_TERMINAL_ERROR` | 否 |
 | task body retryable failure | 用户函数抛出普通异常、`TaskFailed`，或返回值不能通过 output Pydantic model 校验 | `FAILED` | 否 |
@@ -61,7 +64,7 @@ Workspace-free task 不下载、不发布 workspace，也没有 guardrail 或 pu
 
 | 阶段 | 典型原因 | Result status |
 | --- | --- | --- |
-| input validation | input 顶层字段缺少 `params`；`params` 类型错误，或 strict params 含额外字段 | `FAILED` |
+| input validation | input 顶层字段缺少 `params`；`params` 类型错误，或 strict params 含额外字段 | `FAILED_WITH_TERMINAL_ERROR` |
 | task body retryable failure | 用户函数抛出普通异常或 `TaskFailed` | `FAILED` |
 | task body terminal failure | 用户函数抛出 `TaskTerminalError` | `FAILED_WITH_TERMINAL_ERROR` |
 | task body business branch | 用户函数成功判定业务无法继续自动执行，但 workflow 可处理该分支 | `COMPLETED` |

@@ -264,8 +264,8 @@ def result_for_exception(
     Returns
     -------
     RuntimeTaskResult
-        ``FAILED_WITH_TERMINAL_ERROR`` for pre guardrail failures and
-        ``FAILED`` for all other exceptions.
+        ``FAILED_WITH_TERMINAL_ERROR`` for explicit terminal errors, invalid
+        task input and pre guardrail failures; ``FAILED`` for other exceptions.
 
     See Also
     --------

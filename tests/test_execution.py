@@ -1094,7 +1094,8 @@ def test_run_workspace_free_task_attempt_returns_failed_result_for_bad_input() -
         },
     )
 
-    assert result.status == "FAILED"
+    # Missing params is deterministic invalid input, not a transient execution failure.
+    assert result.status == "FAILED_WITH_TERMINAL_ERROR"
     assert "workspace-free task input" in result.reason_for_incompletion
 
 
@@ -1112,6 +1113,33 @@ def test_invokes_workspace_free_task_from_wrapped_params() -> None:
     )
 
     assert output == {"result": {"valid": True, "reason": None}}
+
+
+def test_invalid_params_terminate_before_body_without_exposing_values() -> None:
+    """Bad business input is terminal and must not bill or invoke the task body."""
+
+    class Params(BaseModel):
+        """Require a numeric business field to exercise a type error."""
+        value: int
+
+    class Output(BaseModel):
+        """Return ordinary success only when the body is invoked."""
+        success: bool
+
+    calls = []
+
+    @task(name="tests.invalid_params_terminal", owner_email="data@example.com")
+    def worker(params: Params) -> Output:
+        """Record an invocation that must never occur with invalid input."""
+        calls.append(params)
+        return Output(success=True)
+
+    result = run_workspace_free_task_attempt(worker.__perago_task__, {"params": {"value": "private prompt and token"}})
+    assert result.status == "FAILED_WITH_TERMINAL_ERROR"
+    assert result.output is None
+    assert calls == []
+    assert result.reason_for_incompletion == "invalid task params: value (int_parsing)"
+    assert "private prompt" not in str(result.conductor_payload())
 
 
 def test_invokes_metrics_enabled_workspace_free_task_with_recorder() -> None:
@@ -1197,7 +1225,7 @@ def test_build_workspace_free_task_output_rejects_workspace_task() -> None:
 def test_workspace_free_invocation_rejects_expanded_top_level_params() -> None:
     task = load_module_task("app.workers.metadata_validate")
 
-    with pytest.raises(TaskInputError, match="contain params"):
+    with pytest.raises(TaskTerminalError, match="contain params"):
         invoke_workspace_free_task(
             task,
             {
@@ -1210,7 +1238,8 @@ def test_workspace_free_invocation_rejects_expanded_top_level_params() -> None:
 def test_workspace_free_invocation_validates_params_model() -> None:
     task = load_module_task("app.workers.metadata_validate")
 
-    with pytest.raises(ValidationError):
+    # Direct invocation preserves a typed input-contract error with no private input values.
+    with pytest.raises(TaskTerminalError, match="invalid task params"):
         invoke_workspace_free_task(
             task,
             {
@@ -1282,7 +1311,7 @@ def test_workspace_task_body_ignores_extra_business_params(tmp_path) -> None:
 def test_strict_params_rejects_nested_extra_business_params() -> None:
     task = strict_nested_params_task.__perago_task__
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+    with pytest.raises(TaskTerminalError, match="settings.extra.*extra_forbidden"):
         invoke_workspace_free_task(
             task,
             {"params": {"settings": {"value": 1, "extra": "not-in-schema"}}},
@@ -1292,7 +1321,7 @@ def test_strict_params_rejects_nested_extra_business_params() -> None:
 def test_strict_params_rejects_workspace_task_extra_business_params(tmp_path) -> None:
     task = strict_workspace_params_task.__perago_task__
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+    with pytest.raises(TaskTerminalError, match="extra.*extra_forbidden"):
         invoke_workspace_task_body(
             task,
             {"workspace": WORKSPACE_INPUT, "params": {"value": 1, "extra": "not-in-schema"}},
@@ -1439,3 +1468,100 @@ def test_workspace_snapshot_tracks_symlink_targets_for_noop_detection(tmp_path) 
     )
 
     assert result.status == "COMPLETED"
+
+
+@pytest.mark.parametrize("has_workspace", [False, True])
+@pytest.mark.parametrize("validator_kind", ["field", "model"])
+@pytest.mark.parametrize("failure_kind", ["invalid", "retryable", "timeout", "wrapped_timeout"])
+def test_params_validator_failure_contract(
+    tmp_path, has_workspace: bool, validator_kind: str, failure_kind: str,
+) -> None:
+    """Keep input rejection terminal and explicit dependency failures retryable."""
+    from pydantic import field_validator, model_validator
+
+    secret = "private-prompt-and-credential"
+    available = False
+    calls = []
+
+    def validate_dependency(value: str) -> str:
+        if failure_kind == "invalid":
+            raise ValueError(f"invalid input: {value}")
+        if not available:
+            if failure_kind == "timeout":
+                raise TimeoutError("dependency unavailable")
+            try:
+                raise TimeoutError(f"upstream URL contained {secret}")
+            except TimeoutError as exc:
+                if failure_kind == "wrapped_timeout":
+                    # A generic ValueError loses retry intent; do not infer it from the cause.
+                    raise ValueError(f"dependency rejected {value}") from exc
+                raise TaskFailed("dependency temporarily unavailable") from exc
+        return value
+
+    class FieldParams(BaseModel):
+        value: str
+
+        @field_validator("value")
+        @classmethod
+        def check_value(cls, value: str) -> str:
+            return validate_dependency(value)
+
+    class ModelParams(BaseModel):
+        value: str
+
+        @model_validator(mode="after")
+        def check_value(self):
+            validate_dependency(self.value)
+            return self
+
+    model = FieldParams if validator_kind == "field" else ModelParams
+
+    def free_worker(params) -> Output:
+        calls.append("body")
+        return Output(value=1)
+
+    def workspace_worker(workspace: Path, params) -> Output:
+        calls.append("body")
+        return Output(value=1)
+
+    worker = workspace_worker if has_workspace else free_worker
+    worker.__annotations__["params"] = model
+    definition = task(
+        name="tests.validator_failure_contract",
+        owner_email="data@example.com",
+        workspace=WorkspaceSpec(read_only=True) if has_workspace else None,
+    )(worker).__perago_task__
+    input_data = {"params": {"value": secret}}
+
+    def no_publication(*args):
+        pytest.fail("validation failure/read-only task must not publish")
+
+    def attempt():
+        if not has_workspace:
+            return run_workspace_free_task_attempt(definition, input_data)
+        return run_workspace_task_attempt(
+            definition, {**input_data, "workspace": WORKSPACE_INPUT}, _attempt(), tmp_path,
+            download_workspace=lambda *args: None,
+            load_current_attempt=lambda current: current,
+            stage_workspace=no_publication,
+            publish_workspace=no_publication,
+            cleanup_staging=no_publication,
+        )
+
+    result = attempt()
+    terminal = failure_kind in {"invalid", "wrapped_timeout"}
+    assert result.status == ("FAILED_WITH_TERMINAL_ERROR" if terminal else "FAILED")
+    assert result.output is None
+    assert calls == []
+    assert secret not in str(result.conductor_payload())
+    if terminal:
+        location = "value" if validator_kind == "field" else "params"
+        assert result.reason_for_incompletion == f"invalid task params: {location} (value_error)"
+    else:
+        expected = "dependency unavailable" if failure_kind == "timeout" else "dependency temporarily unavailable"
+        assert result.reason_for_incompletion == expected
+        available = True
+        recovered = attempt()
+        assert recovered.status == "COMPLETED"
+        assert recovered.output["result"] == {"value": 1}
+        assert calls == ["body"]

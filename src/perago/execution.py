@@ -9,7 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from perago.attempt import assert_current_attempt_snapshot
 from perago.errors import (
@@ -17,6 +17,7 @@ from perago.errors import (
     PostGuardrailViolation,
     PreGuardrailViolation,
     TaskInputError,
+    TaskTerminalError,
 )
 from perago.guards import check_guardrails
 from perago.metrics import MetricRecorder, RuntimeMetricContext
@@ -450,8 +451,10 @@ def invoke_workspace_task_body(
         If a pre-execution workspace guardrail fails.
     PostGuardrailViolation
         If a post-execution workspace guardrail fails.
+    TaskTerminalError
+        If business params validation fails before the task body is invoked.
     pydantic.ValidationError
-        If workspace input, params, or task result validation fails.
+        If workspace input or task result validation fails.
 
     See Also
     --------
@@ -528,10 +531,11 @@ def invoke_workspace_free_task(
     Raises
     ------
     TaskInputError
-        If ``task`` is a workspace task or if the input wrapper shape is
-        invalid.
+        If ``task`` is a workspace task or metrics required by the task are absent.
+    TaskTerminalError
+        If ``params`` is missing or business params validation fails.
     pydantic.ValidationError
-        If params or task result validation fails.
+        If task result validation fails.
 
     See Also
     --------
@@ -551,7 +555,8 @@ def invoke_workspace_free_task(
     if task.has_workspace:
         raise TaskInputError("invoke_workspace_free_task only supports workspace-free tasks")
     if "params" not in input_data:
-        raise TaskInputError("workspace-free task input must contain params")
+        # Missing business input is terminal before any task function can run.
+        raise TaskTerminalError("workspace-free task input must contain params")
 
     params = _validate_params(task, input_data["params"])
     if task.metrics is None:
@@ -564,8 +569,21 @@ def invoke_workspace_free_task(
 
 
 def _validate_params(task: TaskDefinition, raw_params: object) -> BaseModel:
+    """Reject invalid business input before invoking or billing the task body."""
+
     extra = "forbid" if task.strict_params else "ignore"
-    return task.params_model.model_validate(raw_params, extra=extra)
+    try:
+        return task.params_model.model_validate(raw_params, extra=extra)
+    except ValidationError as exc:
+        # Report field locations and validation codes without prompts, secrets or input snapshots.
+        errors = exc.errors(include_input=False, include_context=False, include_url=False)
+        fields = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'params'} ({error['type']})"
+            for error in errors[:10]
+        )
+        if len(errors) > 10:
+            fields += f"; {len(errors) - 10} more field errors"
+        raise TaskTerminalError(f"invalid task params: {fields}") from None
 
 
 def build_workspace_free_task_output(task: TaskDefinition, raw_result: object) -> dict[str, Any]:
