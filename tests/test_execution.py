@@ -1094,7 +1094,8 @@ def test_run_workspace_free_task_attempt_returns_failed_result_for_bad_input() -
         },
     )
 
-    assert result.status == "FAILED"
+    # Missing params is deterministic invalid input, not a transient execution failure.
+    assert result.status == "FAILED_WITH_TERMINAL_ERROR"
     assert "workspace-free task input" in result.reason_for_incompletion
 
 
@@ -1112,6 +1113,33 @@ def test_invokes_workspace_free_task_from_wrapped_params() -> None:
     )
 
     assert output == {"result": {"valid": True, "reason": None}}
+
+
+def test_invalid_params_terminate_before_body_without_exposing_values() -> None:
+    """Bad business input is terminal and must not bill or invoke the task body."""
+
+    class Params(BaseModel):
+        """Require a numeric business field to exercise a type error."""
+        value: int
+
+    class Output(BaseModel):
+        """Return ordinary success only when the body is invoked."""
+        success: bool
+
+    calls = []
+
+    @task(name="tests.invalid_params_terminal", owner_email="data@example.com")
+    def worker(params: Params) -> Output:
+        """Record an invocation that must never occur with invalid input."""
+        calls.append(params)
+        return Output(success=True)
+
+    result = run_workspace_free_task_attempt(worker.__perago_task__, {"params": {"value": "private prompt and token"}})
+    assert result.status == "FAILED_WITH_TERMINAL_ERROR"
+    assert result.output is None
+    assert calls == []
+    assert result.reason_for_incompletion == "invalid task params: value (int_parsing)"
+    assert "private prompt" not in str(result.conductor_payload())
 
 
 def test_invokes_metrics_enabled_workspace_free_task_with_recorder() -> None:
@@ -1197,7 +1225,7 @@ def test_build_workspace_free_task_output_rejects_workspace_task() -> None:
 def test_workspace_free_invocation_rejects_expanded_top_level_params() -> None:
     task = load_module_task("app.workers.metadata_validate")
 
-    with pytest.raises(TaskInputError, match="contain params"):
+    with pytest.raises(TaskTerminalError, match="contain params"):
         invoke_workspace_free_task(
             task,
             {
@@ -1210,7 +1238,8 @@ def test_workspace_free_invocation_rejects_expanded_top_level_params() -> None:
 def test_workspace_free_invocation_validates_params_model() -> None:
     task = load_module_task("app.workers.metadata_validate")
 
-    with pytest.raises(ValidationError):
+    # Direct invocation preserves a typed input-contract error with no private input values.
+    with pytest.raises(TaskTerminalError, match="invalid task params"):
         invoke_workspace_free_task(
             task,
             {
@@ -1282,7 +1311,7 @@ def test_workspace_task_body_ignores_extra_business_params(tmp_path) -> None:
 def test_strict_params_rejects_nested_extra_business_params() -> None:
     task = strict_nested_params_task.__perago_task__
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+    with pytest.raises(TaskTerminalError, match="settings.extra.*extra_forbidden"):
         invoke_workspace_free_task(
             task,
             {"params": {"settings": {"value": 1, "extra": "not-in-schema"}}},
@@ -1292,7 +1321,7 @@ def test_strict_params_rejects_nested_extra_business_params() -> None:
 def test_strict_params_rejects_workspace_task_extra_business_params(tmp_path) -> None:
     task = strict_workspace_params_task.__perago_task__
 
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+    with pytest.raises(TaskTerminalError, match="extra.*extra_forbidden"):
         invoke_workspace_task_body(
             task,
             {"workspace": WORKSPACE_INPUT, "params": {"value": 1, "extra": "not-in-schema"}},

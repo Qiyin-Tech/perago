@@ -60,6 +60,8 @@ Workspace-free task 的 Conductor `inputData` 顶层必须包含 `params`。其�
 
 Perago 在调用业务函数前使用 task 的 Pydantic `params` model 校验 `params`。默认 `@task(strict_params=False)`，允许输入是 schema 的超集：所有层级的额外字段都会被忽略，业务函数只收到 schema 声明的数据。
 
+`params` 校验失败会抛出 `TaskTerminalError`，attempt 返回 `FAILED_WITH_TERMINAL_ERROR`，不调用业务函数、不自动重试。Conductor `reasonForIncompletion` 只记录字段位置和校验错误类型，不包含提交值、提示词或密钥。workspace-free 任务缺少顶层必填 `params` 也会终止。业务函数返回值的校验失败属于执行错误，仍按普通 `FAILED` 处理。
+
 如果 task 必须拒绝任何额外业务字段，使用 `@task(..., strict_params=True)`。该模式会对顶层和嵌套 Pydantic object 强制 `extra="forbid"`。这个开关不影响 Conductor `inputData` 顶层的宽松读取，也不改变始终严格的 `workspace` 和 `result` 校验。默认值属于 Pydantic schema 与运行时模型校验的一部分，但 Perago 不生成 Conductor `inputTemplate`，也不会把默认值复制进 Conductor task input。
 
 ## Completed Output
