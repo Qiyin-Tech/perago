@@ -1468,3 +1468,100 @@ def test_workspace_snapshot_tracks_symlink_targets_for_noop_detection(tmp_path) 
     )
 
     assert result.status == "COMPLETED"
+
+
+@pytest.mark.parametrize("has_workspace", [False, True])
+@pytest.mark.parametrize("validator_kind", ["field", "model"])
+@pytest.mark.parametrize("failure_kind", ["invalid", "retryable", "timeout", "wrapped_timeout"])
+def test_params_validator_failure_contract(
+    tmp_path, has_workspace: bool, validator_kind: str, failure_kind: str,
+) -> None:
+    """Keep input rejection terminal and explicit dependency failures retryable."""
+    from pydantic import field_validator, model_validator
+
+    secret = "private-prompt-and-credential"
+    available = False
+    calls = []
+
+    def validate_dependency(value: str) -> str:
+        if failure_kind == "invalid":
+            raise ValueError(f"invalid input: {value}")
+        if not available:
+            if failure_kind == "timeout":
+                raise TimeoutError("dependency unavailable")
+            try:
+                raise TimeoutError(f"upstream URL contained {secret}")
+            except TimeoutError as exc:
+                if failure_kind == "wrapped_timeout":
+                    # A generic ValueError loses retry intent; do not infer it from the cause.
+                    raise ValueError(f"dependency rejected {value}") from exc
+                raise TaskFailed("dependency temporarily unavailable") from exc
+        return value
+
+    class FieldParams(BaseModel):
+        value: str
+
+        @field_validator("value")
+        @classmethod
+        def check_value(cls, value: str) -> str:
+            return validate_dependency(value)
+
+    class ModelParams(BaseModel):
+        value: str
+
+        @model_validator(mode="after")
+        def check_value(self):
+            validate_dependency(self.value)
+            return self
+
+    model = FieldParams if validator_kind == "field" else ModelParams
+
+    def free_worker(params) -> Output:
+        calls.append("body")
+        return Output(value=1)
+
+    def workspace_worker(workspace: Path, params) -> Output:
+        calls.append("body")
+        return Output(value=1)
+
+    worker = workspace_worker if has_workspace else free_worker
+    worker.__annotations__["params"] = model
+    definition = task(
+        name="tests.validator_failure_contract",
+        owner_email="data@example.com",
+        workspace=WorkspaceSpec(read_only=True) if has_workspace else None,
+    )(worker).__perago_task__
+    input_data = {"params": {"value": secret}}
+
+    def no_publication(*args):
+        pytest.fail("validation failure/read-only task must not publish")
+
+    def attempt():
+        if not has_workspace:
+            return run_workspace_free_task_attempt(definition, input_data)
+        return run_workspace_task_attempt(
+            definition, {**input_data, "workspace": WORKSPACE_INPUT}, _attempt(), tmp_path,
+            download_workspace=lambda *args: None,
+            load_current_attempt=lambda current: current,
+            stage_workspace=no_publication,
+            publish_workspace=no_publication,
+            cleanup_staging=no_publication,
+        )
+
+    result = attempt()
+    terminal = failure_kind in {"invalid", "wrapped_timeout"}
+    assert result.status == ("FAILED_WITH_TERMINAL_ERROR" if terminal else "FAILED")
+    assert result.output is None
+    assert calls == []
+    assert secret not in str(result.conductor_payload())
+    if terminal:
+        location = "value" if validator_kind == "field" else "params"
+        assert result.reason_for_incompletion == f"invalid task params: {location} (value_error)"
+    else:
+        expected = "dependency unavailable" if failure_kind == "timeout" else "dependency temporarily unavailable"
+        assert result.reason_for_incompletion == expected
+        available = True
+        recovered = attempt()
+        assert recovered.status == "COMPLETED"
+        assert recovered.output["result"] == {"value": 1}
+        assert calls == ["body"]

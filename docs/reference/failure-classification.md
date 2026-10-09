@@ -29,6 +29,8 @@ Perago 的运行时结果只有三个状态：
 - `raise TaskTerminalError("...")` 表示同一 input 自动重试没有意义的执行失败。
 - 未知、未处理的普通异常仍映射为 `FAILED`，让 Conductor 按 retry policy 处理。
 
+`params` 自定义 validator 中的 `ValueError` / `AssertionError` 会被 Pydantic 包装为校验失败，按无效输入终止；明确可恢复的依赖故障应抛出带安全 reason 的 `TaskFailed`（保持 `FAILED`），不得用普通 `ValueError` 表达重试意图。详见 [输入输出契约](input-output-contract.md)。
+
 任务作者决定业务结果是否属于正常完成的判定。如果业务拒绝必须停止节点，应抛出 `TaskTerminalError`；只有需要由工作流正常分支处理的判定才返回 `Result Output`。Perago 不会根据业务字段 `status` 的内容推断 Conductor 状态，返回任何通过 output model 校验的结果都会完成节点。
 
 ## Workspace Task Attempt
