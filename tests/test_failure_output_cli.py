@@ -92,6 +92,7 @@ def test_native_start_publishes_one_failure_update(tmp_path, mode, terminal) -> 
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
+            # The isolated process group already exited, so teardown has nothing left to kill.
             pass
         process.wait(timeout=5)
         log.close()

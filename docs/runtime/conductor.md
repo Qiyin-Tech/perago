@@ -92,10 +92,12 @@ Perago 内部先生成 `RuntimeTaskResult`，再转换为 Conductor SDK 的 `Tas
 | Perago status | Conductor 字段 | 典型来源 |
 | --- | --- | --- |
 | `COMPLETED` | `outputData` | task body 成功；workspace task 包含 read-only、no-op 或 published workspace output。 |
-| `FAILED` | `reasonForIncompletion` | bad input、MVP `TaskFailed`、未知 task body exception、post guardrail、stale attempt、publish failure。 |
-| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` | pre guardrail failure 或 MVP `TaskTerminalError`。 |
+| `FAILED` | `reasonForIncompletion`；显式 `TaskFailed(output_data=...)` 可带 `outputData` | bad input、MVP `TaskFailed`、未知 task body exception、post guardrail、stale attempt、publish failure。 |
+| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion`；显式 `TaskTerminalError(output_data=...)` 可带 `outputData` | pre guardrail failure 或 MVP `TaskTerminalError`。 |
 
-`COMPLETED` 必须带 output，且不能带 failure reason。失败状态必须带 `reasonForIncompletion`，且不能带 output。worker id 会写入 Conductor result，便于从 Conductor 结果反查 worker 日志目录。
+`COMPLETED` 必须带 output，且不能带 failure reason。失败状态必须带 `reasonForIncompletion`；显式任务异常的可选 `output_data` 是顶层 JSON 对象，通过原生 IPC 和 SDK 在同一次 result update 中写入 `outputData`。省略参数或传入 `None` 时不设置失败输出，空对象 `{}` 会原样保留。普通运行时异常、模型校验或 guardrail 失败仍只带原有失败原因。
+
+失败 metadata 不按成功 `result` 模型校验，也不代表任务成功。调用方负责定义业务字段、脱敏并满足 Conductor 部署的输出大小限制；消费者必须先检查 status，再读取成功 `result` 或失败 metadata。异常类型继续决定失败状态与 Conductor 重试行为，Perago 不解释 metadata 中的业务字段。worker id 会写入 Conductor result，便于从 Conductor 结果反查 worker 日志目录。
 可预期的业务拒绝、待补充信息或人工处理分支不应伪装成 Conductor task failure；
 worker 应返回成功的 `result`，让 WorkflowDef 用分支逻辑处理。
 
