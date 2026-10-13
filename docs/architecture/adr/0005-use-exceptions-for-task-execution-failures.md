@@ -1,7 +1,7 @@
 # ADR-0005: Use exceptions for task execution failures
 
 **Date**: 2026-05-27
-**Status**: accepted
+**Status**: partially superseded by [ADR-0007](0007-allow-structured-failure-output.md)
 **Deciders**: Perago maintainers
 
 ## Context

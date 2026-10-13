@@ -1498,3 +1498,14 @@ Workspace-free task definition:
 - missing return annotation: fail
 - return type is not a Pydantic model: fail
 - duplicate `params=` or `output=` declarations in `@task(...)`: fail
+
+### Structured failure metadata
+
+Task authors may attach a finite JSON object directly to a failed attempt:
+
+```python
+# Failure metadata is independent of the successful Result Output model.
+raise TaskTerminalError("upstream result unavailable", output_data={"error": {"code": "RESULT_UNKNOWN", "jobId": "original-job"}})
+```
+
+The native worker reports FAILED_WITH_TERMINAL_ERROR together with reasonForIncompletion and outputData. TaskFailed accepts the same optional keyword and reports FAILED. Omitting output_data keeps a reason-only failure. Perago does not infer retry safety from the payload or publish workspace changes for a failed task.

@@ -81,6 +81,29 @@ perago start app.workers.features_build -j 4
 - `perago extract`：生成带嵌入 schema 的 Conductor TaskDef JSON。
 - `perago start`：在真实 Conductor 配置下启动 supervisor-managed worker processes；workspace task 还需要 LakeFS 配置。
 
+## 任务失败信息
+
+任务返回值表示成功业务结果。执行失败通过原生异常 API 声明：
+
+```python
+from perago import TaskFailed, TaskTerminalError
+
+# 相同输入可安全重试，状态为 FAILED。
+raise TaskFailed("service unavailable", output_data={"error": {"code": "SERVICE_UNAVAILABLE"}})
+
+# 相同输入不应自动重跑，状态为 FAILED_WITH_TERMINAL_ERROR。
+raise TaskTerminalError("result unknown", output_data={"error": {"code": "RESULT_UNKNOWN", "providerTaskId": "original-job"}})
+```
+
+| 参数 | 类型 | 必填与默认 | 语义 |
+| --- | --- | --- | --- |
+| `reason` | str | 必填 | 写入 reasonForIncompletion，受 PERAGO_FAILURE_REASON_MAX_LENGTH 限制，默认 500 字符。 |
+| `output_data` | dict[str, JSON value] 或 None | 仅关键字参数，默认 None | 可选失败信息，直接写入 outputData；None 不提供输出，空对象保留为空对象。 |
+
+失败信息支持 string、boolean、integer、有限 number、null、list 和字符串键的 object；不接受 Python 对象、tuple、非字符串键、NaN/Infinity 或循环容器。异常构造时复制数据，调用方随后修改原对象不会改变上报内容。Perago 不解释业务 code、不推断重试许可，也不将失败信息包装成成功 `result`。
+
+原生 `perago start` 的线程/进程模式会在同一次 SDK 更新中发送失败状态、reason 和 outputData；无需自定义 runner。失败信息不按成功返回值 model 校验，不进入成功 TaskDef output schema。失败仍不触发 workspace publication，工作流是否继续由 Conductor 的 retry/optional 等配置决定。调用方负责脱敏；原因截断不截断 output_data。
+
 ## 文档
 
 - 文档首页：https://perago.readthedocs.io/zh-cn/latest/

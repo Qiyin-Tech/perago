@@ -39,9 +39,10 @@ def runtime_result_to_sdk_task_result(
         worker_id=worker_id,
         status=TaskResultStatus(result.status),
     )
-    if result.status == "COMPLETED":
+    # Both success and explicit task failures may carry output, in the same normal SDK update.
+    if result.output is not None:
         task_result.output_data = result.output
-    else:
+    if result.status != "COMPLETED":
         task_result.reason_for_incompletion = result.reason_for_incompletion
     return task_result
 

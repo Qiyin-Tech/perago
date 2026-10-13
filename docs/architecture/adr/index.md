@@ -11,4 +11,5 @@ ADR 记录已经接受的架构选择和约束。叙述型 architecture 页面�
 0004-add-read-only-workspace-and-no-op-completion
 0005-use-exceptions-for-task-execution-failures
 0006-add-opt-in-metrics-recording
+0007-allow-structured-failure-output
 ```

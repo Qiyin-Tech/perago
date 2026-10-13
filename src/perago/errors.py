@@ -1,3 +1,8 @@
+from typing import Any
+
+from perago.failure_output import snapshot_failure_output
+
+
 class TaskDefinitionError(ValueError):
     """
     Raised when a task module violates the Perago task contract.
@@ -76,19 +81,28 @@ class TaskExecutionError(RuntimeError):
     ----------
     reason : str
         Short diagnostic reason reported to Conductor.
+    output_data : dict of str to Any or None, default=None
+        Optional JSON object written directly to Conductor ``outputData`` on
+        failure. It is not wrapped in ``result`` or validated as successful output.
 
     Attributes
     ----------
     reason : str
         The original task-authored diagnostic reason.
+    output_data : dict of str to Any or None
+        A snapshot of caller-supplied failure metadata. Values must be finite
+        JSON scalars, lists or objects with string keys; no implicit coercion is used.
     """
 
     reason: str
+    output_data: dict[str, Any] | None
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, *, output_data: dict[str, Any] | None = None) -> None:
         if not isinstance(reason, str):
             raise TypeError("reason must be str")
         self.reason = reason
+        # Validate before execution/IPC so arbitrary Python objects never reach SDK serialization.
+        self.output_data = snapshot_failure_output(output_data)
         super().__init__(reason)
 
 
@@ -103,6 +117,8 @@ class TaskFailed(TaskExecutionError):
     ----------
     reason : str
         Short diagnostic reason reported to Conductor.
+    output_data : dict of str to Any or None, default=None
+        Optional task-authored JSON metadata reported with ``FAILED``.
     """
 
 
@@ -117,6 +133,8 @@ class TaskTerminalError(TaskExecutionError):
     ----------
     reason : str
         Short diagnostic reason reported to Conductor.
+    output_data : dict of str to Any or None, default=None
+        Optional task-authored JSON metadata reported with ``FAILED_WITH_TERMINAL_ERROR``.
     """
 
 
