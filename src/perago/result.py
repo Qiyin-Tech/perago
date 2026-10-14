@@ -6,6 +6,7 @@ from loguru import logger
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from perago.errors import PreGuardrailViolation, TaskFailed, TaskTerminalError
+from perago.failure_output import snapshot_failure_output
 
 
 TaskResultStatus = Literal["COMPLETED", "FAILED", "FAILED_WITH_TERMINAL_ERROR"]
@@ -17,7 +18,7 @@ class RuntimeTaskResult(BaseModel):
 
     ``RuntimeTaskResult`` is Perago's internal representation of the status
     and payload that will be written back to Conductor. It enforces the
-    mutually exclusive success and failure payload shapes before the SDK
+    status-specific success and failure payload shapes before the SDK
     payload is assembled.
 
     Parameters
@@ -25,8 +26,8 @@ class RuntimeTaskResult(BaseModel):
     status : {"COMPLETED", "FAILED", "FAILED_WITH_TERMINAL_ERROR"}
         Conductor task result status selected by the worker runtime.
     output : dict of str to Any or None, default=None
-        Completed task output. ``COMPLETED`` results require this field, while
-        failed results reject it.
+        Completed task output or optional task-authored failure metadata.
+        ``COMPLETED`` results require it; failed results may omit it.
     reason_for_incompletion : str or None, default=None
         Failure reason. ``FAILED`` and ``FAILED_WITH_TERMINAL_ERROR`` results
         require this field, while ``COMPLETED`` results reject it.
@@ -65,7 +66,7 @@ class RuntimeTaskResult(BaseModel):
     @model_validator(mode="after")
     def validate_payload_shape(self) -> RuntimeTaskResult:
         """
-        Validate the mutually exclusive result payload shape.
+        Validate status requirements and optional JSON failure metadata.
 
         Returns
         -------
@@ -88,7 +89,11 @@ class RuntimeTaskResult(BaseModel):
         if self.reason_for_incompletion is None:
             raise ValueError(f"{self.status} task results require reason_for_incompletion")
         if self.output is not None:
-            raise ValueError(f"{self.status} task results must not include output")
+            try:
+                # Failure metadata is JSON, independent of the successful task return model.
+                snapshot_failure_output(self.output)
+            except TypeError as exc:
+                raise ValueError(str(exc)) from None
         return self
 
     def conductor_payload(self) -> dict[str, Any]:
@@ -98,8 +103,8 @@ class RuntimeTaskResult(BaseModel):
         Returns
         -------
         dict of str to Any
-            Mapping containing ``status`` and either ``output`` or
-            ``reasonForIncompletion``.
+            Mapping containing ``status``, optional ``output`` and the required
+            ``reasonForIncompletion`` for failed results.
 
         Examples
         --------
@@ -153,25 +158,28 @@ def failed_result(
     reason: object,
     *,
     max_length: int,
+    output: dict[str, Any] | None = None,
 ) -> RuntimeTaskResult:
     """
     Build a failed worker attempt result.
 
     The helper converts any runtime failure reason to Conductor's string
-    ``reasonForIncompletion`` field and leaves ``output`` unset.
+    ``reasonForIncompletion`` field and optionally includes JSON failure metadata.
 
     Parameters
     ----------
     reason : object
         Failure reason converted with :class:`str` for Conductor's
         ``reasonForIncompletion`` field.
+    output : dict of str to Any or None, default=None
+        Optional finite JSON failure metadata written to Conductor outputData.
     max_length : int
         Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
     -------
     RuntimeTaskResult
-        Result with status ``"FAILED"`` and no ``output`` payload.
+        Result with status ``"FAILED"`` and the optional failure ``output``.
 
     See Also
     --------
@@ -190,6 +198,7 @@ def failed_result(
     """
     return RuntimeTaskResult(
         status="FAILED",
+        output=output,
         reason_for_incompletion=_failure_reason(reason, max_length=max_length),
     )
 
@@ -198,6 +207,7 @@ def terminal_failed_result(
     reason: object,
     *,
     max_length: int,
+    output: dict[str, Any] | None = None,
 ) -> RuntimeTaskResult:
     """
     Build a terminal failed worker attempt result.
@@ -210,14 +220,16 @@ def terminal_failed_result(
     reason : object
         Failure reason converted with :class:`str` for Conductor's
         ``reasonForIncompletion`` field.
+    output : dict of str to Any or None, default=None
+        Optional finite JSON failure metadata written to Conductor outputData.
     max_length : int
         Maximum number of characters written to ``reasonForIncompletion``.
 
     Returns
     -------
     RuntimeTaskResult
-        Result with status ``"FAILED_WITH_TERMINAL_ERROR"`` and no ``output``
-        payload.
+        Result with status ``"FAILED_WITH_TERMINAL_ERROR"`` and optional
+        failure ``output``.
 
     See Also
     --------
@@ -226,9 +238,9 @@ def terminal_failed_result(
 
     Notes
     -----
-    In the current runtime classifier this status is reserved for
-    :class:`perago.PreGuardrailViolation`. It is not a general non-retryable
-    bucket for all validation failures.
+    This status is used for :class:`perago.TaskTerminalError` and
+    :class:`perago.PreGuardrailViolation`; arbitrary validation failures
+    still follow the normal runtime failure classification.
 
     Examples
     --------
@@ -237,6 +249,7 @@ def terminal_failed_result(
     """
     return RuntimeTaskResult(
         status="FAILED_WITH_TERMINAL_ERROR",
+        output=output,
         reason_for_incompletion=_failure_reason(reason, max_length=max_length),
     )
 
@@ -264,8 +277,8 @@ def result_for_exception(
     Returns
     -------
     RuntimeTaskResult
-        ``FAILED_WITH_TERMINAL_ERROR`` for pre guardrail failures and
-        ``FAILED`` for all other exceptions.
+        ``FAILED_WITH_TERMINAL_ERROR`` for explicit terminal task failures
+        and pre guardrail failures; ``FAILED`` for other exceptions.
 
     See Also
     --------
@@ -288,11 +301,11 @@ def result_for_exception(
     'FAILED'
     """
     if isinstance(exc, TaskTerminalError):
-        return terminal_failed_result(exc.reason, max_length=max_length)
+        return terminal_failed_result(exc.reason, max_length=max_length, output=exc.output_data)
     if isinstance(exc, PreGuardrailViolation):
         return terminal_failed_result(exc, max_length=max_length)
     if isinstance(exc, TaskFailed):
-        return failed_result(exc.reason, max_length=max_length)
+        return failed_result(exc.reason, max_length=max_length, output=exc.output_data)
     return failed_result(exc, max_length=max_length)
 
 

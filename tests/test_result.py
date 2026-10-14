@@ -115,8 +115,54 @@ def test_runtime_task_result_rejects_inconsistent_payload_shapes() -> None:
         RuntimeTaskResult(status="COMPLETED", output={}, reason_for_incompletion="done")
     with pytest.raises(ValidationError, match="require reason"):
         RuntimeTaskResult(status="FAILED")
-    with pytest.raises(ValidationError, match="must not include output"):
-        RuntimeTaskResult(status="FAILED", output={}, reason_for_incompletion="failed")
+    # Failure metadata is optional, but never removes the required failure reason.
+    assert RuntimeTaskResult(status="FAILED", output={}, reason_for_incompletion="failed").output == {}
+
+
+@pytest.mark.parametrize("exception,status", [(TaskFailed, "FAILED"), (TaskTerminalError, "FAILED_WITH_TERMINAL_ERROR")])
+def test_explicit_failure_preserves_json_output_and_reason_budget(exception, status) -> None:
+    """Metadata must survive independently of the operator-facing reason truncation."""
+
+    payload = {"error": {"code": "PROVIDER_BUSY", "retryable": False, "details": [None, True, 2, 2.5, "原因" * 500]}}
+    result = result_for_exception(exception("long reason", output_data=payload), max_length=4)
+    assert result.conductor_payload() == {"status": status, "output": payload, "reasonForIncompletion": "long"}
+
+
+def test_failure_output_is_snapshotted_before_caller_mutation() -> None:
+    """A mutable provider response cannot alter failure metadata after it is raised."""
+
+    payload = {"error": {"codes": ["original"]}}
+    failure = TaskTerminalError("failed", output_data=payload)
+    payload["error"]["codes"].append("changed")
+    assert result_for_exception(failure, max_length=500).output == {"error": {"codes": ["original"]}}
+
+
+@pytest.mark.parametrize("payload", [[], "raw", {1: "value"}, {"nested": {1: "value"}},
+                                      {"value": object()}, {"value": (1, 2)},
+                                      {"value": float("nan")}, {"value": float("inf")}])
+@pytest.mark.parametrize("exception", [TaskFailed, TaskTerminalError])
+def test_failure_output_rejects_non_json_metadata(exception, payload) -> None:
+    """Unsupported values are rejected at authoring time without including private values in diagnostics."""
+
+    with pytest.raises(TypeError, match="output_data"):
+        exception("failed", output_data=payload)
+
+
+def test_failure_output_rejects_cycles() -> None:
+    """Recursive Python containers cannot enter process IPC or SDK serialization."""
+
+    payload = {}
+    payload["self"] = payload
+    with pytest.raises(TypeError, match="cycles"):
+        TaskFailed("failed", output_data=payload)
+
+
+def test_unknown_exception_attributes_do_not_publish_failure_output() -> None:
+    """Only explicit task failure APIs can opt into structured failure publication."""
+
+    failure = RuntimeError("unexpected")
+    failure.output_data = {"private": "must-not-publish"}
+    assert result_for_exception(failure, max_length=500).output is None
 
 
 def test_runtime_task_result_rejects_unknown_fields() -> None:

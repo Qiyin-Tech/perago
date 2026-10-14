@@ -7,10 +7,10 @@ Perago 的运行时结果只有三个状态：
 | 状态 | 载荷结构 | Conductor 语义 |
 | --- | --- | --- |
 | `COMPLETED` | `output` required; `reasonForIncompletion` forbidden | attempt 成功完成。workspace task 已生成 workspace output；workspace-free task 已返回业务 `result`。 |
-| `FAILED` | `reasonForIncompletion` required; `output` forbidden | attempt 执行失败，Perago 认为同一 input 自动重试仍可能有意义。 |
-| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required; `output` forbidden | attempt 执行失败，Perago 认为同一 input 自动重试没有意义。 |
+| `FAILED` | `reasonForIncompletion` required; JSON failure `output` optional | attempt 执行失败，Perago 认为同一 input 自动重试仍可能有意义。 |
+| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required; JSON failure `output` optional | attempt 执行失败，Perago 认为同一 input 自动重试没有意义。 |
 
-`RuntimeTaskResult` 会拒绝不一致的载荷结构：完成状态必须有 `output`，失败状态必须有 `reasonForIncompletion`，失败状态不能携带 `output`。
+`RuntimeTaskResult` 会拒绝不一致的载荷结构：完成状态必须有 `output`，失败状态必须有 `reasonForIncompletion`，失败状态可携带显式任务异常的 JSON metadata，且仍必须有 reason。
 
 ## Classification Rule
 
@@ -117,3 +117,7 @@ Perago 的失败分类是 fail-closed 的：
 - publish timeout 或 result update 失败后，不应直接假设 publish 没发生；下一次 retry 按 [LakeFS 发布协议](../lakefs-publication-protocol.md) 检查 target HEAD 状态。
 
 MVP 不提供严格 exactly-once publication 证明。Reference 中的失败分类只描述 worker 如何回写当前 attempt result；跨 attempt 的发布判断来自 Conductor attempt fence 和 LakeFS HEAD 状态。
+
+## 显式失败 metadata
+
+`TaskFailed(reason, output_data=...)` 和 `TaskTerminalError(reason, output_data=...)` 在原状态规则下提供可选 JSON object。Perago 不从字段名、code 或 retryable 内容重新决定状态。metadata 经原生 RuntimeTaskResult/进程 IPC/SDK 映射写入一次 Conductor 更新，不修改成功返回值契约或 workspace 发布规则。默认 None 没有失败输出；详细类型与边界见 [输入输出契约](input-output-contract.md#failed-output)。

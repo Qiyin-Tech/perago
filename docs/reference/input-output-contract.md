@@ -64,7 +64,7 @@ Perago 在调用业务函数前使用 task 的 Pydantic `params` model 校验 `p
 
 ## Completed Output
 
-Perago 只在 task 成功完成时向 Conductor 回写 `outputData`。`RuntimeTaskResult.conductor_payload()` 的完成载荷如下：
+Perago 在 task 成功完成时将业务结果写入 `outputData.result`。`RuntimeTaskResult.conductor_payload()` 的完成载荷如下：
 
 ```json
 {
@@ -109,12 +109,11 @@ Workspace-free task 的完成输出只包含 `result`。
 
 ## Failed Output
 
-失败结果不会携带 `output`。Perago 只回写 Conductor status 和 `reasonForIncompletion`。
-失败原因是短诊断文本，不是业务结果结构。MVP failure API 目标是按
-`PERAGO_FAILURE_REASON_MAX_LENGTH` 配置限制写入 Conductor 的
-`reasonForIncompletion` 文本长度，完整细节应进入 worker JSONL 日志。业务可恢复分支应作为成功的
-`result` 返回，例如 `status="REJECTED"` 或 `status="NEEDS_ACTION"`，再由
-WorkflowDef 分支处理。
+失败必须包含 `reasonForIncompletion`，并可携带任务作者显式提供的 JSON metadata。`raise TaskFailed(reason, output_data=payload)` 和 `raise TaskTerminalError(reason, output_data=payload)` 将 payload 直接写入 Conductor `outputData`；`RuntimeTaskResult` 内部字段名仍为 `output`。默认 `output_data=None` 保留仅 status/reason 的接口，`{}` 保留空输出。
+
+`reason` 是必填字符串，按 `PERAGO_FAILURE_REASON_MAX_LENGTH`（默认 500 字符）截断；该限制不截断 metadata。output_data 必须是 JSON object，嵌套值允许字符串、布尔、整数、有限浮点数、null、数组和字符串键 object。异常构造时复制原对象；任意 Python 对象、非字符串键、非有限浮点数和循环容器会被拒绝。业务作者负责内容脱敏，Perago 不解析其 code 或 retryable 字段。
+
+失败 metadata 不按成功返回值 model 校验，不被包装为 `result`，也不修改成功 TaskDef output schema。失败状态仍由所抛异常决定，workspace task 不会因 metadata 进入 stage/publish 路径。未处理异常、参数/结果校验和 guardrail 等运行时失败保持原状态规则，不自动生成业务错误对象。
 
 ```json
 {
@@ -133,8 +132,8 @@ WorkflowDef 分支处理。
 | 状态 | 输出字段 | 典型来源 |
 | --- | --- | --- |
 | `COMPLETED` | `output` required, `reasonForIncompletion` forbidden | 业务函数成功、post guardrail 通过；workspace task 已完成 read-only、no-op 或 publication 路径。 |
-| `FAILED` | `reasonForIncompletion` required, `output` forbidden | 输入结构错误、Pydantic 校验失败、`TaskFailed`、未知业务异常、post guardrail、attempt fence 或 publish fence 失败。 |
-| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required, `output` forbidden | pre guardrail 失败或 `TaskTerminalError`，表示同一 input 自动重试没有意义。 |
+| `FAILED` | `reasonForIncompletion` required, `output` optional（显式任务失败的 JSON metadata） | 输入结构错误、Pydantic 校验失败、`TaskFailed`、未知业务异常、post guardrail、attempt fence 或 publish fence 失败。 |
+| `FAILED_WITH_TERMINAL_ERROR` | `reasonForIncompletion` required, `output` optional（显式任务失败的 JSON metadata） | pre guardrail 失败或 `TaskTerminalError`，表示同一 input 自动重试没有意义。 |
 
 ## Input Wrapper And Output Shapes
 
